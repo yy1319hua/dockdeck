@@ -65,4 +65,12 @@ make build                                 # hub/agent × arm64/amd64
 
 ## 许可
 
-暂未选择（私有仓库，默认保留所有权利）。确定后补 `LICENSE`。
+私有仓库 + 源码公开可用：采用 [PolyForm Noncommercial License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0)。
+
+你可以自由阅读、使用、修改、分发本项目——**仅限非商业目的**。想把 DockDeck 用于商业场景
+（售卖、作为商业产品服务交付、闭源商用分发等）需另行取得授权。个人自用、学习、研究、
+以及慈善/教育/公共研究等非营利组织使用均在许可范围内。
+
+仓库保持私有是访问控制，与许可不冲突：许可管的是「拿到副本的人能做什么」。
+源码注释一律用 `SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0` 单行标识，
+不在每个文件重复许可正文。

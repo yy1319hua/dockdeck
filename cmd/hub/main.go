@@ -235,6 +235,37 @@ func (s *server) routes() http.Handler {
 		Summary: "撤销 API Token", Tags: []string{"Tokens"},
 	}, s.tokens.RevokeHandler)
 
+	// ---- S2.7 监控查询 ----
+	tbl.Add(route.Entry{
+		Method: "GET", Path: "/api/v1/servers/{id}/metrics", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadMetrics,
+		Summary: "实时指标快照", Tags: []string{"Servers"},
+		Desc:   "返回最近一次采集的主机指标与每容器占用。服务器不存在或从未采集时 404。",
+		Params: []route.Param{{Name: "id", Desc: "服务器 ID", Required: true, Example: "1", SchemaType: "integer", SchemaFmt: "int64"}},
+		Responses: []route.Response{
+			{Status: 400, Desc: "非法服务器 ID"},
+			{Status: 404, Desc: "服务器不存在或尚无快照"},
+		},
+		InternalRef: "cmd/hub/metrics.go metricsLatest",
+	}, s.metricsLatest)
+
+	tbl.Add(route.Entry{
+		Method: "GET", Path: "/api/v1/servers/{id}/metrics/overview", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadMetrics,
+		Summary: "历史指标曲线", Tags: []string{"Servers"},
+		Desc: "返回 [from,to] 内主机与容器历史点（升序）。默认最近 1 小时，窗口上限 8 天（保留期 7 天），" +
+			"limit 限定点数（默认 720，上限 1440，超出取最新）。",
+		Params: []route.Param{
+			{Name: "id", Desc: "服务器 ID", Required: true, Example: "1", SchemaType: "integer", SchemaFmt: "int64"},
+			{Name: "from", Desc: "起始时间（RFC3339，UTC）", Required: false, Example: "2026-10-14T00:00:00Z", SchemaType: "string", SchemaFmt: "date-time"},
+			{Name: "to", Desc: "截止时间（RFC3339，UTC）", Required: false, Example: "2026-10-14T08:00:00Z", SchemaType: "string", SchemaFmt: "date-time"},
+			{Name: "limit", Desc: "最多返回的点数", Required: false, Example: "720", SchemaType: "integer", SchemaFmt: "int64"},
+		},
+		Responses: []route.Response{
+			{Status: 400, Desc: "参数非法（时间格式、to<from、limit 非正整数）"},
+			{Status: 404, Desc: "服务器不存在"},
+		},
+		InternalRef: "cmd/hub/metrics.go metricsOverview",
+	}, s.metricsOverview)
+
 	// ---- 占位：S2 起逐步替换为真实实现 ----
 	tbl.Add(route.Entry{
 		Method: "GET", Path: "/api/v1/servers", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadMetrics,

@@ -167,3 +167,22 @@ func TestSplitHostPort(t *testing.T) {
 		t.Error("非数字端口应报错")
 	}
 }
+
+func TestLoadAgent_DiskMounts(t *testing.T) {
+	t.Setenv("DD_AGENT_TOKEN", "tok")
+	c, err := LoadAgent([]string{"-disk-mounts", "/,/data"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.DiskMounts) != 2 || c.DiskMounts[0] != "/" || c.DiskMounts[1] != "/data" {
+		t.Errorf("DiskMounts = %v，want [/, /data]", c.DiskMounts)
+	}
+	// 未指定时只统计根，不要把整机的挂载点全捞一遍。
+	def, err := LoadAgent(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(def.DiskMounts) != 1 || def.DiskMounts[0] != "/" {
+		t.Errorf("默认 DiskMounts = %v，want [/]", def.DiskMounts)
+	}
+}

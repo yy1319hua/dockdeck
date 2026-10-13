@@ -1,0 +1,55 @@
+# 构建产物
+/dist/
+/build/
+/out/
+*.exe
+
+# 前端
+web/node_modules/
+web/dist/
+web/.vite/
+web/coverage/
+
+# Go
+*.test
+*.out
+coverage.*
+vendor/
+
+# 内嵌占位：web/dist 由前端构建生成，不入库（避免与源码冲突）
+# 但 go:embed 需要目录存在，故保留 .gitkeep
+!web/dist/.gitkeep
+
+# 运行时数据与凭据——绝不入库
+/data/
+*.db
+*.db-shm
+*.db-wal
+/secrets/
+*.key
+*.pem
+*.crt
+.env
+.env.*
+!.env.example
+# 协同状态文件正常落在工作树之外；这几条是防御误建进仓库
+CURRENT_AI
+LEASE_STATE
+PUSH_TOKEN
+credscan-patterns.txt
+AGENTS.md
+PROGRESS.md
+
+# 备份
+*.bak
+*.bak.*
+*.tar.gz
+/backups/
+
+# 编辑器与系统
+.idea/
+.vscode/
+*.swp
+.DS_Store
+nohup.out
+*.log

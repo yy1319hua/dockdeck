@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# pre-commit —— 提交前校验：署名合规 + 私密信息拦截。
+#
+# 安装：git config core.hooksPath <本文件所在目录>
+#
+# 校验项：
+#   1. user.name 匹配 ^[a-z][a-z0-9-]*-agent$
+#   2. user.name == <工作区>/CURRENT_AI 的内容（防忘记签到 / 上一位的签到仍在生效）
+#   3. user.email == <user.name>@local
+#   4. 暂存新增行不含私密特征 → 命中即拒
+#
+# 第 4 条说明：
+#   * 只扫本次暂存的新增行，不翻历史。
+#   * 内置仅通用特征（私钥头 / token 前缀），不含任何项目专属串。
+#     项目专属特征请写到工作区（git 工作树之外）的 credscan-patterns.txt，每行一个正则。
+#   * 扫描排除 hooks 自身所在目录：否则本文件里的特征串会被自己拦下（自指问题）。
+set -e
+
+name=$(git config user.name || true)
+email=$(git config user.email || true)
+root=$(git rev-parse --show-toplevel)
+WS="${WORKSPACE:-$(dirname "$root")}"
+ca_path="$WS/CURRENT_AI"
+
+if [[ ! -f "$ca_path" ]]; then
+  echo "pre-commit 拒：未找到 CURRENT_AI 于 $ca_path" >&2
+  echo "  → 请先执行接手流程第 1 步（签到）：lease.sh acquire <署名>" >&2
+  exit 1
+fi
+expected=$(tr -d '[:space:]' < "$ca_path")
+
+if [[ ! "$name" =~ ^[a-z][a-z0-9-]*-agent$ ]]; then
+  echo "pre-commit 拒：user.name 格式不合规 = '$name'" >&2
+  echo "  需匹配 ^[a-z][a-z0-9-]*-agent\$（例：qoder-agent / glm-agent）" >&2
+  exit 1
+fi
+
+if [[ "$name" != "$expected" ]]; then
+  echo "pre-commit 拒：user.name ($name) ≠ CURRENT_AI ($expected)" >&2
+  echo "  两种可能：(a) 忘了签到；(b) 上一位的签到仍在生效。" >&2
+  echo "  → 停下、报用户，不要自救。" >&2
+  exit 1
+fi
+
+if [[ "$email" != "$name@local" ]]; then
+  echo "pre-commit 拒：user.email ($email) ≠ $name@local" >&2
+  exit 1
+fi
+
+# ---------- 4) 凭据扫描 ----------
+HOOKS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+EXCLUDE_SPEC=":(exclude)$(basename "$HOOKS_DIR")/*"
+
+BASE_PATTERN='BEGIN OPENSSH PRIVATE KEY|BEGIN RSA PRIVATE KEY|BEGIN PRIVATE KEY|github_pat_|ghp_|AIza[0-9A-Za-z_-]{10,}|sk-[A-Za-z0-9]{20,}'
+PATTERN="$BASE_PATTERN"
+if [ -f "$WS/credscan-patterns.txt" ]; then
+    while IFS= read -r p; do
+        [ -z "$p" ] && continue
+        case "$p" in \#*) continue;; esac
+        PATTERN="$PATTERN|$p"
+    done < "$WS/credscan-patterns.txt"
+fi
+
+hits=$(git diff --cached -U0 -- . "$EXCLUDE_SPEC" 2>/dev/null \
+       | grep -E '^\+' | grep -E "$PATTERN" || printf '')
+
+if [[ -n "$hits" ]]; then
+  echo "" >&2
+  echo "pre-commit 拒：暂存内容疑似含私密信息" >&2
+  echo "" >&2
+  echo "$hits" | head -5 | cut -c1-110 | sed 's/^/    /' >&2
+  echo "" >&2
+  echo "  → 撤下这些改动（git reset）、清掉敏感内容后再提交。" >&2
+  echo "  → 若确认是误报，报用户定夺，不要自行 --no-verify。" >&2
+  echo "" >&2
+  exit 1
+fi
+
+exit 0

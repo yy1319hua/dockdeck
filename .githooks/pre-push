@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# pre-push —— 强制「push 每次都要用户单独批准」。
+#
+# 没有有效的一次性令牌就直接拒绝。令牌由 scripts/approve-push.sh 签发。
+#
+# 局限（诚实说明）：
+#   1. core.hooksPath 不会被 git clone 继承，只在配了该 hook 的工作树生效。
+#   2. 技术上可用 --no-verify 绕过。本钩子的作用是把「随手就推」
+#      变成「必须主动违规才能推」，并留下痕迹。
+set -uo pipefail
+
+root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+WS="${WORKSPACE:-$(dirname "$root")}"
+TOKEN="$WS/PUSH_TOKEN"
+
+# pre-push 会从 stdin 收到 ref 列表，读掉以免 git 报 broken pipe
+while read -r _l _r _n _o; do :; done
+
+if [ ! -f "$TOKEN" ]; then
+    echo "" >&2
+    echo "⛔ 拒绝 push：未找到批准令牌。" >&2
+    echo "" >&2
+    echo "   push / 打 tag / 触发 CI 每次都要用户单独批准，上次批准不延续。" >&2
+    echo "" >&2
+    echo "   拿到批准后执行：" >&2
+    echo "     bash scripts/approve-push.sh \"<用户于何时批准哪一批改动>\"" >&2
+    echo "   再重新 push。令牌一次性，通过后自动消费。" >&2
+    echo "" >&2
+    exit 1
+fi
+
+exp=$(sed -n 's/^EXPIRE_EPOCH=//p' "$TOKEN")
+if [ -z "$exp" ] || [ "$exp" -le "$(date +%s)" ]; then
+    echo "" >&2
+    echo "⛔ 拒绝 push：令牌已过期（$(sed -n 's/^EXPIRE_AT=//p' "$TOKEN")）。" >&2
+    echo "   请重新取得用户批准并签发新令牌。" >&2
+    echo "" >&2
+    rm -f "$TOKEN"
+    exit 1
+fi
+
+note=$(sed -n 's/^NOTE=//p' "$TOKEN")
+rm -f "$TOKEN"
+
+echo "✅ pre-push：批准令牌校验通过，已消费（一次性）" >&2
+echo "   批准说明：$note" >&2
+exit 0

@@ -31,11 +31,16 @@ type MetricsSnapshotExtra struct {
 // 没有 / 采集项时退回第一个挂载点（Agent 配置了自定义 mounts 的场景），
 // 两者都没有则返回 nil，让列落 NULL——宁缺勿编。
 func rootDisk(disks []protocol.DiskStat) (used, total *int64) {
-	for i, d := range disks {
-		if d.Mount == "/" || i == 0 {
+	for _, d := range disks {
+		if d.Mount == "/" {
 			u, t := int64(d.Used), int64(d.Total)
 			return &u, &t
 		}
+	}
+	// 没有「/」：退回第一个挂载点（Agent 配置了自定义 mounts 的场景）。
+	if len(disks) > 0 {
+		u, t := int64(disks[0].Used), int64(disks[0].Total)
+		return &u, &t
 	}
 	return nil, nil
 }

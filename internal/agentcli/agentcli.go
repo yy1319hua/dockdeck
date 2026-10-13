@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/yy1319hua/dockdeck/internal/agenthttp"
 	"github.com/yy1319hua/dockdeck/internal/crypto"
 	"github.com/yy1319hua/dockdeck/internal/protocol"
 )
@@ -237,10 +238,12 @@ func (c *Client) once(ctx context.Context, method, path string, body []byte, dst
 	}
 	req.Header.Set("Authorization", "Bearer "+c.Token)
 	// 写操作附带时间戳 + HMAC 签名，Agent 侧校验，防重放（读不带，减少每快照开销）。
+	// 签名路径用 agenthttp.CanonicalPath（RequestURI 含查询串），与 Agent 侧验签口径
+	// 一字不差——两侧各写一套路径拼接，带查询串的请求必然验签失败。
 	if method != http.MethodGet && method != http.MethodHead {
 		stamp := strconv.FormatInt(c.now().Unix(), 10)
 		req.Header.Set("X-DD-Timestamp", stamp)
-		req.Header.Set("X-DD-Signature", crypto.SignRequest([]byte(c.Token), stamp, method, path, body))
+		req.Header.Set("X-DD-Signature", crypto.SignRequest([]byte(c.Token), stamp, method, agenthttp.CanonicalPath(req), body))
 	}
 	resp, err := c.transport().Do(req)
 	if err != nil {

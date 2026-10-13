@@ -72,6 +72,13 @@ type Client struct {
 
 // New 构造一个使用默认策略的客户端。tlsCfg 可为 nil（明文或上层已处理）。
 func New(baseURL, token string, tlsCfg *tls.Config) *Client {
+	// Agent 全程自签证书：tlsCfg 为 nil 时跳过校验，指纹信任由 Hub 上层负责。
+	var tr *http.Transport
+	if tlsCfg != nil {
+		tr = &http.Transport{TLSClientConfig: tlsCfg}
+	} else {
+		tr = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+	}
 	return &Client{
 		BaseURL:      baseURL,
 		Token:        token,
@@ -79,7 +86,7 @@ func New(baseURL, token string, tlsCfg *tls.Config) *Client {
 		WriteTimeout: DefaultWriteTimeout,
 		MaxReadTries: DefaultMaxReadTries,
 		RetryBackoff: DefaultRetryBackoff,
-		HTTP:         &http.Client{Transport: &http.Transport{TLSClientConfig: tlsCfg}},
+		HTTP:         &http.Client{Transport: tr},
 	}
 }
 

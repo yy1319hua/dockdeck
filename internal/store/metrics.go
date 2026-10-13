@@ -179,3 +179,122 @@ func (s *Store) PruneMetrics(ctx context.Context, retention time.Duration, now t
 	}
 	return hostRows, containerRows, nil
 }
+
+// ---- S2.7：监控查询 API 的数据访问 ----
+
+// MaxOverviewPoints 限定 overview 单次返回的点数上限。
+// 历史表按 30s 采样滚动 7 天，全量约 2 万点，一次吐给前端既浪费也卡渲染；
+// 调用方需要更细就分页拉。上限常量写死而非配置——这是口径不是参数。
+const MaxOverviewPoints = 1440
+
+// HostPoint 是 host 历史曲线上的一个点，列与 metrics_snapshots 一一对应。
+type HostPoint struct {
+	Ts        time.Time `json:"ts"`
+	CPUPct    float64   `json:"cpu_pct"`
+	Mem       int64     `json:"mem_bytes"`
+	MemTotal  int64     `json:"mem_total"`
+	Disk      int64     `json:"disk_bytes"`
+	DiskTotal int64     `json:"disk_total"`
+	NetRx     int64     `json:"net_rx"`
+	NetTx     int64     `json:"net_tx"`
+	Load1     float64   `json:"load1"`
+}
+
+// ContainerPoint 是每容器历史曲线上的一个点。
+type ContainerPoint struct {
+	Ts       time.Time `json:"ts"`
+	CID      string    `json:"cid"`
+	Name     string    `json:"name"`
+	CPUPct   float64   `json:"cpu_pct"`
+	Mem      int64     `json:"mem_bytes"`
+	MemLimit int64     `json:"mem_limit"`
+	MemPct   float64   `json:"mem_pct"`
+	NetRx    int64     `json:"net_rx"`
+	NetTx    int64     `json:"net_tx"`
+	PIDs     int64     `json:"pids"`
+}
+
+// ServerExists 判断服务器是否存在。禁用的服务器也返回 true——
+// 它的指标只是不再更新，已入库的历史仍应可查。
+func (s *Store) ServerExists(ctx context.Context, id int64) (bool, error) {
+	if id <= 0 {
+		return false, nil
+	}
+	var one int
+	err := s.DB.QueryRowContext(ctx, `SELECT 1 FROM servers WHERE id=?`, id).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// MetricsHostRange 返回 [from,to] 内 host 历史点，升序，最多 limit 点（截最新的）。
+// limit<=0 或超过上限时按 MaxOverviewPoints 收敛，防止一次查询拖死 SQLite。
+func (s *Store) MetricsHostRange(ctx context.Context, serverID int64, from, to time.Time, limit int) ([]HostPoint, error) {
+	if limit <= 0 || limit > MaxOverviewPoints {
+		limit = MaxOverviewPoints
+	}
+	// 子查询取最新 N 点再升序排回：曲线要的是时间正向序列。
+	rows, err := s.DB.QueryContext(ctx,
+		`SELECT ts,cpu_pct,mem_bytes,mem_total,disk_bytes,disk_total,net_rx,net_tx,load1 FROM (
+		   SELECT ts,cpu_pct,mem_bytes,mem_total,disk_bytes,disk_total,net_rx,net_tx,load1
+		   FROM metrics_snapshots WHERE server_id=? AND ts>=? AND ts<=?
+		   ORDER BY ts DESC LIMIT ?
+		 ) ORDER BY ts ASC`,
+		serverID, from.UTC().Format(time.RFC3339), to.UTC().Format(time.RFC3339), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []HostPoint
+	for rows.Next() {
+		var tsStr string
+		var p HostPoint
+		var disk, diskTotal sql.NullInt64
+		if err := rows.Scan(&tsStr, &p.CPUPct, &p.Mem, &p.MemTotal, &disk, &diskTotal, &p.NetRx, &p.NetTx, &p.Load1); err != nil {
+			return nil, err
+		}
+		if p.Ts, err = time.Parse(time.RFC3339, tsStr); err != nil {
+			return nil, fmt.Errorf("store: ts 解析失败: %w", err)
+		}
+		// 可空列落 NULL 时以 0 入点：曲线断点靠相邻 ts 间隔判断，0 值不会伪装成有效数据。
+		p.Disk, p.DiskTotal = disk.Int64, diskTotal.Int64
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// MetricsContainerRange 返回 [from,to] 内全部容器的历史点，升序。
+// limit 作用于行数（不按容器均分）：上限兜底是目的，公平分配是曲线层的职责。
+func (s *Store) MetricsContainerRange(ctx context.Context, serverID int64, from, to time.Time, limit int) ([]ContainerPoint, error) {
+	if limit <= 0 || limit > MaxOverviewPoints {
+		limit = MaxOverviewPoints
+	}
+	rows, err := s.DB.QueryContext(ctx,
+		`SELECT ts,cid,name,cpu_pct,mem_bytes,mem_limit,mem_pct,net_rx,net_tx,pids FROM (
+		   SELECT ts,cid,name,cpu_pct,mem_bytes,mem_limit,mem_pct,net_rx,net_tx,pids
+		   FROM container_snapshots WHERE server_id=? AND ts>=? AND ts<=?
+		   ORDER BY ts DESC LIMIT ?
+		 ) ORDER BY ts ASC, cid ASC`,
+		serverID, from.UTC().Format(time.RFC3339), to.UTC().Format(time.RFC3339), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ContainerPoint
+	for rows.Next() {
+		var tsStr string
+		var p ContainerPoint
+		if err := rows.Scan(&tsStr, &p.CID, &p.Name, &p.CPUPct, &p.Mem, &p.MemLimit, &p.MemPct, &p.NetRx, &p.NetTx, &p.PIDs); err != nil {
+			return nil, err
+		}
+		if p.Ts, err = time.Parse(time.RFC3339, tsStr); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}

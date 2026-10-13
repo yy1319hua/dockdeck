@@ -1,7 +1,21 @@
 #!/usr/bin/env bash
-# pre-push —— 强制「push 每次都要用户单独批准」。
+# pre-push —— 强制「push 需用户批准」。
 #
-# 没有有效的一次性令牌就直接拒绝。令牌由 scripts/approve-push.sh 签发。
+# 令牌由 scripts/approve-push.sh 签发，两种：
+#   batch  一次推送，过期即失效，通过后消费（一次性）。
+#   plan   方案级：方案期内可多次推送，但**每次都校验改动文件是否在令牌
+#          记录的 SCOPE_PATHS 范围内**，越界即拒；通过后不消费。
+#
+# 为什么把关的维度用「范围」而不是「时间」：
+#   令牌若说不清「批准了什么」，就只能靠缩短有效期来限制风险——那正是
+#   「每推一次都要停下来请示」的成因。把范围写进令牌，实现阶段就不必
+#   反复打断，而越界仍由本钩子机械拦截（不是靠文档承诺）。
+#
+# 以下两类一律回退到 batch（即仍需逐次批准）：
+#   * refs/tags/*               打 tag
+#   * 新分支（远端无对应 ref，范围无从比对）
+#
+# 兼容：没有 MODE 行的旧令牌按 batch 处理。
 #
 # 局限（诚实说明）：
 #   1. core.hooksPath 不会被 git clone 继承，只在配了该 hook 的工作树生效。
@@ -12,21 +26,35 @@ set -uo pipefail
 root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 WS="${WORKSPACE:-$(dirname "$root")}"
 TOKEN="$WS/PUSH_TOKEN"
+ZERO="0000000000000000000000000000000000000000"
 
-# pre-push 会从 stdin 收到 ref 列表，读掉以免 git 报 broken pipe
-while read -r _l _r _n _o; do :; done
+# pre-push 从 stdin 收到 ref 列表，每行四个字段：
+#   <local ref> <local sha> <remote ref> <remote sha>
+# 必须全部读进来 —— 范围校验要靠 sha 计算改动文件，不能像以前那样读掉丢弃。
+REFS=""
+while read -r lref lsha _rref rsha; do
+    [ -n "${lref:-}" ] || continue
+    REFS="${REFS}${lref} ${lsha} ${rsha}"$'\n'
+done
 
-if [ ! -f "$TOKEN" ]; then
+reject() {
+    local msg="$1"; shift
     echo "" >&2
-    echo "⛔ 拒绝 push：未找到批准令牌。" >&2
-    echo "" >&2
-    echo "   push / 打 tag / 触发 CI 每次都要用户单独批准，上次批准不延续。" >&2
-    echo "" >&2
-    echo "   拿到批准后执行：" >&2
-    echo "     bash scripts/approve-push.sh \"<用户于何时批准哪一批改动>\"" >&2
-    echo "   再重新 push。令牌一次性，通过后自动消费。" >&2
+    echo "⛔ 拒绝 push：$msg" >&2
+    for l in "$@"; do echo "$l" >&2; done
     echo "" >&2
     exit 1
+}
+
+if [ ! -f "$TOKEN" ]; then
+    reject "未找到批准令牌。" \
+        "" \
+        "   push 必须由用户批准并签发令牌（batch：逐次；plan：按方案范围）。" \
+        "" \
+        "   拿到批准后执行其一：" \
+        "     bash scripts/approve-push.sh \"<用户于何时批准哪一批改动>\"" \
+        "     bash scripts/approve-push.sh --plan \"<方案名>\" --paths \"<范围>\" \"<批准说明>\"" \
+        "   再重新 push。"
 fi
 
 exp=$(sed -n 's/^EXPIRE_EPOCH=//p' "$TOKEN")
@@ -39,9 +67,75 @@ if [ -z "$exp" ] || [ "$exp" -le "$(date +%s)" ]; then
     exit 1
 fi
 
+mode=$(sed -n 's/^MODE=//p' "$TOKEN")
+[ -n "$mode" ] || mode=batch          # 旧令牌（无 MODE 行）按 batch 处理
 note=$(sed -n 's/^NOTE=//p' "$TOKEN")
-rm -f "$TOKEN"
 
-echo "✅ pre-push：批准令牌校验通过，已消费（一次性）" >&2
+FILES=""
+while read -r lref lsha rsha; do
+    [ -n "${lref:-}" ] || continue
+
+    # 本次推送涉及的改动文件（新分支时远端无 sha，退化为看最后一笔）
+    if [ "$rsha" = "$ZERO" ]; then
+        files=$(git diff --name-only "${lsha}^..${lsha}" 2>/dev/null)
+    else
+        files=$(git diff --name-only "$rsha..$lsha" 2>/dev/null)
+    fi
+    FILES="${FILES}${files}"$'\n'
+
+    # 打 tag：一律回退 batch（每次单独批准，批准不延续）
+    case "$lref" in
+        refs/tags/*)
+            if [ "$mode" != batch ]; then
+                reject "打 tag 须逐次批准，plan 令牌不适用于 $lref" \
+                    "   → 请为本次打 tag 单独签发 batch 令牌：" \
+                    "     bash scripts/approve-push.sh \"<用户于何时批准打该 tag>\""
+            fi
+            ;;
+    esac
+
+    if [ "$mode" = plan ]; then
+        # 新分支：远端无对应 ref，范围无从比对 → 回退 batch
+        if [ "$rsha" = "$ZERO" ]; then
+            reject "新分支 $lref 的推送范围无法与已批准方案比对" \
+                "   → 首次推送请用 batch 令牌逐次批准：" \
+                "     bash scripts/approve-push.sh \"<用户于何时批准推该新分支>\""
+        fi
+        [ -z "$files" ] && continue   # 无改动文件，无需范围校验
+
+        paths=$(sed -n 's/^SCOPE_PATHS=//p' "$TOKEN")
+        if [ -z "$paths" ]; then
+            reject "plan 令牌缺少 SCOPE_PATHS，无法做范围校验"
+        fi
+        plan=$(sed -n 's/^SCOPE_PLAN=//p' "$TOKEN")
+
+        # 注意：$paths 是有意的按空格分词，不要加引号
+        # shellcheck disable=SC2086
+        in_scope=$(git diff --name-only "$rsha..$lsha" -- $paths 2>/dev/null)
+        outside=$(comm -23 \
+            <(printf '%s\n' "$files" | sort -u) \
+            <(printf '%s\n' "$in_scope" | sort -u))
+
+        if [ -n "$outside" ]; then
+            reject "以下文件超出已批准方案「${plan:-（未命名）}」的范围" \
+                "$(printf '%s\n' "$outside" | sed 's/^/     /')" \
+                "" \
+                "   → 越界改动不得随已授权的 push 一起推，须单独请示。" \
+                "     若确需扩大范围，请重新签发带新 --paths 的 plan 令牌。"
+        fi
+    fi
+done <<< "$REFS"
+
+echo "✅ pre-push：令牌校验通过（模式：$mode）" >&2
 echo "   批准说明：$note" >&2
+if [ "$mode" = plan ]; then
+    echo "   已批准方案：$(sed -n 's/^SCOPE_PLAN=//p' "$TOKEN")" >&2
+    echo "   允许范围：$(sed -n 's/^SCOPE_PATHS=//p' "$TOKEN")" >&2
+    echo "   （plan 令牌不消费，方案期内可继续推送）" >&2
+else
+    rm -f "$TOKEN"
+    echo "   令牌已消费（一次性）" >&2
+fi
+echo "   本次推送涉及文件：" >&2
+printf '%s\n' "$FILES" | sort -u | sed '/^$/d' | sed 's/^/     /' >&2
 exit 0

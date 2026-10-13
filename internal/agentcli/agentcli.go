@@ -8,7 +8,8 @@
 //   - 重试分级：读是幂等的，网络错误 / 429 / 5xx 可重试；写绝不重试——
 //     Agent 侧写操作尚无幂等去重（S3 引入 X-DD-Request-Id），盲目重试
 //     可能把一次 stop 变成两次，违反「不猜语义」红线；
-//   - /test 连通性：纳管与巡检共用，顺带报告协议版本是否兼容。
+//   - /test 连通性：纳管与巡检共用，顺带报告协议版本是否兼容；
+//   - 每个请求（含读）都附 HMAC 签名：Agent 侧 Auth 中间件对全部请求强制验签。
 package agentcli
 
 import (
@@ -244,14 +245,13 @@ func (c *Client) once(ctx context.Context, method, path string, body []byte, dst
 		return 0, err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.Token)
-	// 写操作附带时间戳 + HMAC 签名，Agent 侧校验，防重放（读不带，减少每快照开销）。
-	// 签名路径用 agenthttp.CanonicalPath（RequestURI 含查询串），与 Agent 侧验签口径
-	// 一字不差——两侧各写一套路径拼接，带查询串的请求必然验签失败。
-	if method != http.MethodGet && method != http.MethodHead {
-		stamp := strconv.FormatInt(c.now().Unix(), 10)
-		req.Header.Set("X-DD-Timestamp", stamp)
-		req.Header.Set("X-DD-Signature", crypto.SignRequest([]byte(c.Token), stamp, method, agenthttp.CanonicalPath(req), body))
-	}
+	// 每个请求都附带时间戳 + HMAC 签名。agenthttp.Auth 对读也强制验签
+	// （「Bearer + HMAC 双重校验」是 Agent 侧既有契约），客户端必须对齐——
+	// 这里曾按「只签写」实现，S2.8 端到端测试用真实验签中间件把它抓了出来。
+	// 签名路径用 agenthttp.CanonicalPath（RequestURI 含查询串），两侧一字不差。
+	stamp := strconv.FormatInt(c.now().Unix(), 10)
+	req.Header.Set(agenthttp.HeaderTimestamp, stamp)
+	req.Header.Set(agenthttp.HeaderSignature, crypto.SignRequest([]byte(c.Token), stamp, method, agenthttp.CanonicalPath(req), body))
 	resp, err := c.transport().Do(req)
 	if err != nil {
 		return 0, err
@@ -268,6 +268,10 @@ func (c *Client) once(ctx context.Context, method, path string, body []byte, dst
 			return resp.StatusCode, env.Error
 		}
 		return resp.StatusCode, &httpStatusError{Status: resp.StatusCode, Body: string(raw)}
+	}
+	if resp.StatusCode == http.StatusNoContent || len(bytes.TrimSpace(raw)) == 0 {
+		// 204 或空响应体：没有信封可解，写操作常用。dst 不触碰，调用方自行判断。
+		return resp.StatusCode, nil
 	}
 	var out envelope
 	if err := json.Unmarshal(raw, &out); err != nil {

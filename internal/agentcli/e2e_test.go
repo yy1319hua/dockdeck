@@ -9,22 +9,34 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
-	"github.com/yy1319hua/dockdeck/internal/fakeagent"
+	"github.com/yy1319hua/dockdeck/internal/agenthttp"
 	"github.com/yy1319hua/dockdeck/internal/protocol"
 )
+
+// writeFixture 起一个「自签 TLS + 真实 Auth 中间件 + 写回显端点」的假 Agent。
+// S2 的 Agent 还没有写端点，这里只验鉴权链路——S3 有了真写端点后应迁过去。
+func writeFixture(t *testing.T, token string, gotBody *string) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.Handle("/api/v1/future-write", agenthttp.Auth(token, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		*gotBody = string(raw)
+		w.WriteHeader(http.StatusNoContent)
+	})))
+	srv := httptest.NewTLSServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
 
 // TestE2E_WriteSignatureEndToEnd 验证写请求的 HMAC 头能通过真实验签中间件。
 // 路径带查询串：Hub/Agent 两侧签名口径最容易劈叉的地方（S2.8 修过一次）。
 func TestE2E_WriteSignatureEndToEnd(t *testing.T) {
-	f := fakeagent.New("secret")
-	srv := f.Server()
-	t.Cleanup(srv.Close)
-
 	var gotBody string
-	srv.Config.Handler = withProbe(f.Handler(), &gotBody)
+	srv := writeFixture(t, "secret", &gotBody)
 
 	c := New(srv.URL, "secret", nil)
 	c.Now = func() time.Time { return time.Now() }
@@ -40,9 +52,8 @@ func TestE2E_WriteSignatureEndToEnd(t *testing.T) {
 // TestE2E_WriteWrongTokenRejected 验证错误 token 的写请求被中间件挡下，
 // 错误码为 unauthorized（与签名失败可区分，审计要求两者可分辨）。
 func TestE2E_WriteWrongTokenRejected(t *testing.T) {
-	f := fakeagent.New("secret")
-	srv := f.Server()
-	t.Cleanup(srv.Close)
+	var gotBody string
+	srv := writeFixture(t, "secret", &gotBody)
 
 	c := New(srv.URL, "wrong-token", nil)
 	c.Now = func() time.Time { return time.Now() }
@@ -51,35 +62,4 @@ func TestE2E_WriteWrongTokenRejected(t *testing.T) {
 	if !ok || perr.Code != protocol.CodeUnauthorized {
 		t.Fatalf("错误 token 应归 unauthorized，got %v", err)
 	}
-}
-
-// withProbe 在处理器外记录原始请求体（鉴权要读 body 算签名，probe 只在鉴权后拿副本）。
-// 注意顺序：probe 包在外层会把 body 消费掉，因此读完重新包 NopCloser 塞回去。
-func withProbe(next http.Handler, body *string) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost && r.Body != nil {
-			raw, _ := io.ReadAll(r.Body)
-			_ = r.Body.Close()
-			*body = string(raw)
-			r.Body = io.NopCloser(newRepeatReader(raw))
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-// repeatReader 让请求体可被重复读取（probe 读一次、验签再读一次）。
-type repeatReader struct {
-	data []byte
-	pos  int
-}
-
-func newRepeatReader(b []byte) *repeatReader { return &repeatReader{data: b} }
-
-func (r *repeatReader) Read(p []byte) (int, error) {
-	if r.pos >= len(r.data) {
-		return 0, io.EOF
-	}
-	n := copy(p, r.data[r.pos:])
-	r.pos += n
-	return n, nil
 }

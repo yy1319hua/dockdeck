@@ -1,16 +1,31 @@
 # DockDeck 架构
 
-多服务器 Docker 管理面板。一个 Hub 管 N 台宿主机，每台宿主机跑一个 Agent 读 docker.sock。
-仅 Tailscale 私网访问，不开任何公网端口。
+多服务器监控与 Docker 管理面板，监控主线参照哪吒监控（Nezha）。一个 Hub 管 N 台宿主机，
+每台宿主机跑一个 Agent 采集主机指标、按需读写 docker.sock 与受限文件目录。
+仅 Tailscale 私网访问，不开任何公网端口。对外提供 OpenAPI，App 与浏览器 UI 共用同一组端点。
+
+## 功能边界（2026-10-13 用户确认）
+
+| 含 | 不含 |
+| --- | --- |
+| 主机监控：CPU / 内存 / 磁盘 / 网络流量 / 负载 / 在线率 / 历史曲线 | 服务拨测（HTTP/TCP/Ping/SSL 证书） |
+| Docker 容器管理、日志、镜像、Compose | 告警通知（Telegram/邮件/Webhook） |
+| 文件管理（限定根白名单内） | Web 终端 / WebSSH |
+| 审计日志、OpenAPI + API Token | 免登录公开状态页（状态页须登录才显示） |
+
+「不含」是用户明确排除项，不得以「参照哪吒」为名自行加回。
 
 ## 组件
 
 ```
-浏览器 ──HTTPS──► Hub(:8443, 只绑 tailnet IP)
-                   ├─ Go 单二进制，前端 go:embed
-                   ├─ SQLite（用户/服务器/会话/审计/指标快照）
-                   └─ Agent Client ──HTTP+Bearer──► Agent(:9527, 每台宿主机)
-                                                      └─ Docker Engine API (unix socket)
+浏览器 / App ──HTTPS──► Hub(:8443, 只绑 tailnet IP)
+                          ├─ Go 单二进制，前端 go:embed
+                          ├─ SQLite（用户/服务器/会话/API令牌/审计/指标快照）
+                          ├─ 鉴权：cookie 会话 + Bearer API Token（scope 制）
+                          └─ Agent Client ──HTTP+Bearer+HMAC──► Agent(:9527, 每台宿主机)
+                                                                 ├─ /proc 主机指标
+                                                                 ├─ Docker Engine API (unix socket)
+                                                                 └─ 受限文件系统（根白名单）
 ```
 
 Hub 与 Agent 是两个独立二进制，同一 module、共享 `internal/protocol`。
@@ -30,10 +45,18 @@ Agent 启动时校验绑定地址属于 tailscale0，否则拒绝启动（`--all
 
 ## 认证
 
-- 用户侧：用户名 + 口令，**Argon2id**（口令永不入库，只存 hash+参数）。
+两套并存、互不越权的鉴权，均通过同一 `/api/*` 端点组：
+
+- **cookie 会话（浏览器 UI）**：用户名 + 口令，**Argon2id**（口令永不入库，只存 hash+参数）。
   会话为服务端签发的随机 token，库里存 SHA-256，HttpOnly + SameSite=Strict cookie，
   空闲 8h / 绝对 72h 过期；改密、登出、失败超阈值即撤销。
-- Hub 侧：自签证书 + 指纹写入设置页；可用 `DD_TLS_MODE=acme|self|none` 切换。
+- **Bearer API Token（App / 自动化）**：仅接受 `Authorization: Bearer <token>`。
+  token 为服务端生成的随机串，**库里只存 SHA-256，明文仅在创建时显示一次**；
+  带 scope 与过期时间，撤销后立即失效。scope：
+  `read:metrics`（主机与容器指标只读）、`read:containers`（容器/镜像/Compose 清单只读）、
+  `write:containers`（容器操作）、`write:files`（文件写）、`read:audit`（审计只读）。
+  Token 不能访问 UI 专属端点，cookie 会话不识别 Bearer 头——避免会话固定与 CSRF 面扩散。
+- Hub 侧：自签证书 + 指纹写入设置页；`DD_TLS_MODE=self|none`。
   `none` 只允许监听 127.0.0.1，用于反代场景。
 - Hub→Agent：每台服务器一个 256bit 随机 token，`Authorization: Bearer`；
   库中以机器主密钥（`/srv/dockdeck/secrets/master.key`，0600，首次启动生成）做 AES-256-GCM 加密存储。
@@ -45,39 +68,83 @@ Agent 启动时校验绑定地址属于 tailscale0，否则拒绝启动（`--all
 | --- | --- |
 | `users` | username、argon2 hash+参数、禁用标记、last_login |
 | `sessions` | token hash、user、过期、IP、UA |
+| `api_tokens` | token hash、name、scopes、created_by、expires_at、last_used_at、revoked_at |
 | `servers` | name、base_url、token(密)、arch、docker 版本、启用、last_seen、最近一次健康结果 |
-| `audit_logs` | ts、user、server、action、target、detail(JSON)、result、error、IP |
-| `metrics_snapshots` | server、ts、cpu%/mem/disk/net、每容器 cpu/mem（滚动 7 天，30s 采样） |
-| `settings` | key/value：看板阈值、备份策略、保护名单等 |
+| `audit_logs` | ts、user/token、server、action、target、detail(JSON)、result、error、IP |
+| `metrics_snapshots` | server、ts、cpu%/mem/disk/net、load、进程数、每容器 cpu/mem（滚动 7 天，30s 采样） |
+| `settings` | key/value：看板阈值、备份策略、保护名单、文件根白名单等 |
 
 驱动固定 `modernc.org/sqlite`（纯 Go，无 CGO）——这是 `CGO_ENABLED=0` 交叉编译 ARM64/x86_64 的前提。
 迁移为 `internal/db/migrations/*.sql` 顺序执行，带 `schema_migrations` 版本表。
+
+## OpenAPI
+
+- 对外契约文件：`docs/openapi.yaml`，由源码注释生成，运行时经 `GET /api/openapi.json` 暴露同一份 spec。
+- **spec 与路由一致性有测试保证**：注册表与 spec 逐条比对，路由缺注解即测试红（S8.2）。
+- 版本：`openapi: 3.0.3`（App 侧工具链兼容性最稳）。
+- 鉴权声明：`securitySchemes` 提供 `cookieAuth` 与 `bearerAuth` 两种。
+- UI 与 App 共用端点集，不为 App 另开一套路径。
 
 ## HTTP 契约
 
 Hub API 前缀 `/api/v1`，响应统一 `{ "data": ..., "error": { "code", "message" } }`。
 
-| Hub | 说明 |
-| --- | --- |
-| `POST /auth/login` `/auth/logout` `GET /auth/me` `POST /auth/password` | 登录态 |
-| `GET /servers` `POST /servers` `PATCH /servers/{id}` `DELETE /servers/{id}` `POST /servers/{id}/test` | 纳管 |
-| `GET /servers/{id}/overview` `GET /servers/{id}/metrics` | 监控 |
-| `GET /servers/{id}/containers` `GET .../containers/{cid}` `POST .../{action}` | 容器 action: start/stop/restart/pause/unpause/kill/update/resize |
-| `DELETE .../containers/{cid}` | 需 `confirm=<name>` 且非保护对象 |
-| `GET .../containers/{cid}/logs?tail=&since=&until=&follow=` `GET .../export` | 日志 |
-| `GET .../images` `POST .../images/pull` `DELETE .../images/{ref}` `POST .../prune` | 镜像 |
-| `GET .../volumes` `GET .../networks` | 附带只读 |
-| `GET .../compose` `GET/PUT .../compose/{project}/file` `POST .../compose/{project}/{action}` | action: up/down/restart/pull/logs |
-| `GET /audit` | 审计查询（过滤 user/server/action/区间） |
-| `GET /ws` | WebSocket：`log`、`stats` 推送 |
+| Hub | scope | 说明 |
+| --- | --- | --- |
+| `POST /auth/login` `/auth/logout` `GET /auth/me` `POST /auth/password` | 会话 | 仅 cookie；Token 不可调用 |
+| `GET/POST/PATCH/DELETE /servers*` `POST /servers/{id}/test` | 会话 | 纳管管理，UI 专属 |
+| `GET/POST/DELETE /api-tokens*` | 会话 | Token 签发与撤销，UI 专属 |
+| `GET /servers/{id}/overview` `GET /servers/{id}/metrics?since=&until=&step=` | `read:metrics` | **监控主线** |
+| `GET /servers/overview` | `read:metrics` | 多主机聚合（哪吒式总览） |
+| `GET /servers/{id}/containers` `GET .../containers/{cid}` | `read:containers` | 容器清单与详情 |
+| `POST .../containers/{cid}/{action}` | `write:containers` | start/stop/restart/pause/unpause/kill/resize |
+| `DELETE .../containers/{cid}` | `write:containers` | 需 `confirm=<name>` 且非保护对象 |
+| `GET .../containers/{cid}/logs?tail=&since=&until=&follow=` | `read:containers` | 日志 |
+| `GET .../images` `POST .../images/pull` `DELETE .../images/{ref}` `POST .../prune` | `read:`/`write:containers` | 镜像 |
+| `GET .../compose` `GET/PUT .../compose/{project}/file` `POST .../compose/{project}/{action}` | `read:`/`write:containers` | Compose |
+| `GET .../files?path=` `GET .../files/content?path=` | `read:metrics` | 文件列表与读取 |
+| `PUT .../files/content` `POST .../files/{action}` | `write:files` | 写/删/建目录/改名，限根白名单 |
+| `GET /audit` `GET /audit/export` | `read:audit` | 审计查询与导出 |
+| `GET /ws` | 会话 | WebSocket：`log`、`stats` 推送 |
+| `GET /api/openapi.json` | 公开 | spec 本体 |
 
-Agent API 前缀 `/api/v1`：`/info` `/stats` `/containers*` `/images*` `/compose*` `/logs` `/exec-logs`，
+Agent API 前缀 `/api/v1`：`/info` `/metrics` `/containers*` `/images*` `/compose*` `/logs` `/files*`，
 语义与 Hub 一一对应；Hub 只做鉴权、审计、聚合，不重新实现 Docker 逻辑。
+
+## 主机指标采集
+
+Agent 侧只读 `/proc`，不引入 gopsutil 这类额外依赖（交叉编译体积与可控性）：
+
+| 指标 | 来源 |
+| --- | --- |
+| CPU % | `/proc/stat` 两次采样差值（含 user/system/iowait/steal） |
+| 内存 | `/proc/meminfo`：used = MemTotal − MemAvailable |
+| 磁盘用量 | `statfs` 系统调用，逐挂载点，路径由配置指定 |
+| 网络流量 | `/proc/net/dev` 累计 rx/tx 字节，速率由 Hub 侧按时间差算 |
+| 负载 | `/proc/loadavg` |
+| 进程数 | `/proc` 下数字目录计数 |
+| 在线时长 | `/proc/uptime` |
+| 每容器 cpu/mem | Docker `/containers/{id}/stats?stream=false` |
+
+采样在 Agent 侧不落地历史（除最近一次快照），历史序列由 Hub 轮询写 `metrics_snapshots`，
+滚动 7 天。这样 Agent 无状态、可随意重装。
+
+## 文件管理（新增模块，边界最严）
+
+文件写能力与「只读默认」原则冲突，因此单独收紧：
+
+1. **根白名单**：Agent 启动时用 `--fs-root` 指定可访问目录，可多个；不在白名单内的路径一律拒绝，且校验发生在任何 IO 之前。
+2. **realpath 后前缀校验**：解析符号链接得真实路径，再校验前缀属于白名单，杜绝 `..` 与软链逃逸。
+3. **黑名单**：私钥、`credentials`、`.env`、`/etc/shadow` 类 pattern 不可读不可写。
+4. **不做执行**：没有 exec、没有终端。上传的文件不会被运行。
+5. **默认关闭**：未显式配 `--fs-root` 时文件模块不注册路由。
+6. **写操作全审计**，且需 `write:files` scope。
 
 ## 现有容器与数据保护（不可协商）
 
-1. **只读默认**：Hub 不主动写宿主机任何文件；唯一写入路径是用户显式提交 Compose YAML。
-2. **备份优先于变更**：写 Compose 文件前先落 `*.bak.<RFC3339>`；SQLite 用 `VACUUM INTO` 出快照，不复制运行中的 db 文件。
+1. **默认不写宿主机**：Hub 不主动写任何文件。写入路径只有两类，且都需显式请求——
+   用户提交的 Compose YAML，以及文件管理模块在白名单目录内的操作。除此之外全部只读。
+2. **备份优先于变更**：写 Compose 文件与白名单内文件前，先落 `*.bak.<RFC3339>`；SQLite 用 `VACUUM INTO` 出快照，不复制运行中的 db 文件。
 3. **破坏性动作三重门**：保护名单命中即拒（`settings.protected_containers` 正则，默认含 `dockdeck-*`、
    `watchtower`、部署时录入的现有容器名）；`prune` 类必须 `dry_run` 先行并在 UI 展示将被删清单；
    删除容器要求输入名字确认。所有此类操作进审计。
@@ -89,7 +156,8 @@ Agent API 前缀 `/api/v1`：`/info` `/stats` `/containers*` `/images*` `/compos
 
 Vue 3 + Vite + TS，`vue-router` + `pinia`，图表 uPlot，无重型 UI 框架，自带深色设计系统。
 构建产物 `web/dist` 经 `go:embed` 进二进制，交付物仍是单个可执行文件。
-页面：登录 / 服务器总览 / 单服务器详情（容器·日志·镜像·Compose·监控）/ 审计 / 设置。
+页面：**服务器监控总览（主视图）** / 单主机详情（指标·容器·日志·镜像·Compose·文件）/
+审计 / API Token 与设置。状态与数据须登录才显示，无免登录公开页。
 危险操作二次确认，输入目标名才可提交。
 
 ## 构建与交付

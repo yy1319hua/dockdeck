@@ -116,10 +116,10 @@ func (s *Store) RecordLoginSuccess(ctx context.Context, userID int64) error {
 
 func scanUser(row *sql.Row) (*User, error) {
 	var (
-		u            User
-		disabled     int
-		lockedUntil  sql.NullString
-		lastLogin    sql.NullString
+		u           User
+		disabled    int
+		lockedUntil sql.NullString
+		lastLogin   sql.NullString
 	)
 	err := row.Scan(&u.ID, &u.Username, &u.PwHash, &disabled, &u.FailedCount, &lockedUntil, &lastLogin)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -186,7 +186,7 @@ func (s *Store) LookupSession(ctx context.Context, token string, idleTTL time.Du
 		 WHERE token_hash=? AND revoked_at IS NULL AND absolute_exp > ?`,
 		hash, time.Now().UTC().Format(time.RFC3339))
 	var (
-		sess      Session
+		sess       Session
 		expS, absS string
 	)
 	err := row.Scan(&sess.ID, &sess.UserID, &sess.TokenHash, &expS, &absS, &sess.IP, &sess.UserAgent)
@@ -288,3 +288,7 @@ func isUniqueErr(err error) bool {
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "unique") || strings.Contains(msg, "constraint")
 }
+
+// IsUniqueErr 把 SQLite 的唯一约束冲突暴露给上层，让它们能回「名称已存在」
+// 而不是笼统的内部错误。
+func IsUniqueErr(err error) bool { return isUniqueErr(err) }

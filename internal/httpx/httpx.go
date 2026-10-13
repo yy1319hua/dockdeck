@@ -45,10 +45,38 @@ func ClientIP(r *http.Request) string {
 	return host
 }
 
+// 身份来源。两套凭据互不信任：cookie 会话只由会话中间件解析，
+// Bearer Token 只由 Token 中间件解析，任一中间件都不会接受另一类的凭据。
+const (
+	AuthKindSession = "session"
+	AuthKindToken   = "token"
+)
+
 type UserPrincipal struct {
 	UserID   int64
 	Username string
-	Session  string
+	Session  string // 仅会话来源：明文令牌，供撤销自身会话用
+
+	AuthKind  string   // 空值按 session 处理（S1 已有代码路径）
+	TokenID   int64    // 仅 Token 来源
+	TokenName string   // 仅 Token 来源，审计里区分是哪个 App
+	Scopes    []string // 仅 Token 来源；会话来源拥有全部权限故为空
+}
+
+// ViaToken 判定本次请求是否由 API Token 而非浏览器会话发起。
+func (u UserPrincipal) ViaToken() bool { return u.AuthKind == AuthKindToken }
+
+// HasScope 检查 Token 是否含某 scope；会话来源视为全权限。
+func (u UserPrincipal) HasScope(scope string) bool {
+	if !u.ViaToken() {
+		return true
+	}
+	for _, s := range u.Scopes {
+		if s == scope {
+			return true
+		}
+	}
+	return false
 }
 
 func WithUser(ctx context.Context, u UserPrincipal) context.Context {

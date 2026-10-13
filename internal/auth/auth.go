@@ -120,8 +120,8 @@ func (m *Manager) Logout(w http.ResponseWriter, r *http.Request) {
 }
 
 type meResp struct {
-	Username  string `json:"username"`
-	SetupRequired bool `json:"setup_required"`
+	Username      string `json:"username"`
+	SetupRequired bool   `json:"setup_required"`
 }
 
 // Me 返回当前登录用户；未登录时若系统尚无账户，报告 setup_required 以便前端引导建号。
@@ -240,6 +240,7 @@ func (m *Manager) TryAuth(next http.Handler) http.Handler {
 		}
 		ctx := httpx.WithUser(r.Context(), httpx.UserPrincipal{
 			UserID: sess.UserID, Username: uname, Session: c.Value,
+			AuthKind: httpx.AuthKindSession,
 		})
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
@@ -248,31 +249,39 @@ func (m *Manager) TryAuth(next http.Handler) http.Handler {
 // RequireAuth 校验 cookie 会话，注入 UserPrincipal；失败返回 401。
 func (m *Manager) RequireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		c, err := r.Cookie(m.opt.CookieName)
-		if err != nil || c.Value == "" {
-			httpx.WriteError(w, http.StatusUnauthorized, "unauthenticated", "需登录")
-			return
-		}
-		sess, err := m.st.LookupSession(r.Context(), c.Value, m.opt.IdleTTL)
-		if err != nil {
-			if errors.Is(err, store.ErrNotFound) {
-				httpx.WriteError(w, http.StatusUnauthorized, "session_invalid", "会话无效或已过期")
-				return
-			}
-			httpx.WriteError(w, http.StatusInternalServerError, "internal", "内部错误")
-			return
-		}
-		// 取用户名（principal 需要）
-		uname := m.usernameByID(r, sess.UserID)
-		if uname == "" {
-			httpx.WriteError(w, http.StatusUnauthorized, "session_invalid", "会话无效")
-			return
-		}
-		ctx := httpx.WithUser(r.Context(), httpx.UserPrincipal{
-			UserID: sess.UserID, Username: uname, Session: c.Value,
-		})
-		next.ServeHTTP(w, r.WithContext(ctx))
+		m.ServeSession(w, r, next, "")
 	})
+}
+
+// ServeSession 校验 cookie 会话后放行，失败自行写 401。
+// 签名刻意与 apitoken.SessionVerifier 一致——Go 的函数类型按签名结构化匹配，
+// 这样两个包不必互相引用（会话不该知道 Token 的存在）。
+// scope 参数对会话无意义：浏览器登录即全权限。
+func (m *Manager) ServeSession(w http.ResponseWriter, r *http.Request, next http.Handler, scope string) {
+	c, err := r.Cookie(m.opt.CookieName)
+	if err != nil || c.Value == "" {
+		httpx.WriteError(w, http.StatusUnauthorized, "unauthenticated", "需登录")
+		return
+	}
+	sess, err := m.st.LookupSession(r.Context(), c.Value, m.opt.IdleTTL)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			httpx.WriteError(w, http.StatusUnauthorized, "session_invalid", "会话无效或已过期")
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "内部错误")
+		return
+	}
+	uname := m.usernameByID(r, sess.UserID)
+	if uname == "" {
+		httpx.WriteError(w, http.StatusUnauthorized, "session_invalid", "会话无效")
+		return
+	}
+	ctx := httpx.WithUser(r.Context(), httpx.UserPrincipal{
+		UserID: sess.UserID, Username: uname, Session: c.Value,
+		AuthKind: httpx.AuthKindSession,
+	})
+	next.ServeHTTP(w, r.WithContext(ctx))
 }
 
 func (m *Manager) usernameByID(r *http.Request, id int64) string {

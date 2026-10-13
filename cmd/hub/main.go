@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/yy1319hua/dockdeck/internal/apitoken"
 	"github.com/yy1319hua/dockdeck/internal/assets"
 	"github.com/yy1319hua/dockdeck/internal/auth"
 	"github.com/yy1319hua/dockdeck/internal/config"
@@ -22,6 +23,8 @@ import (
 	"github.com/yy1319hua/dockdeck/internal/db"
 	"github.com/yy1319hua/dockdeck/internal/httpx"
 	"github.com/yy1319hua/dockdeck/internal/middleware"
+	"github.com/yy1319hua/dockdeck/internal/openapi"
+	"github.com/yy1319hua/dockdeck/internal/route"
 	"github.com/yy1319hua/dockdeck/internal/store"
 	"github.com/yy1319hua/dockdeck/internal/tlsx"
 )
@@ -58,8 +61,14 @@ func run(args []string) error {
 	authOpt.Secure = cfg.TLSMode != config.TLSModeNone
 	am := auth.NewManager(st, authOpt)
 
-	srv := &server{st: st, am: am}
-	handler := httpx.SecurityHeaders(middleware.RequestCtx(srv.routes()))
+	srv := &server{
+		st:     st,
+		am:     am,
+		tokens: apitoken.NewAPI(sqlDB),
+		// 登录/建号入口 IP 限流：突发 10，每 30s 补 1。
+		rl: middleware.NewRateLimit(10, 30*time.Second),
+	}
+	handler := middleware.RequestCtx(httpx.SecurityHeaders(srv.routes()))
 
 	httpSrv := &http.Server{
 		Addr:              cfg.ListenAddr,
@@ -120,34 +129,120 @@ func run(args []string) error {
 
 // server 聚合依赖，避免全局变量。
 type server struct {
-	st *store.Store
-	am *auth.Manager
+	st     *store.Store
+	am     *auth.Manager
+	tokens *apitoken.API
+	rl     *middleware.RateLimit
+	table  *route.Table // 由 routes() 赋值；spec 从这里生成
 }
 
-// routes 用 Go 1.22 的方法+路径通配注册路由。
-func (s *server) routes() *http.ServeMux {
+// routes 用 route.Table 声明端点：注册与 OpenAPI 生成共用同一份声明。
+// 新增 API 一律走 tbl.Add，不要直接 mux.Handle，否则一致性测试会红。
+func (s *server) routes() http.Handler {
 	mux := http.NewServeMux()
+	tbl := route.New(mux, func(e route.Entry, h http.Handler) http.Handler {
+		var wrapped http.Handler
+		switch e.AuthMode {
+		case route.AuthNone:
+			wrapped = h
+		case route.AuthSession:
+			wrapped = s.am.RequireAuth(h)
+		default:
+			wrapped = apitoken.Require(s.am.ServeSession, s.tokens, e.Scope)(h)
+		}
+		if e.RateLimited {
+			wrapped = s.rl.LoginRateLimit(wrapped)
+		}
+		return wrapped
+	})
+	s.table = tbl
 
-	// 登录/建号入口加 IP 限流（突发 10，每 30s 补 1）。
-	rl := middleware.NewRateLimit(10, 30*time.Second)
-
-	mux.HandleFunc("GET /api/v1/health", func(w http.ResponseWriter, r *http.Request) {
+	// ---- 公开 ----
+	tbl.Add(route.Entry{
+		Method: "GET", Path: "/api/v1/health", AuthMode: route.AuthNone,
+		Summary: "健康检查", Tags: []string{"Meta"},
+	}, func(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 	})
 
-	// 可选认证：未登录也返回 setup_required，供前端首启建号判断。
-	mux.Handle("GET /api/v1/auth/me", s.am.TryAuth(http.HandlerFunc(s.am.Me)))
+	tbl.Add(route.Entry{
+		Method: "GET", Path: "/api/openapi.json", AuthMode: route.AuthNone, NoEnvelope: true,
+		Summary: "本服务的 OpenAPI 3.0.3 文档", Tags: []string{"Meta"},
+		Desc: "由路由登记表实时生成，与实装同源。",
+	}, func(w http.ResponseWriter, r *http.Request) {
+		b, err := s.spec().JSON()
+		if err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "internal", "spec 生成失败")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(b)
+	})
 
-	mux.Handle("POST /api/v1/auth/login", rl.LoginRateLimit(http.HandlerFunc(s.am.Login)))
-	mux.Handle("POST /api/v1/auth/setup", rl.LoginRateLimit(http.HandlerFunc(s.am.Setup)))
-	mux.Handle("POST /api/v1/auth/logout", s.am.RequireAuth(http.HandlerFunc(s.am.Logout)))
-	// 改密自身的审计在 auth.ChangePassword 内完成，不再套中间件以免重复记录。
-	mux.Handle("POST /api/v1/auth/password", s.am.RequireAuth(http.HandlerFunc(s.am.ChangePassword)))
+	tbl.Add(route.Entry{
+		Method: "GET", Path: "/api/v1/scopes", AuthMode: route.AuthNone,
+		Summary: "API Token 权限项字典", Tags: []string{"Meta"},
+		Desc: "列出全部可申请的 scope 及说明。公开：它不含任何本机信息，只是权限名词表。",
+	}, apitoken.ScopesHandler)
 
-	// 后续阶段填充的受保护占位，保证前端骨架可联调。
-	mux.Handle("GET /api/v1/servers", s.am.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// ---- 会话 ----
+	tbl.Add(route.Entry{
+		Method: "GET", Path: "/api/v1/auth/me", AuthMode: route.AuthNone,
+		Summary: "当前身份", Tags: []string{"Auth"},
+		Desc: "未登录也返回 200，并用 setup_required 提示前端引导首启建号，因此挂在 TryAuth 下而非 RequireAuth。",
+	}, s.am.TryAuth(http.HandlerFunc(s.am.Me)).ServeHTTP)
+
+	tbl.Add(route.Entry{
+		Method: "POST", Path: "/api/v1/auth/login", AuthMode: route.AuthNone,
+		Summary: "登录", Tags: []string{"Auth"}, Body: &route.Body{}, RateLimited: true,
+		Desc: "成功写入会话 cookie。仅限浏览器；API Token 不能调用认证端点。",
+	}, s.am.Login)
+
+	tbl.Add(route.Entry{
+		Method: "POST", Path: "/api/v1/auth/setup", AuthMode: route.AuthNone,
+		Summary: "首启建号", Tags: []string{"Auth"}, Body: &route.Body{}, RateLimited: true,
+		Desc: "仅当系统尚无任何用户时可用，成功即登录。",
+	}, s.am.Setup)
+
+	tbl.Add(route.Entry{
+		Method: "POST", Path: "/api/v1/auth/logout", AuthMode: route.AuthSession,
+		Summary: "登出", Tags: []string{"Auth"},
+	}, s.am.Logout)
+
+	tbl.Add(route.Entry{
+		Method: "POST", Path: "/api/v1/auth/password", AuthMode: route.AuthSession,
+		Summary: "改密", Tags: []string{"Auth"}, Body: &route.Body{},
+		Desc: "改密成功后撤销该用户全部会话，需重新登录。审计在本端点内完成，故不再套审计中间件。",
+	}, s.am.ChangePassword)
+
+	// ---- API Token 管理（仅会话）----
+	tbl.Add(route.Entry{
+		Method: "GET", Path: "/api/v1/api-tokens", AuthMode: route.AuthSession,
+		Summary: "列出 API Token", Tags: []string{"Tokens"},
+		Desc: "只返回元数据：明文与哈希都不出库。",
+	}, s.tokens.ListHandler)
+
+	tbl.Add(route.Entry{
+		Method: "POST", Path: "/api/v1/api-tokens", AuthMode: route.AuthSession, Status: http.StatusCreated,
+		Summary: "签发 API Token", Tags: []string{"Tokens"}, Body: &route.Body{},
+		Desc: "字段：name（唯一）、scopes（取自 GET /api/v1/scopes）、ttl（7d|30d|90d|1y|never）。" +
+			"明文 plaintext 仅本次响应可见。",
+	}, s.tokens.CreateHandler)
+
+	tbl.Add(route.Entry{
+		Method: "DELETE", Path: "/api/v1/api-tokens/{id}", AuthMode: route.AuthSession,
+		Summary: "撤销 API Token", Tags: []string{"Tokens"},
+	}, s.tokens.RevokeHandler)
+
+	// ---- 占位：S2 起逐步替换为真实实现 ----
+	tbl.Add(route.Entry{
+		Method: "GET", Path: "/api/v1/servers", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadMetrics,
+		Summary: "受管主机清单（占位）", Tags: []string{"Servers"},
+		Desc: "S2 接入 Agent 前恒返回空数组。",
+	}, func(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, []any{})
-	})))
+	})
 
 	// 前端 SPA 兜底：非 /api 路径交静态资源，未命中回 index.html。
 	static := assets.Handler()
@@ -159,6 +254,26 @@ func (s *server) routes() *http.ServeMux {
 		static.ServeHTTP(w, r)
 	})
 	return mux
+}
+
+// spec 生成 OpenAPI 文档。Info.version 暂为手工常量；S8 接入真实构建版本后由 ldflags 注入。
+func (s *server) spec() *openapi.Doc {
+	return openapi.Generate(openapi.Info{
+		Title:   "DockDeck Hub API",
+		Version: "0.1.0",
+		Description: "自研多主机监控与 Docker 管理面板的服务端接口。\n\n" +
+			"**访问方式**：服务只绑定 Tailscale 网卡地址，不在公网监听；" +
+			"浏览器用 cookie 会话，App / 脚本用 `Authorization: Bearer ddk_...`。\n\n" +
+			"**两套身份互不信任**：带 Bearer 时只看 Token（即便同时带了 cookie），" +
+			"Token 权限由签发时勾选的 scope 决定，scope 不足返回 403；" +
+			"登录、改密、Token 管理等端点仅会话可用，Token 调用一律 401。\n\n" +
+			"**响应信封**：成功 `{\"data\":…}`，失败 `{\"error\":{\"code\",\"message\"}}`。" +
+			"客户端请判 `code` 而非中文文案。",
+		License: &openapi.License{
+			Name: "PolyForm Noncommercial License 1.0.0",
+			URL:  "https://polyformproject.org/licenses/noncommercial/1.0.0",
+		},
+	}, s.table.Entries())
 }
 
 func waitForShutdown() {

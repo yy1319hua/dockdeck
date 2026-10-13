@@ -36,6 +36,8 @@ type AgentConfig struct {
 	// AllowInsecureBind 跳过网卡白名单校验。
 	// 仅用于「明确知道自己在做什么」的场景，启动时必须留下告警日志。
 	AllowInsecureBind bool
+	// DiskMounts 是要统计容量的挂载点，默认只统计根。
+	DiskMounts []string
 }
 
 // ifaceAddrs 返回「网卡名 → 该网卡上的 IP 列表」。
@@ -78,6 +80,7 @@ func agentDefaults() AgentConfig {
 		CertDir:    filepath.Join(dataDir, "certs"),
 		TLSMode:    TLSModeSelf,
 		BindIfaces: []string{DefaultBindIfaces},
+		DiskMounts: []string{"/"},
 	}
 }
 
@@ -111,6 +114,9 @@ func LoadAgent(args []string) (AgentConfig, error) {
 		}
 		c.AllowCIDR = nets
 	}
+	if v := os.Getenv("DD_AGENT_DISK_MOUNTS"); v != "" {
+		c.DiskMounts = splitList(v)
+	}
 	if envFlag("DD_AGENT_ALLOW_INSECURE_BIND") {
 		c.AllowInsecureBind = true
 	}
@@ -120,6 +126,7 @@ func LoadAgent(args []string) (AgentConfig, error) {
 	fs.StringVar(&c.CertDir, "cert-dir", c.CertDir, "自签证书目录")
 	bindIfaces := fs.String("bind-ifaces", strings.Join(c.BindIfaces, ","), "允许绑定的网卡名，逗号分隔")
 	allowCIDR := fs.String("allow-cidr", "", "额外允许绑定的 IP 段，逗号分隔 CIDR")
+	diskMounts := fs.String("disk-mounts", strings.Join(c.DiskMounts, ","), "统计容量的挂载点，逗号分隔")
 	tokenFile := fs.String("token-file", "", "读取 Agent token 的文件（优先用环境变量 DD_AGENT_TOKEN）")
 	insecure := fs.Bool("allow-insecure-bind", c.AllowInsecureBind, "跳过网卡白名单校验（不安全，仅调试）")
 	var tlsModeRaw string
@@ -144,6 +151,9 @@ func LoadAgent(args []string) (AgentConfig, error) {
 			return AgentConfig{}, err
 		}
 		c.AllowCIDR = nets
+	}
+	if *diskMounts != "" {
+		c.DiskMounts = splitList(*diskMounts)
 	}
 	if *insecure {
 		c.AllowInsecureBind = true

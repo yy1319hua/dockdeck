@@ -15,6 +15,7 @@ import (
 	"github.com/yy1319hua/dockdeck/internal/collector"
 	"github.com/yy1319hua/dockdeck/internal/config"
 	"github.com/yy1319hua/dockdeck/internal/httpx"
+	"github.com/yy1319hua/dockdeck/internal/protocol"
 	"github.com/yy1319hua/dockdeck/internal/tlsx"
 )
 
@@ -37,7 +38,7 @@ func run(args []string) error {
 
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
-		Handler:           buildHandler(cfg.Token, collector.New(cfg.DiskMounts)),
+		Handler:           buildHandler(cfg.Token, collector.New(cfg.DiskMounts), collector.NilStatsSource{}),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -71,12 +72,33 @@ func run(args []string) error {
 
 // buildHandler 装配 Agent 的路由表。
 // 抽成函数是为了让冒烟测试能复用与生产完全相同的中间件链。
-func buildHandler(token string, col *collector.Collector) http.Handler {
+// src 是容器指标源：S3.1 接入 Engine API 前用 NilSource，端点始终可用但返回空列表。
+// 传 nil 时同样落到 NilSource，调用方不必判空。
+func buildHandler(token string, col *collector.Collector, src collector.ContainerStatsSource) http.Handler {
 	mux := http.NewServeMux()
 	// Agent 侧同样使用 /api/v1 前缀，与 Hub 侧路由一一对应。
 	mux.Handle("/api/v1/info", agenthttp.Auth(token, nil)(agenthttp.Info()))
 	mux.Handle("/api/v1/metrics", agenthttp.Auth(token, nil)(metricsHandler(col)))
+	mux.Handle("/api/v1/containers/stats", agenthttp.Auth(token, nil)(containerStatsHandler(src)))
 	return mux
+}
+
+// containerStatsHandler 返回每容器资源占用快照。
+//
+// 降级语义与主机指标一致：源出错时返回 200 + 空列表并记日志，而不是 5xx——
+// 容器曲线缺失不该让 Hub 误判机器离线；NilSource 天然走这条路径。
+func containerStatsHandler(src collector.ContainerStatsSource) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if src == nil {
+			src = collector.NilStatsSource{}
+		}
+		stats, err := src.ContainerStats()
+		if err != nil {
+			log.Printf("agent: 容器指标采集失败，本轮返回空列表：%v", err)
+			stats = []protocol.ContainerStat{}
+		}
+		httpx.WriteJSON(w, http.StatusOK, stats)
+	}
 }
 
 // metricsHandler 返回一次主机指标快照。

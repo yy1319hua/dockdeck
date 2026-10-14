@@ -28,6 +28,14 @@ type fakeComposeOp struct {
 	logsErr  error
 	// called 记录动作分发，验证 up/down/restart/pull 各走对应方法。
 	called []string
+
+	// S4.3 文件读写相关。
+	fileContent string   // ReadFile 返回的当前内容
+	fileErr     error    // ReadFile/Diff/WriteFile 的统一错误注入
+	diffOut     string   // Diff 返回的 diff 文本
+	writeBackup string   // WriteFile 返回的备份路径
+	writeErr    error    // WriteFile 错误注入
+	wrote       []string // 记录写入调用，验证 file|content 透传
 }
 
 func (f *fakeComposeOp) ListProjects(ctx context.Context) ([]protocol.ComposeProject, error) {
@@ -64,6 +72,17 @@ func (f *fakeComposeOp) Logs(ctx context.Context, file string, follow bool) (io.
 		return nil, f.logsErr
 	}
 	return io.NopCloser(strings.NewReader(f.logsData)), nil
+}
+
+func (f *fakeComposeOp) ReadFile(ctx context.Context, file string) (string, error) {
+	return f.fileContent, f.fileErr
+}
+func (f *fakeComposeOp) Diff(ctx context.Context, file string, content string) (string, error) {
+	return f.diffOut, f.fileErr
+}
+func (f *fakeComposeOp) WriteFile(ctx context.Context, file string, content string) (string, error) {
+	f.wrote = append(f.wrote, file+"|"+content)
+	return f.writeBackup, f.writeErr
 }
 
 func agentWithCompose(t *testing.T, op dockercli.ComposeOperator) *httptest.Server {

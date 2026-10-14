@@ -23,7 +23,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/yy1319hua/dockdeck/internal/diff"
 	"github.com/yy1319hua/dockdeck/internal/protocol"
 )
 
@@ -71,6 +73,14 @@ type ComposeOperator interface {
 	Restart(ctx context.Context, file string) (string, error)
 	Pull(ctx context.Context, file string) (string, error)
 	Logs(ctx context.Context, file string, follow bool) (io.ReadCloser, error)
+
+	// ReadFile 读取 compose 文件当前内容（file 由 ResolveProject 给出，已在白名单内）。
+	ReadFile(ctx context.Context, file string) (string, error)
+	// Diff 计算 content 相对当前文件的 unified diff（预览用，不落盘、不产生备份）。
+	Diff(ctx context.Context, file string, content string) (string, error)
+	// WriteFile 写前把当前内容备份为 <file>.bak.<RFC3339>，再覆盖写入 content，
+	// 返回备份文件路径（供回滚）。
+	WriteFile(ctx context.Context, file string, content string) (string, error)
 }
 
 // ComposeClient 操作白名单目录内的 compose 项目。
@@ -295,4 +305,41 @@ func (c *ComposeClient) Logs(ctx context.Context, file string, follow bool) (io.
 		return nil, fmt.Errorf("dockercli: 打开 compose 日志流失败: %w", err)
 	}
 	return rc, nil
+}
+
+// ReadFile 读取 compose 文件当前内容。file 由 ResolveProject 给出，已在白名单内，
+// 故这里不再做路径校验（穿越在解析项目名那一步就挡住了）。
+func (c *ComposeClient) ReadFile(ctx context.Context, file string) (string, error) {
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return "", fmt.Errorf("dockercli: 读取 compose 文件失败: %w", err)
+	}
+	return string(data), nil
+}
+
+// Diff 计算 content 相对当前文件的 unified diff（预览用，不落盘、不产生备份）。
+func (c *ComposeClient) Diff(ctx context.Context, file string, content string) (string, error) {
+	cur, err := c.ReadFile(ctx, file)
+	if err != nil {
+		return "", err
+	}
+	return diff.Unified(cur, content), nil
+}
+
+// WriteFile 写前把当前内容备份为 <file>.bak.<RFC3339>，再覆盖写入 content，
+// 返回备份文件路径供用户回滚。备份先落盘成功才动原文件——任一失败即中止，
+// 不给"原文件已改但无备份"留口子（对应红线「备份优先于变更」）。
+func (c *ComposeClient) WriteFile(ctx context.Context, file string, content string) (string, error) {
+	cur, err := c.ReadFile(ctx, file)
+	if err != nil {
+		return "", err
+	}
+	backup := file + ".bak." + time.Now().Format(time.RFC3339)
+	if err := os.WriteFile(backup, []byte(cur), 0o644); err != nil {
+		return "", fmt.Errorf("dockercli: 备份 compose 文件失败: %w", err)
+	}
+	if err := os.WriteFile(file, []byte(content), 0o644); err != nil {
+		return "", fmt.Errorf("dockercli: 写入 compose 文件失败: %w", err)
+	}
+	return backup, nil
 }

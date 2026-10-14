@@ -38,7 +38,7 @@ func run(args []string) error {
 
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
-		Handler:           buildHandler(cfg.Token, collector.New(cfg.DiskMounts), collector.NilStatsSource{}),
+		Handler:           buildHandler(cfg.Token, collector.New(cfg.DiskMounts), collector.NilStatsSource{}, newContainersAPI(cfg.DockerSocket, cfg.SelfContainer)),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -74,12 +74,17 @@ func run(args []string) error {
 // 抽成函数是为了让冒烟测试能复用与生产完全相同的中间件链。
 // src 是容器指标源：S3.1 接入 Engine API 前用 NilSource，端点始终可用但返回空列表。
 // 传 nil 时同样落到 NilSource，调用方不必判空。
-func buildHandler(token string, col *collector.Collector, src collector.ContainerStatsSource) http.Handler {
+func buildHandler(token string, col *collector.Collector, src collector.ContainerStatsSource, capi *containersAPI) http.Handler {
 	mux := http.NewServeMux()
 	// Agent 侧同样使用 /api/v1 前缀，与 Hub 侧路由一一对应。
 	mux.Handle("/api/v1/info", agenthttp.Auth(token, nil)(agenthttp.Info()))
 	mux.Handle("/api/v1/metrics", agenthttp.Auth(token, nil)(metricsHandler(col)))
 	mux.Handle("/api/v1/containers/stats", agenthttp.Auth(token, nil)(containerStatsHandler(src)))
+	// ---- 容器接口（S3.2）：读写都在 Auth 后面；写操作另有自我保护守卫 ----
+	mux.Handle("/api/v1/containers", agenthttp.Auth(token, nil)(http.HandlerFunc(capi.list)))
+	mux.Handle("/api/v1/containers/{id}", agenthttp.Auth(token, nil)(http.HandlerFunc(capi.inspect)))
+	mux.Handle("/api/v1/containers/{id}/{action}", agenthttp.Auth(token, nil)(http.HandlerFunc(capi.action)))
+	mux.Handle("DELETE /api/v1/containers/{id}", agenthttp.Auth(token, nil)(http.HandlerFunc(capi.remove)))
 	return mux
 }
 

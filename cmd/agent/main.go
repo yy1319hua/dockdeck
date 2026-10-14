@@ -79,11 +79,12 @@ func buildHandler(token string, col *collector.Collector, src collector.Containe
 	// Agent 侧同样使用 /api/v1 前缀，与 Hub 侧路由一一对应。
 	mux.Handle("/api/v1/info", agenthttp.Auth(token, nil)(agenthttp.Info()))
 	mux.Handle("/api/v1/metrics", agenthttp.Auth(token, nil)(metricsHandler(col)))
-	mux.Handle("/api/v1/containers/stats", agenthttp.Auth(token, nil)(containerStatsHandler(src)))
+	mux.Handle("GET /api/v1/containers/stats", agenthttp.Auth(token, nil)(containerStatsHandler(src)))
 	// ---- 容器接口（S3.2）：读写都在 Auth 后面；写操作另有自我保护守卫 ----
-	mux.Handle("/api/v1/containers", agenthttp.Auth(token, nil)(http.HandlerFunc(capi.list)))
-	mux.Handle("/api/v1/containers/{id}", agenthttp.Auth(token, nil)(http.HandlerFunc(capi.inspect)))
-	mux.Handle("/api/v1/containers/{id}/{action}", agenthttp.Auth(token, nil)(http.HandlerFunc(capi.action)))
+	// 全部方法限定注册：Go mux 要求同一子树的方法限定一致，混用会 panic。
+	mux.Handle("GET /api/v1/containers", agenthttp.Auth(token, nil)(http.HandlerFunc(capi.list)))
+	mux.Handle("GET /api/v1/containers/{id}", agenthttp.Auth(token, nil)(http.HandlerFunc(capi.inspect)))
+	mux.Handle("POST /api/v1/containers/{id}/{action}", agenthttp.Auth(token, nil)(http.HandlerFunc(capi.action)))
 	mux.Handle("DELETE /api/v1/containers/{id}", agenthttp.Auth(token, nil)(http.HandlerFunc(capi.remove)))
 	return mux
 }

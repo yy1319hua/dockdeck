@@ -78,3 +78,50 @@ func (c *Client) ComposeLogs(ctx context.Context, project string, follow bool) (
 	}
 	return &LogsStream{Body: resp.Body, ContentType: resp.Header.Get("Content-Type")}, nil
 }
+
+// ComposeFileGet 读取指定项目的 compose 文件内容（GET /api/v1/compose/{project}/file）。
+// 空项目名本地拦——该拒的请求不出门（与 ComposeLogs 同口径）。
+func (c *Client) ComposeFileGet(ctx context.Context, project string) (*protocol.ComposeFile, error) {
+	if project == "" {
+		return nil, fmt.Errorf("agentcli: 项目名不能为空")
+	}
+	var res protocol.ComposeFile
+	if _, err := c.do(ctx, http.MethodGet, "/api/v1/compose/"+project+"/file", nil, &res); err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
+
+// ComposeFileDiff 提交新内容算 unified diff 供预览（POST /api/v1/compose/{project}/diff）。
+// 服务端不落盘、不产生备份；这里是「先看再写」两段式里的第一段。
+func (c *Client) ComposeFileDiff(ctx context.Context, project string, content string) (*protocol.ComposeFileDiff, error) {
+	if project == "" {
+		return nil, fmt.Errorf("agentcli: 项目名不能为空")
+	}
+	body, err := json.Marshal(protocol.ComposeFileUpdate{Content: content})
+	if err != nil {
+		return nil, err
+	}
+	var res protocol.ComposeFileDiff
+	if _, err := c.do(ctx, http.MethodPost, "/api/v1/compose/"+project+"/diff", body, &res); err != nil {
+		return nil, normalize(err)
+	}
+	return &res, nil
+}
+
+// ComposeFilePut 写入新内容（PUT /api/v1/compose/{project}/file）。Agent 侧写前自动
+// 备份 <file>.bak.<RFC3339>，这里把备份路径回传，供调用方展示/回滚。
+func (c *Client) ComposeFilePut(ctx context.Context, project string, content string) (*protocol.ComposeFileWritten, error) {
+	if project == "" {
+		return nil, fmt.Errorf("agentcli: 项目名不能为空")
+	}
+	body, err := json.Marshal(protocol.ComposeFileUpdate{Content: content})
+	if err != nil {
+		return nil, err
+	}
+	var res protocol.ComposeFileWritten
+	if _, err := c.do(ctx, http.MethodPut, "/api/v1/compose/"+project+"/file", body, &res); err != nil {
+		return nil, normalize(err)
+	}
+	return &res, nil
+}

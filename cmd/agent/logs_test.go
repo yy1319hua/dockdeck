@@ -54,7 +54,7 @@ func agentWithLogs(t *testing.T, muxed []byte, follow bool) (*httptest.Server, *
 	t.Helper()
 	f := newFakeDocker(t)
 	f.mu2Set(muxed, follow)
-	srv := httptest.NewServer(buildHandler(smokeToken, smokeCollector(t), nil, newContainersAPI(f.sock, "")))
+	srv := httptest.NewServer(buildHandler(smokeToken, smokeCollector(t), nil, newContainersAPI(f.sock, ""), newImagesAPI(f.sock)))
 	t.Cleanup(srv.Close)
 	return srv, f
 }

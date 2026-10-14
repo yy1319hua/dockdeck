@@ -38,7 +38,7 @@ func run(args []string) error {
 
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
-		Handler:           buildHandler(cfg.Token, collector.New(cfg.DiskMounts), collector.NilStatsSource{}, newContainersAPI(cfg.DockerSocket, cfg.SelfContainer)),
+		Handler:           buildHandler(cfg.Token, collector.New(cfg.DiskMounts), collector.NilStatsSource{}, newContainersAPI(cfg.DockerSocket, cfg.SelfContainer), newImagesAPI(cfg.DockerSocket)),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -74,7 +74,8 @@ func run(args []string) error {
 // 抽成函数是为了让冒烟测试能复用与生产完全相同的中间件链。
 // src 是容器指标源：S3.1 接入 Engine API 前用 NilSource，端点始终可用但返回空列表。
 // 传 nil 时同样落到 NilSource，调用方不必判空。
-func buildHandler(token string, col *collector.Collector, src collector.ContainerStatsSource, capi *containersAPI) http.Handler {
+// iapi 是镜像端点（S4.1）：与容器共享同一把 docker socket，无自身守卫。
+func buildHandler(token string, col *collector.Collector, src collector.ContainerStatsSource, capi *containersAPI, iapi *imagesAPI) http.Handler {
 	mux := http.NewServeMux()
 	// Agent 侧同样使用 /api/v1 前缀，与 Hub 侧路由一一对应。
 	mux.Handle("/api/v1/info", agenthttp.Auth(token, nil)(agenthttp.Info()))
@@ -87,6 +88,12 @@ func buildHandler(token string, col *collector.Collector, src collector.Containe
 	mux.Handle("POST /api/v1/containers/{id}/{action}", agenthttp.Auth(token, nil)(http.HandlerFunc(capi.action)))
 	mux.Handle("DELETE /api/v1/containers/{id}", agenthttp.Auth(token, nil)(http.HandlerFunc(capi.remove)))
 	mux.Handle("GET /api/v1/containers/{id}/logs", agenthttp.Auth(token, nil)(http.HandlerFunc(capi.logs)))
+	// ---- 镜像接口（S4.1）：list 读；pull/delete/prune 写（无自身守卫，
+	// 见 images.go 头注）。{ref...} 尾通配符容纳含 "/" 的镜像引用。----
+	mux.Handle("GET /api/v1/images", agenthttp.Auth(token, nil)(http.HandlerFunc(iapi.list)))
+	mux.Handle("POST /api/v1/images/pull", agenthttp.Auth(token, nil)(http.HandlerFunc(iapi.pull)))
+	mux.Handle("DELETE /api/v1/images/{ref...}", agenthttp.Auth(token, nil)(http.HandlerFunc(iapi.delete)))
+	mux.Handle("POST /api/v1/images/prune", agenthttp.Auth(token, nil)(http.HandlerFunc(iapi.prune)))
 	return mux
 }
 

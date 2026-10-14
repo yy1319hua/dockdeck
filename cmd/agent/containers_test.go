@@ -48,6 +48,11 @@ type fakeDocker struct {
 	// 日志形态配置（serveLogs 设置后 /containers/*/logs 有响应）：
 	logsMuxed  []byte
 	logsFollow bool
+	// 镜像形态配置（S4.1）：
+	imgList      []byte // GET /images/json 响应体（nil 返 []）
+	pullStream   []byte // POST /images/create 响应体
+	pruneBody    []byte // POST /images/prune 响应体（nil 返空结果）
+	deleteStatus int    // DELETE /images/{ref} 非零状态码
 }
 
 func newFakeDocker(t *testing.T) *fakeDocker {
@@ -68,6 +73,38 @@ func newFakeDocker(t *testing.T) *fakeDocker {
 		f.paths <- r.URL.Path + "?all=" + r.URL.Query().Get("all")
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`[{"Id":"abc123def456","Names":["/web"],"Image":"nginx","State":"running","Status":"Up 1h","Created":1700000000}]`))
+	})
+	mux.HandleFunc("/images/json", func(w http.ResponseWriter, r *http.Request) {
+		f.paths <- "GET " + r.URL.Path + qmark(r.URL.RawQuery)
+		w.Header().Set("Content-Type", "application/json")
+		if f.imgList == nil {
+			_, _ = w.Write([]byte("[]"))
+			return
+		}
+		_, _ = w.Write(f.imgList)
+	})
+	mux.HandleFunc("/images/create", func(w http.ResponseWriter, r *http.Request) {
+		f.paths <- "POST " + r.URL.Path + qmark(r.URL.RawQuery)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(f.pullStream)
+	})
+	mux.HandleFunc("/images/prune", func(w http.ResponseWriter, r *http.Request) {
+		f.paths <- "POST " + r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		if f.pruneBody == nil {
+			_, _ = w.Write([]byte(`{"ImagesDeleted":null,"SpaceReclaimed":0}`))
+			return
+		}
+		_, _ = w.Write(f.pruneBody)
+	})
+	// DELETE /images/{ref...} 兜底：精确模式（json/create/prune）优先。
+	mux.HandleFunc("/images/", func(w http.ResponseWriter, r *http.Request) {
+		f.paths <- r.Method + " " + r.URL.Path
+		if f.deleteStatus != 0 {
+			w.WriteHeader(f.deleteStatus)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("/containers/", func(w http.ResponseWriter, r *http.Request) {
 		f.paths <- r.Method + " " + r.URL.Path + qmark(r.URL.RawQuery)
@@ -106,7 +143,7 @@ func agentWith(t *testing.T, socket, self string) (*httptest.Server, *fakeDocker
 	if socket == "" {
 		socket = f.sock
 	}
-	srv := httptest.NewServer(buildHandler(smokeToken, smokeCollector(t), nil, newContainersAPI(socket, self)))
+	srv := httptest.NewServer(buildHandler(smokeToken, smokeCollector(t), nil, newContainersAPI(socket, self), newImagesAPI(socket)))
 	t.Cleanup(srv.Close)
 	return srv, f
 }

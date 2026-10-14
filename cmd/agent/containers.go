@@ -74,7 +74,7 @@ func errToStatus(r *http.Request, err error) (int, string) {
 		return http.StatusNotFound, msg
 	case strings.Contains(msg, "(409)"):
 		return http.StatusConflict, msg
-	case strings.Contains(msg, "非法容器标识") || strings.Contains(msg, "不允许的信号"):
+	case strings.Contains(msg, "非法容器标识") || strings.Contains(msg, "非法镜像引用") || strings.Contains(msg, "不允许的信号"):
 		return http.StatusBadRequest, msg
 	default:
 		log.Printf("agent: 容器操作引擎错误 (%s=%q): %v", protocol.HeaderRequestID, r.Header.Get(protocol.HeaderRequestID), err)

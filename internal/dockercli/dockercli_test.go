@@ -22,6 +22,9 @@ type fakeEngine struct {
 	mu       sync.Mutex
 	paths    []string // 收到的请求 URI（含版本前缀与查询串），供断言
 	pingOK   bool     // false 时 /_ping 返回 500，模拟引擎半死
+	// images 是 GET /images/json 的响应体（JSON 原样）；nil 返回 []。
+	// 收到的查询串（all/filters）随 paths 记录，供断言。
+	images []byte
 }
 
 func newFakeEngine(t *testing.T, apiVersion string) (*fakeEngine, string) {
@@ -70,6 +73,18 @@ func newFakeEngine(t *testing.T, apiVersion string) (*fakeEngine, string) {
 			"OSType": "linux", "Architecture": "aarch64", "NCPU": 4,
 			"MemTotal": 8 * 1024 * 1024 * 1024, "DockerRootDir": "/var/lib/docker",
 		})
+	})
+	mux.HandleFunc("/images/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/images/json" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if f.images == nil {
+			_, _ = w.Write([]byte("[]"))
+			return
+		}
+		_, _ = w.Write(f.images)
 	})
 	// Engine 对版本前缀路由：/v1.51/version 与 /version 等价。
 	// 剥掉 /vX.Y 前缀后再进 mux，模拟 Engine 的真实路由行为。

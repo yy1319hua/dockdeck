@@ -44,6 +44,10 @@ type AgentConfig struct {
 	// SelfContainer 是 Agent 自身容器的 ID 或名字（红线「不碰自身」）。
 	// 空 = 用 os.Hostname()（容器内 HOSTNAME 即短 ID）。写入操作命中即 403。
 	SelfContainer string
+	// ComposeDirs 是 Compose 项目白名单目录：只有这些目录内（含递归）的
+	// compose 文件才会被列举与操作。空 = Compose 功能关闭（list 永远空）。
+	// 安全边界：路径穿越在 resolveProject 入口被挡，绝不出白名单。
+	ComposeDirs []string
 }
 
 // ifaceAddrs 返回「网卡名 → 该网卡上的 IP 列表」。
@@ -132,6 +136,9 @@ func LoadAgent(args []string) (AgentConfig, error) {
 	if v := os.Getenv("DD_AGENT_SELF_CONTAINER"); v != "" {
 		c.SelfContainer = v
 	}
+	if v := os.Getenv("DD_AGENT_COMPOSE_DIRS"); v != "" {
+		c.ComposeDirs = splitList(v)
+	}
 
 	fs := flag.NewFlagSet("agent", flag.ContinueOnError)
 	fs.StringVar(&c.ListenAddr, "listen", c.ListenAddr, "监听地址 host:port")
@@ -141,6 +148,7 @@ func LoadAgent(args []string) (AgentConfig, error) {
 	diskMounts := fs.String("disk-mounts", strings.Join(c.DiskMounts, ","), "统计容量的挂载点，逗号分隔")
 	dockerSocket := fs.String("docker-socket", c.DockerSocket, "Docker Engine unix socket 路径")
 	selfContainer := fs.String("self-container", c.SelfContainer, "Agent 自身容器 ID/名字（写入保护，默认取 hostname）")
+	composeDirs := fs.String("compose-dirs", strings.Join(c.ComposeDirs, ","), "Compose 白名单目录，逗号分隔（递归扫描其内 compose 文件）")
 	tokenFile := fs.String("token-file", "", "读取 Agent token 的文件（优先用环境变量 DD_AGENT_TOKEN）")
 	insecure := fs.Bool("allow-insecure-bind", c.AllowInsecureBind, "跳过网卡白名单校验（不安全，仅调试）")
 	var tlsModeRaw string
@@ -174,6 +182,9 @@ func LoadAgent(args []string) (AgentConfig, error) {
 	}
 	if *selfContainer != "" {
 		c.SelfContainer = *selfContainer
+	}
+	if *composeDirs != "" {
+		c.ComposeDirs = splitList(*composeDirs)
 	}
 	if *insecure {
 		c.AllowInsecureBind = true

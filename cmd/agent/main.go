@@ -38,7 +38,7 @@ func run(args []string) error {
 
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
-		Handler:           buildHandler(cfg.Token, collector.New(cfg.DiskMounts), collector.NilStatsSource{}, newContainersAPI(cfg.DockerSocket, cfg.SelfContainer), newImagesAPI(cfg.DockerSocket)),
+		Handler:           buildHandler(cfg.Token, collector.New(cfg.DiskMounts), collector.NilStatsSource{}, newContainersAPI(cfg.DockerSocket, cfg.SelfContainer), newImagesAPI(cfg.DockerSocket), newComposeAPI(cfg.ComposeDirs)),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -75,7 +75,8 @@ func run(args []string) error {
 // src 是容器指标源：S3.1 接入 Engine API 前用 NilSource，端点始终可用但返回空列表。
 // 传 nil 时同样落到 NilSource，调用方不必判空。
 // iapi 是镜像端点（S4.1）：与容器共享同一把 docker socket，无自身守卫。
-func buildHandler(token string, col *collector.Collector, src collector.ContainerStatsSource, capi *containersAPI, iapi *imagesAPI) http.Handler {
+// compapi 是 Compose 端点（S4.2）：白名单目录来自配置，exec 走宿主 docker compose。
+func buildHandler(token string, col *collector.Collector, src collector.ContainerStatsSource, capi *containersAPI, iapi *imagesAPI, compapi *composeAPI) http.Handler {
 	mux := http.NewServeMux()
 	// Agent 侧同样使用 /api/v1 前缀，与 Hub 侧路由一一对应。
 	mux.Handle("/api/v1/info", agenthttp.Auth(token, nil)(agenthttp.Info()))
@@ -94,6 +95,12 @@ func buildHandler(token string, col *collector.Collector, src collector.Containe
 	mux.Handle("POST /api/v1/images/pull", agenthttp.Auth(token, nil)(http.HandlerFunc(iapi.pull)))
 	mux.Handle("DELETE /api/v1/images/{ref...}", agenthttp.Auth(token, nil)(http.HandlerFunc(iapi.delete)))
 	mux.Handle("POST /api/v1/images/prune", agenthttp.Auth(token, nil)(http.HandlerFunc(iapi.prune)))
+	// ---- Compose 接口（S4.2）：list/logs 读；action 写（无自身守卫，白名单即保护）。
+	// {project} 是白名单内项目名（目录名），Agent 侧 resolveProject 映射到真实路径，
+	// 防 ../ 穿越——白名单外的名字（含任意路径）一律 404。----
+	mux.Handle("GET /api/v1/compose", agenthttp.Auth(token, nil)(http.HandlerFunc(compapi.list)))
+	mux.Handle("POST /api/v1/compose/{project}/{action}", agenthttp.Auth(token, nil)(http.HandlerFunc(compapi.action)))
+	mux.Handle("GET /api/v1/compose/{project}/logs", agenthttp.Auth(token, nil)(http.HandlerFunc(compapi.logs)))
 	return mux
 }
 

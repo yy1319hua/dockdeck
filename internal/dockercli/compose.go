@@ -224,7 +224,7 @@ func (c *ComposeClient) ListProjects(ctx context.Context) ([]protocol.ComposePro
 
 // resolveProject 把项目名映射到白名单内发现的真实路径。找不到（含任何
 // 白名单外的猜测）一律返回 false——这是路径穿越的唯一关卡。
-func (c *ComposeClient) resolveProject(ctx context.Context, name string) (protocol.ComposeProject, bool) {
+func (c *ComposeClient) ResolveProject(ctx context.Context, name string) (protocol.ComposeProject, bool) {
 	projects, err := c.ListProjects(ctx)
 	if err != nil {
 		return protocol.ComposeProject{}, false

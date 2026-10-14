@@ -111,6 +111,41 @@ func NormalizeSignal(signal string) (string, bool) {
 	return up, allowedSignals[up]
 }
 
+// LogsOptions 是容器日志的查询参数，Hub→Agent 与 Agent→Engine 同一份契约。
+//
+// 定义放在 protocol：查询串是 Hub 拼、Agent 解析的，两侧必须共用字段名与
+// 合法值规则；dockercli 保留同名别名，S3.3 的既有代码零改动。
+type LogsOptions struct {
+	// Follow 跟随输出（= docker logs -f）。跟随时客户端不施加请求超时，
+	// 流的生命周期由调用方 ctx 决定。
+	Follow bool
+	// Tail 是「末尾 N 行」（"all"或数字；空 = 引擎默认全部）。
+	Tail string
+	// Since / Until 是 RFC3339 或 Unix 秒（原样透传，不猜语义）。
+	//  Hub→Agent 拼查询串时必须 URL 编码："+08:00" 里的 + 不转义会被
+	// 解析成空格，时区信息静默丢失。
+	Since, Until string
+	// Timestamps 在每行前加 Engine 时间戳。
+	Timestamps bool
+	// Export 仅存在于 Hub→Agent 契约：要 Engine 原始字节流（下载用）而非
+	// 合流文本。Agent→Engine 无此参——合流/原始是 Agent 层的呈现选择。
+	Export bool
+}
+
+// ValidTail 判断 tail 参数是否合法：空、"all" 或纯数字。
+// Agent 解析侧与 Hub 拼装侧共用同一份规则，别把怪字符串透传给 Engine。
+func ValidTail(tail string) bool {
+	if tail == "" || tail == "all" {
+		return true
+	}
+	for i := 0; i < len(tail); i++ {
+		if tail[i] < '0' || tail[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 // ContainerStat 是单个容器的实时资源占用。
 //
 // 与 HostMetrics 一样只报当前值；MemUsage/MemLimit 单位 byte，

@@ -230,6 +230,27 @@ func normalize(err error) *protocol.Error {
 	return protocol.NewError(protocol.CodeUpstreamUnavailable, err.Error())
 }
 
+// newSignedRequest 构造带鉴权头的请求：Bearer + 时间戳 + HMAC 签名。
+//
+// 每个请求（含读）都签名——agenthttp.Auth 对读也强制验签（「Bearer + HMAC
+// 双重校验」是 Agent 侧既有契约）。这里曾按「只签写」实现，S2.8 端到端测试
+// 用真实验签中间件把它抓了出来。签名路径用 agenthttp.CanonicalPath
+// （RequestURI 含查询串），两侧一字不差。
+//
+// 信封请求（once）与裸流请求（Logs）共用本方法：签名口径只许有一处，
+// 每多一处就多一个 S2.8 那种悄悄劈叉的机会。
+func (c *Client) newSignedRequest(ctx context.Context, method, path string, body []byte) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, c.BaseURL+path, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	stamp := strconv.FormatInt(c.now().Unix(), 10)
+	req.Header.Set(agenthttp.HeaderTimestamp, stamp)
+	req.Header.Set(agenthttp.HeaderSignature, crypto.SignRequest([]byte(c.Token), stamp, method, agenthttp.CanonicalPath(req), body))
+	return req, nil
+}
+
 // once 发起一次真实请求并解码响应。错误分类：
 //   - 网络层失败（含超时、ctx 取消）→ 原始 error（normalize 时归 upstream_unavailable）
 //   - 信封里的业务错误 → *protocol.Error
@@ -240,18 +261,10 @@ func (c *Client) once(ctx context.Context, method, path string, body []byte, dst
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
-	req, err := http.NewRequestWithContext(ctx, method, c.BaseURL+path, bytes.NewReader(body))
+	req, err := c.newSignedRequest(ctx, method, path, body)
 	if err != nil {
 		return 0, err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.Token)
-	// 每个请求都附带时间戳 + HMAC 签名。agenthttp.Auth 对读也强制验签
-	// （「Bearer + HMAC 双重校验」是 Agent 侧既有契约），客户端必须对齐——
-	// 这里曾按「只签写」实现，S2.8 端到端测试用真实验签中间件把它抓了出来。
-	// 签名路径用 agenthttp.CanonicalPath（RequestURI 含查询串），两侧一字不差。
-	stamp := strconv.FormatInt(c.now().Unix(), 10)
-	req.Header.Set(agenthttp.HeaderTimestamp, stamp)
-	req.Header.Set(agenthttp.HeaderSignature, crypto.SignRequest([]byte(c.Token), stamp, method, agenthttp.CanonicalPath(req), body))
 	resp, err := c.transport().Do(req)
 	if err != nil {
 		return 0, err

@@ -328,6 +328,22 @@ func TestValidFileAction(t *testing.T) {
 	}
 }
 
+// TestValidTail 表驱动覆盖 tail 参数规则：空、"all"、纯数字放行，
+// 其余（负数/分号/空格/十六进制）一律拒——Hub 拼装侧与 Agent 解析侧
+// 共用同一份规则。
+func TestValidTail(t *testing.T) {
+	for _, tail := range []string{"", "all", "0", "10", "999999"} {
+		if !ValidTail(tail) {
+			t.Errorf("%q 应判定为合法", tail)
+		}
+	}
+	for _, tail := range []string{"-5", "10;rm", "1 0", "0x10", "all ", "alL", "1.5"} {
+		if ValidTail(tail) {
+			t.Errorf("%q 应判定为非法", tail)
+		}
+	}
+}
+
 // TestNormalizeSignal 表驱动覆盖 kill 信号白名单：大小写不敏感规范化，
 // 空串合法（引擎默认），集合外一律拒——两侧共用同一份集合。
 func TestNormalizeSignal(t *testing.T) {

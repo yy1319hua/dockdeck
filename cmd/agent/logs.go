@@ -34,12 +34,9 @@ func logsQuery(r *http.Request) (dockercli.LogsOptions, error) {
 	o.Until = q.Get("until")
 	o.Timestamps = q.Get("timestamps") == "1"
 	// tail 只放行 all 与纯数字，别把怪字符串透传给 Engine。
-	if o.Tail != "" && o.Tail != "all" {
-		for _, ch := range o.Tail {
-			if ch < 0x30 || ch > 0x39 {
-				return o, errors.New("tail 必须是 all 或数字")
-			}
-		}
+	// 规则单点定义在 protocol（Hub 拼装侧同一份），两侧不容许漂移。
+	if !protocol.ValidTail(o.Tail) {
+		return o, errors.New("tail 必须是 all 或数字")
 	}
 	return o, nil
 }

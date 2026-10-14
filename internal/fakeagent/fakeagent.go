@@ -10,13 +10,24 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/yy1319hua/dockdeck/internal/agenthttp"
 	"github.com/yy1319hua/dockdeck/internal/httpx"
 	"github.com/yy1319hua/dockdeck/internal/protocol"
 )
+
+// logsFollowTicks 是 follow 模式下的心跳帧数：真 Agent 的 follow 是长连接，
+// 假 Agent 用有限帧数把「流活着」这件事演出来（客户端断开即结束）。
+const logsFollowTicks = 5
+
+// logsFollowTickDelay 是心跳间隔。e2e 用它对抗「客户端擅自施加读超时」：
+// 客户端若把 ReadTimeout 用在流上，第一帧之后就被掐断。
+const logsFollowTickDelay = 30 * time.Millisecond
 
 // Fake 是假 Agent。零值不可用，用 New 构造。
 type Fake struct {
@@ -33,6 +44,8 @@ type Fake struct {
 	// selfID 模拟真 Agent 的「不碰自身」守卫：写操作命中即 403。
 	// 留空表示不启用守卫（多数读链路测试用）。
 	selfID string
+	// logsBody 是日志端点（S3.4）的响应体：裸流，不走信封（与真 Agent 一致）。
+	logsBody string
 	// calls 记录每次进入业务端点的请求路径（已过鉴权），供断言「实际打到了哪」。
 	calls []string
 	// failNext 让下 N 次请求先返回给定状态码（测重试），随后恢复正常。
@@ -78,6 +91,13 @@ func (f *Fake) SetContainerInspect(m map[string]json.RawMessage) {
 func (f *Fake) SetSelfID(id string) {
 	f.mu.Lock()
 	f.selfID = id
+	f.mu.Unlock()
+}
+
+// SetLogs 配置日志端点响应体（S3.4，裸流）。
+func (f *Fake) SetLogs(body string) {
+	f.mu.Lock()
+	f.logsBody = body
 	f.mu.Unlock()
 }
 
@@ -130,6 +150,7 @@ func (f *Fake) Handler() http.Handler {
 	mux.Handle("GET /api/v1/containers/{id}", authed(f.serveContainerInspect))
 	mux.Handle("POST /api/v1/containers/{id}/{action}", authed(f.serveContainerAction))
 	mux.Handle("DELETE /api/v1/containers/{id}", authed(f.serveContainerRemove))
+	mux.Handle("GET /api/v1/containers/{id}/logs", authed(f.serveContainerLogs))
 	return mux
 }
 
@@ -264,4 +285,73 @@ func (f *Fake) serveContainerRemove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// serveContainerLogs 实现 GET /api/v1/containers/{id}/logs。
+// 裸流不走信封（与真 Agent 一致）：export=1 给 octet-stream + 下载文件名，
+// 否则 text/plain；follow=1 分帧吐并逐帧 Flush——客户端若擅自施加读超时，
+// 第一帧之后就会被掐断，e2e 用这一点验证「流免超时」。
+func (f *Fake) serveContainerLogs(w http.ResponseWriter, r *http.Request) {
+	if done, status := f.maybeFail(r); done {
+		w.WriteHeader(status)
+		return
+	}
+	q, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, "查询串不合法")
+		return
+	}
+	if !protocol.ValidTail(q.Get("tail")) {
+		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, "tail 必须是 all 或数字")
+		return
+	}
+	f.mu.Lock()
+	body := f.logsBody
+	f.mu.Unlock()
+
+	if q.Get("export") == "1" {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Content-Disposition", `attachment; filename="`+sanitizeLogName(r.PathValue("id"))+`.log"`)
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, body)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusOK)
+	flusher, _ := w.(http.Flusher)
+	flush := func() {
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+	flush() // 首帧尽快推给客户端
+	if q.Get("follow") != "1" {
+		_, _ = io.WriteString(w, body)
+		return
+	}
+	_, _ = io.WriteString(w, body)
+	flush()
+	for i := 1; i <= logsFollowTicks; i++ {
+		time.Sleep(logsFollowTickDelay)
+		if _, err := io.WriteString(w, "\n--follow-tick-"+strconv.Itoa(i)+"--\n"); err != nil {
+			return // 客户端断开即结束
+		}
+		flush()
+	}
+}
+
+// sanitizeLogName 让下载文件名不带奇怪字符（真 Agent 同款 sanitizeFilename）。
+func sanitizeLogName(id string) string {
+	out := make([]rune, 0, len(id))
+	for _, ch := range id {
+		if (ch >= '0' && ch <= '9') || (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || ch == '-' || ch == '_' {
+			out = append(out, ch)
+		}
+	}
+	if len(out) == 0 {
+		return "container"
+	}
+	return string(out)
 }

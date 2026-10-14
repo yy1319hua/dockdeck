@@ -8,6 +8,7 @@ package fakeagent
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -245,5 +246,85 @@ func TestE2E_ContainerWriteNoRetry(t *testing.T) {
 	}
 	if got != 1 {
 		t.Errorf("写请求绝不重试，实际请求 %d 次：%v", got, f.Calls())
+	}
+}
+
+// TestE2E_LogsPlain 验证非 follow 日志：裸流原样到达（不走信封），
+// 查询串（tail/timestamps）随签名一起过真实验签中间件。
+func TestE2E_LogsPlain(t *testing.T) {
+	f, c := e2eFixture(t, "secret")
+	f.SetLogs("2024-01-01T00:00:00Z line one\nline two\n")
+
+	s, err := c.Logs(context.Background(), "c1", protocol.LogsOptions{Tail: "100", Timestamps: true})
+	if err != nil {
+		t.Fatalf("Logs: %v", err)
+	}
+	got, err := io.ReadAll(s.Body)
+	if err != nil {
+		t.Fatalf("读流失败：%v", err)
+	}
+	if err := s.Body.Close(); err != nil {
+		t.Fatalf("关流失败：%v", err)
+	}
+	if string(got) != "2024-01-01T00:00:00Z line one\nline two\n" {
+		t.Errorf("裸流应原样到达，got %q", got)
+	}
+	if !strings.Contains(s.ContentType, "text/plain") {
+		t.Errorf("Content-Type 应透传，got %q", s.ContentType)
+	}
+	if calls := f.Calls(); len(calls) != 1 || !strings.Contains(calls[0], "tail=100") || !strings.Contains(calls[0], "timestamps=1") {
+		t.Errorf("调用路径应含查询串：%v", calls)
+	}
+}
+
+// TestE2E_LogsFollowNoTimeout 验证 follow 长连接免客户端超时：
+// 客户端 ReadTimeout 设为 10ms，而假 Agent 每 30ms 吐一帧、共 5 帧——
+// 若客户端把读超时施加在流上，第一帧后就被掐断。收到多帧即证明免超时生效。
+func TestE2E_LogsFollowNoTimeout(t *testing.T) {
+	f, c := e2eFixture(t, "secret")
+	c.ReadTimeout = 10 * time.Millisecond // 故意小于心跳间隔
+	f.SetLogs("first frame\n")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s, err := c.Logs(ctx, "c1", protocol.LogsOptions{Follow: true})
+	if err != nil {
+		t.Fatalf("Logs: %v", err)
+	}
+	got, err := io.ReadAll(s.Body) // 阻塞到假Agent吐完 5 帧收流
+	if err != nil {
+		t.Fatalf("读流失败（超时被误施加了？）：%v", err)
+	}
+	_ = s.Body.Close()
+	body := string(got)
+	if !strings.HasPrefix(body, "first frame\n") {
+		t.Errorf("首帧应原样到达，got %q", body)
+	}
+	ticks := strings.Count(body, "--follow-tick-")
+	if ticks < 2 {
+		t.Errorf("follow 流应在读超时（10ms）之后继续存活，实收心跳 %d 帧：%q", ticks, body)
+	}
+}
+
+// TestE2E_LogsExport 验证 export=1：octet-stream + 下载文件名，
+// Engine 原始字节一个不改。
+func TestE2E_LogsExport(t *testing.T) {
+	f, c := e2eFixture(t, "secret")
+	f.SetLogs("raw\x00engine\x01bytes")
+
+	s, err := c.Logs(context.Background(), "c1", protocol.LogsOptions{Export: true})
+	if err != nil {
+		t.Fatalf("Logs: %v", err)
+	}
+	got, err := io.ReadAll(s.Body)
+	if err != nil {
+		t.Fatalf("读流失败：%v", err)
+	}
+	_ = s.Body.Close()
+	if string(got) != "raw\x00engine\x01bytes" {
+		t.Errorf("export 应原样透传，got %q", got)
+	}
+	if s.ContentType != "application/octet-stream" || s.Filename != "c1.log" {
+		t.Errorf("export 响应头不符：%+v", s)
 	}
 }

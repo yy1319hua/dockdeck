@@ -13,20 +13,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+
+	"github.com/yy1319hua/dockdeck/internal/protocol"
 )
 
-// LogsOptions 是日志查询参数，字段与 Engine 原生一一对应。
-type LogsOptions struct {
-	// Follow 跟随输出（= docker logs -f）。跟随时不施加请求超时，
-	// 流的生命周期由调用方 ctx 决定。
-	Follow bool
-	// Tail 是「末尾 N 行」（"all" 或数字；空 = 全部）。
-	Tail string
-	// Since / Until 是 RFC3339 或 Unix 秒（原样透传给 Engine，不猜语义）。
-	Since, Until string
-	// Timestamps 在每行前加 Engine 时间戳。
-	Timestamps bool
-}
+// LogsOptions 是日志查询参数的类型别名，真定义在 internal/protocol：
+// 查询串由 Hub 拼、Agent 解析，两侧共用同一份字段与合法值规则。
+type LogsOptions = protocol.LogsOptions
 
 // frameHeaderLen 是复用流帧头长度：1 字节流类型 + 3 填充 + 4 字节长度。
 const frameHeaderLen = 8

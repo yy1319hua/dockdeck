@@ -261,3 +261,70 @@ func ops(pi PathItem) map[string]*Operation {
 		"GET": pi.Get, "POST": pi.Post, "PUT": pi.Put, "PATCH": pi.Patch, "DELETE": pi.Delete,
 	}
 }
+
+// TestNoDuplicateParameters 守住 S2.7 踩过的坑：Entry.Params 里声明与路径
+// 同名的参数（id/cid/action——为补描述/示例顺手写的），生成器曾把它当作
+// query 参数追加，与路径参数构成同一 name+in 两份——非法 OpenAPI，
+// Swagger UI 直接报错。现在同名声明应用来补全路径参数，绝不重复追加。
+func TestNoDuplicateParameters(t *testing.T) {
+	es := []route.Entry{
+		{Method: "GET", Path: "/api/v1/servers/{id}/containers/{cid}", AuthMode: route.AuthScope,
+			Scope: apitoken.ScopeReadContainers, Summary: "容器详情", Tags: []string{"Containers"},
+			Params: []route.Param{
+				{Name: "id", Desc: "服务器 ID", Required: true, Example: "1", SchemaType: "integer", SchemaFmt: "int64"},
+				{Name: "cid", Desc: "容器 ID 或名字", Required: true, Example: "9f3a2b1c4d5e"},
+				{Name: "all", Desc: "含已停止", SchemaType: "boolean"},
+			}},
+		{Method: "POST", Path: "/api/v1/servers/{id}/containers/{cid}/{action}", AuthMode: route.AuthScope,
+			Scope: apitoken.ScopeWriteContainers, Summary: "容器操作", Tags: []string{"Containers"},
+			Params: []route.Param{
+				{Name: "id", Desc: "服务器 ID", Required: true, Example: "1", SchemaType: "integer", SchemaFmt: "int64"},
+				{Name: "cid", Desc: "容器 ID 或名字", Required: true, Example: "9f3a2b1c4d5e"},
+				{Name: "action", Desc: "动作", Required: true, Example: "restart"},
+			}},
+	}
+	d := Generate(info(), es)
+	for _, e := range es {
+		op := ops(d.Paths[e.Path])[e.Method]
+		if op == nil {
+			t.Fatalf("%s %s：operation 缺失", e.Method, e.Path)
+		}
+		seen := map[string]int{}
+		for _, p := range op.Params {
+			seen[p.In+":"+p.Name]++
+		}
+		for k, n := range seen {
+			if n > 1 {
+				t.Errorf("%s %s：参数 %s 出现 %d 份（同一 name+in 重复是非法 OpenAPI）", e.Method, e.Path, k, n)
+			}
+		}
+		// 路径占位符只允许 path 形态；Entry.Params 同名声明是补全，
+		// 不得另生出 query 参数。
+		for _, p := range op.Params {
+			if p.In == "query" && (p.Name == "id" || p.Name == "cid" || p.Name == "action") {
+				t.Errorf("%s %s：%s 是路径占位符，不得以 query 形态出现", e.Method, e.Path, p.Name)
+			}
+		}
+		// 参数总数：路径参数各一份 + 真查询参数，一个不多一个不少。
+		want := 3 // id + cid（或 action）路径 + all/action 各一；两条都是 3
+		if got := len(op.Params); got != want {
+			t.Errorf("%s %s：参数应 %d 个，得 %d：%v", e.Method, e.Path, want, got, paramNames(op.Params))
+		}
+		// 同名声明应用来补全：id 的 integer/int64 与描述必须落到路径参数上。
+		var id *Param
+		for i := range op.Params {
+			if op.Params[i].Name == "id" {
+				id = &op.Params[i]
+			}
+		}
+		if id == nil || id.In != "path" || !id.Required {
+			t.Fatalf("%s %s：id 路径参数不对：%+v", e.Method, e.Path, id)
+		}
+		if id.Schema == nil || id.Schema.Type != "integer" || id.Schema.Format != "int64" {
+			t.Errorf("%s %s：id 未被声明补全为 integer/int64：%+v", e.Method, e.Path, id.Schema)
+		}
+		if id.Description != "服务器 ID" || id.Example != "1" {
+			t.Errorf("%s %s：id 的描述/示例未从声明补全：%+v", e.Method, e.Path, id)
+		}
+	}
+}

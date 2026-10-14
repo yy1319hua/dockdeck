@@ -19,6 +19,7 @@ import (
 	"github.com/yy1319hua/dockdeck/internal/db"
 	"github.com/yy1319hua/dockdeck/internal/httpx"
 	"github.com/yy1319hua/dockdeck/internal/middleware"
+	"github.com/yy1319hua/dockdeck/internal/openapi"
 	"github.com/yy1319hua/dockdeck/internal/route"
 	"github.com/yy1319hua/dockdeck/internal/store"
 )
@@ -150,6 +151,60 @@ func TestSpecMatchesRouteTable(t *testing.T) {
 	for k := range served {
 		if _, ok := h.srv.table.Keys()[k]; !ok {
 			t.Errorf("spec 有 %q 但登记表没有", k)
+		}
+	}
+}
+
+// TestSpecHasNoDuplicateParameters 扫真实登记表的每一条：任何端点都不得
+// 生成重名参数（同一 name+in 两份是非法 OpenAPI，Swagger UI 报错）。
+// S2.7 指标端点与 S3.4 容器端点都在 Entry.Params 里声明了与路径同名的
+// id/cid/action（为补描述/示例），修复前这些端点全部中招。
+func TestSpecHasNoDuplicateParameters(t *testing.T) {
+	h := newHub(t)
+	d := h.srv.spec()
+	for _, e := range h.srv.table.Entries() {
+		pi := d.Paths[e.Path]
+		var op *openapi.Operation
+		switch e.Method {
+		case http.MethodGet:
+			op = pi.Get
+		case http.MethodPost:
+			op = pi.Post
+		case http.MethodPut:
+			op = pi.Put
+		case http.MethodPatch:
+			op = pi.Patch
+		case http.MethodDelete:
+			op = pi.Delete
+		}
+		if op == nil {
+			t.Errorf("%s %s：spec 里找不到 operation", e.Method, e.Path)
+			continue
+		}
+		// 路径占位符集合：{id}/{cid}/{action} 这些名字只允许以 path 形态
+		// 出现一次；Entry.Params 里的同名声明是给它们补描述/示例的，
+		// 不该另生出 query 参数（修复前的形态，Swagger UI 报错）。
+		placeholders := map[string]bool{}
+		for _, seg := range strings.Split(e.Path, "/") {
+			if strings.HasPrefix(seg, "{") && strings.HasSuffix(seg, "}") {
+				placeholders[seg[1:len(seg)-1]] = true
+			}
+		}
+		seen := map[string]bool{}
+		for _, p := range op.Params {
+			k := p.In + ":" + p.Name
+			if seen[k] {
+				t.Errorf("%s %s：参数 %s 重复出现", e.Method, e.Path, k)
+			}
+			seen[k] = true
+			if placeholders[p.Name] && p.In != "path" {
+				t.Errorf("%s %s：路径占位参数 %s 以 %s 形态出现，应为 path", e.Method, e.Path, p.Name, p.In)
+			}
+		}
+		for name := range placeholders {
+			if !seen["path:"+name] {
+				t.Errorf("%s %s：缺路径参数 %s", e.Method, e.Path, name)
+			}
 		}
 	}
 }

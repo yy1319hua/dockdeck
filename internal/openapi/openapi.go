@@ -197,6 +197,16 @@ func operation(e route.Entry) *Operation {
 		if typ == "" {
 			typ = "string"
 		}
+		// 同名参数若已作为路径参数存在（Entry.Params 里顺手声明了 {id}
+		// 的描述/示例/类型），用声明补全那一条，不重复追加——同一
+		// name+in 出现两份是非法 OpenAPI，Swagger UI 直接报错。
+		// （S2.7 的指标端点就因此把 id 生成过双份。）
+		if i := indexOfParam(op.Params, p.Name, "path"); i >= 0 {
+			op.Params[i].Description = p.Desc
+			op.Params[i].Example = p.Example
+			op.Params[i].Schema = &Schema{Type: typ, Format: p.SchemaFmt}
+			continue
+		}
 		op.Params = append(op.Params, Param{
 			Name: p.Name, In: "query", Required: p.Required,
 			Description: p.Desc, Example: p.Example,
@@ -308,6 +318,16 @@ func pathParams(p string) []string {
 		out = append(out, p[:j])
 		p = p[j+1:]
 	}
+}
+
+// indexOfParam 找 name+in 的参数下标；找不到返回 -1。
+func indexOfParam(ps []Param, name, in string) int {
+	for i, p := range ps {
+		if p.Name == name && p.In == in {
+			return i
+		}
+	}
+	return -1
 }
 
 // OperationID 由方法+路径稳定推导：GET /api/v1/servers/{id}/metrics → getApiV1ServersIdMetrics。

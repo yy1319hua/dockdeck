@@ -20,8 +20,8 @@ func TestValidComposeAction(t *testing.T) {
 		// 非法：logs 走独立 GET 流端点，不在此白名单；其余一律拒。
 		{"logs", false},
 		{"", false},
-		{"UP", false},            // 大小写敏感
-		{"rm", false},            // 危险动词绝不透传
+		{"UP", false}, // 大小写敏感
+		{"rm", false}, // 危险动词绝不透传
 		{"exec", false},
 		{"restart;rm -rf", false}, // 注入
 		{"../../etc", false},

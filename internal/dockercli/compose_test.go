@@ -147,11 +147,11 @@ func TestComposeActionArgs(t *testing.T) {
 	base := t.TempDir()
 	p1 := writeCompose(t, base, "p")
 	runner := &fakeComposeRunner{resp: map[string]string{
-		"-f " + p1 + " ps --format json":                `[]`,
-		"-f " + p1 + " up -d":                          "Container p-web-1 Started",
-		"-f " + p1 + " down":                           "Container p-web-1 Removed",
-		"-f " + p1 + " restart":                        "Container p-web-1 Restarted",
-		"-f " + p1 + " pull":                           "Pulling web ... done",
+		"-f " + p1 + " ps --format json": `[]`,
+		"-f " + p1 + " up -d":            "Container p-web-1 Started",
+		"-f " + p1 + " down":             "Container p-web-1 Removed",
+		"-f " + p1 + " restart":          "Container p-web-1 Restarted",
+		"-f " + p1 + " pull":             "Pulling web ... done",
 	}}
 	c := &ComposeClient{dirs: []string{base}, runner: runner}
 	ctx := context.Background()

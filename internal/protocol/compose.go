@@ -9,10 +9,10 @@ package protocol
 
 // ComposeProject 是一个被发现的 compose 项目（白名单目录内扫描到 compose 文件）。
 type ComposeProject struct {
-	Name       string           `json:"name"`         // 目录名（白名单内唯一标识）
-	Path       string           `json:"path"`         // 项目目录绝对路径
-	ConfigFile string           `json:"config_file"`  // compose 文件绝对路径
-	Status     string           `json:"status"`       // running | partial | stopped | unknown
+	Name       string           `json:"name"`        // 目录名（白名单内唯一标识）
+	Path       string           `json:"path"`        // 项目目录绝对路径
+	ConfigFile string           `json:"config_file"` // compose 文件绝对路径
+	Status     string           `json:"status"`      // running | partial | stopped | unknown
 	Services   []ComposeService `json:"services,omitempty"`
 }
 

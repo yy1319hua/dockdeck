@@ -29,6 +29,12 @@ type fakeEngine struct {
 	// pullStatus 非零时以该状态码响应（模拟 Engine 拒绝拉取）。
 	pullStream []byte
 	pullStatus int
+	// deleteStatus 非零时 DELETE /images/{name} 以该状态码响应；零值回 204。
+	// pruneBody 是 POST /images/prune 的响应体（nil 返回空结果 JSON）。
+	// pruneStatus 非零时以该状态码响应。
+	deleteStatus int
+	pruneBody    []byte
+	pruneStatus  int
 }
 
 func newFakeEngine(t *testing.T, apiVersion string) (*fakeEngine, string) {
@@ -94,6 +100,23 @@ func newFakeEngine(t *testing.T, apiVersion string) (*fakeEngine, string) {
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write(f.pullStream)
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/images/"):
+			if f.deleteStatus != 0 {
+				w.WriteHeader(f.deleteStatus)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodPost && r.URL.Path == "/images/prune":
+			if f.pruneStatus != 0 {
+				w.WriteHeader(f.pruneStatus)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			if f.pruneBody == nil {
+				_, _ = w.Write([]byte(`{"ImagesDeleted":null,"SpaceReclaimed":0}`))
+				return
+			}
+			_, _ = w.Write(f.pruneBody)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}

@@ -92,3 +92,35 @@ func ValidImageRef(ref string) bool {
 	}
 	return true
 }
+
+// PullResult 是一次镜像拉取的汇总结果，Agent 汇总后经 Hub 透传给调用方。
+//
+// 定义放在 protocol：这个形状出现在 Hub↔Agent 线路上（Agent 读 Engine
+// 进度流汇总、Hub 解码），两侧必须共用同一份定义（同 ImageSummary 理由）。
+type PullResult struct {
+	// Status 是 Engine 回报的最终状态串（如
+	// "Status: Downloaded newer image for alpine:3.20"），原样透传。
+	Status string `json:"Status"`
+	// Layers 是流里出现过的层 ID（去重保序）——「拉了哪些层」的账单。
+	Layers []string `json:"Layers"`
+	// Err 是 Engine 在流里回报的错误文本（error 字段非空的最后一条）。
+	// 非空即拉取失败，即便 HTTP 状态是 200——Engine 的这个接口把
+	// 业务错误放在流里而非状态码里。
+	Err string `json:"Err"`
+}
+
+// PruneResult 对应 Engine POST /images/prune 的响应体（Agent 原样转发）。
+type PruneResult struct {
+	// ImagesDeleted 是清理清单。每条是 Deleted（镜像本体删掉）或
+	// Untagged（只解了引用，多 tag 镜像的本体还活着）——UI 展示时
+	// 两者都给用户看，「删了 3 个镜像」与「解了 2 个 tag」不是一回事。
+	ImagesDeleted []PrunedImage `json:"ImagesDeleted"`
+	// SpaceReclaimed 是回收的字节数。
+	SpaceReclaimed int64 `json:"SpaceReclaimed"`
+}
+
+// PrunedImage 是 prune 清单的一条（Engine 原样两个字段二选一）。
+type PrunedImage struct {
+	Deleted  string `json:"Deleted"`
+	Untagged string `json:"Untagged"`
+}

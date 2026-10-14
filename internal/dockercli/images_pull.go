@@ -34,18 +34,9 @@ import (
 // 无限等。
 const PullTimeout = 10 * time.Minute
 
-// PullResult 是一次 pull 的汇总结果。
-type PullResult struct {
-	// Status 是 Engine 回报的最终状态串（如
-	// "Status: Downloaded newer image for alpine:3.20"），原样透传。
-	Status string
-	// Layers 是流里出现过的层 ID（去重保序）——「拉了哪些层」的账单。
-	Layers []string
-	// Err 是 Engine 在流里回报的错误文本（error 字段非空的最后一条）。
-	// 非空即拉取失败，即便 HTTP 状态是 200——Engine 的这个接口把
-	// 业务错误放在流里而非状态码里。
-	Err string
-}
+// PullResult 是拉取汇总结果的类型别名，真定义在 internal/protocol：
+// 它要跨 Hub↔Agent 线路（Agent 汇总、Hub 解码），两侧共用一份定义。
+type PullResult = protocol.PullResult
 
 // pullEvent 是进度流里的一条。Engine 的事件字段远不止这些
 // （progressDetail/aux/stream...），只取汇总需要的三个。

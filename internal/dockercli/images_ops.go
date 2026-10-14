@@ -23,21 +23,12 @@ import (
 	"github.com/yy1319hua/dockdeck/internal/protocol"
 )
 
-// PruneResult 对应 Engine POST /images/prune 的响应体。
-type PruneResult struct {
-	// ImagesDeleted 是清理清单。每条是 Deleted（镜像本体删掉）或
-	// Untagged（只解了引用，多 tag 镜像的本体还活着）——UI 展示时
-	// 两者都给用户看，「删了 3 个镜像」与「解了 2 个 tag」不是一回事。
-	ImagesDeleted []PrunedImage `json:"ImagesDeleted"`
-	// SpaceReclaimed 是回收的字节数。
-	SpaceReclaimed int64 `json:"SpaceReclaimed"`
-}
-
-// PrunedImage 是 prune 清单的一条（Engine 原样两个字段二选一）。
-type PrunedImage struct {
-	Deleted  string `json:"Deleted"`
-	Untagged string `json:"Untagged"`
-}
+// PruneResult / PrunedImage 是 prune 响应的类型别名，真定义在
+// internal/protocol：同 PullResult，形状跨 Hub↔Agent 线路。
+type (
+	PruneResult = protocol.PruneResult
+	PrunedImage = protocol.PrunedImage
+)
 
 // Delete 删除镜像。ref 形同 pull（name:tag 或 ID）。
 //

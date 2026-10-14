@@ -50,6 +50,10 @@ type Fake struct {
 	imageList   []protocol.ImageSummary
 	pullResult  protocol.PullResult
 	pruneResult protocol.PruneResult
+	// composeList / composeAction / composeLogs 是 Compose 端点（S4.2）的配置响应。
+	composeList   []protocol.ComposeProject
+	composeAction protocol.ComposeActionResult
+	composeLogs   string
 	// calls 记录每次进入业务端点的请求路径（已过鉴权），供断言「实际打到了哪」。
 	calls []string
 	// bodies 记录写端点的请求体（成功路径），供 e2e 断言 stop/kill/remove
@@ -109,6 +113,23 @@ func (f *Fake) SetSelfID(id string) {
 func (f *Fake) SetLogs(body string) {
 	f.mu.Lock()
 	f.logsBody = body
+	f.mu.Unlock()
+}
+
+// SetComposeList / SetComposeAction / SetComposeLogs 配置 Compose 端点（S4.2）。
+func (f *Fake) SetComposeList(ps []protocol.ComposeProject) {
+	f.mu.Lock()
+	f.composeList = ps
+	f.mu.Unlock()
+}
+func (f *Fake) SetComposeAction(r protocol.ComposeActionResult) {
+	f.mu.Lock()
+	f.composeAction = r
+	f.mu.Unlock()
+}
+func (f *Fake) SetComposeLogs(body string) {
+	f.mu.Lock()
+	f.composeLogs = body
 	f.mu.Unlock()
 }
 
@@ -185,6 +206,11 @@ func (f *Fake) Handler() http.Handler {
 	mux.Handle("POST /api/v1/images/pull", authed(f.serveImagePull))
 	mux.Handle("DELETE /api/v1/images/{ref...}", authed(f.serveImageDelete))
 	mux.Handle("POST /api/v1/images/prune", authed(f.serveImagePrune))
+	// ---- Compose 端点（S4.2）：list/logs 读；action 写。{project} 是白名单内
+	// 项目名（目录名），与真 Agent 路由同款方法限定。----
+	mux.Handle("GET /api/v1/compose", authed(f.serveComposeList))
+	mux.Handle("POST /api/v1/compose/{project}/{action}", authed(f.serveComposeAction))
+	mux.Handle("GET /api/v1/compose/{project}/logs", authed(f.serveComposeLogs))
 	return mux
 }
 
@@ -474,6 +500,56 @@ func (f *Fake) serveImagePrune(w http.ResponseWriter, r *http.Request) {
 	res := f.pruneResult
 	f.mu.Unlock()
 	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+// ---- Compose 端点（S4.2）----
+
+func (f *Fake) serveComposeList(w http.ResponseWriter, r *http.Request) {
+	if done, status := f.maybeFail(r); done {
+		w.WriteHeader(status)
+		return
+	}
+	f.mu.Lock()
+	list := f.composeList
+	f.mu.Unlock()
+	if list == nil {
+		list = []protocol.ComposeProject{}
+	}
+	httpx.WriteJSON(w, http.StatusOK, list)
+}
+
+func (f *Fake) serveComposeAction(w http.ResponseWriter, r *http.Request) {
+	if done, status := f.maybeFail(r); done {
+		w.WriteHeader(status)
+		return
+	}
+	project := r.PathValue("project")
+	action := r.PathValue("action")
+	if !protocol.ValidComposeAction(action) {
+		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, "不支持的 compose 动作: "+action)
+		return
+	}
+	if project == "" {
+		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, "项目名不能为空")
+		return
+	}
+	f.mu.Lock()
+	res := f.composeAction
+	f.mu.Unlock()
+	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+func (f *Fake) serveComposeLogs(w http.ResponseWriter, r *http.Request) {
+	if done, status := f.maybeFail(r); done {
+		w.WriteHeader(status)
+		return
+	}
+	f.mu.Lock()
+	body := f.composeLogs
+	f.mu.Unlock()
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	io.WriteString(w, body)
 }
 
 // SetImageList / SetPullResult / SetPruneResult 配置镜像端点（S4.1）响应。

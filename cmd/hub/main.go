@@ -437,6 +437,60 @@ func (s *server) routes() http.Handler {
 		InternalRef: "cmd/hub/images.go imagePrune",
 	}, middleware.Audit(s.st, "image.prune", s.imagePrune))
 
+	// ---- S4.7 Compose 转发（Agent 侧 S4.2 已落地，Hub 侧补齐转发）----
+	tbl.Add(route.Entry{
+		Method: "GET", Path: "/api/v1/servers/{id}/compose", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadContainers,
+		Summary: "Compose 项目清单", Tags: []string{"Compose"},
+		Desc: "实时取自 Agent：在 Agent 配置的白名单目录（DD_AGENT_COMPOSE_DIRS）内递归发现 compose 文件，" +
+			"并逐个查运行状态。白名单外的项目一律不可见（项目名只经白名单解析，不进 shell）。",
+		Params: []route.Param{
+			{Name: "id", Desc: "服务器 ID", Required: true, Example: "1", SchemaType: "integer", SchemaFmt: "int64"},
+		},
+		Responses: []route.Response{
+			{Status: 403, Desc: "服务器已禁用"},
+			{Status: 502, Desc: "Agent 不可达或返回异常"},
+		},
+		InternalRef: "cmd/hub/compose.go composeList",
+	}, middleware.Audit(s.st, "compose.list", s.composeList))
+
+	tbl.Add(route.Entry{
+		Method: "POST", Path: "/api/v1/servers/{id}/compose/{project}/{action}", AuthMode: route.AuthScope, Scope: apitoken.ScopeWriteContainers,
+		Summary: "Compose 写动作", Tags: []string{"Compose"},
+		Desc: "action ∈ up|down|restart|pull；非法动词由 Hub 侧 agentcli 拦下（400，不出门），未知项目 404。" +
+			"响应透传 compose 原生输出。**compose 没有 prune 子命令**——镜像清理走镜像端点，不在此暴露。",
+		Params: []route.Param{
+			{Name: "id", Desc: "服务器 ID", Required: true, Example: "1", SchemaType: "integer", SchemaFmt: "int64"},
+			{Name: "project", Desc: "项目名（白名单内目录名）", Required: true, Example: "watchtower"},
+			{Name: "action", Desc: "up | down | restart | pull", Required: true, Example: "up"},
+		},
+		Responses: []route.Response{
+			{Status: 400, Desc: "动作不在白名单（本地拦截，不出门）"},
+			{Status: 403, Desc: "服务器已禁用"},
+			{Status: 404, Desc: "项目不存在或不在白名单"},
+			{Status: 502, Desc: "Agent 不可达，或 compose 执行失败（如端口冲突）"},
+		},
+		InternalRef: "cmd/hub/compose.go composeAction",
+	}, middleware.Audit(s.st, "compose.action", s.composeAction))
+
+	tbl.Add(route.Entry{
+		Method: "GET", Path: "/api/v1/servers/{id}/compose/{project}/logs", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadContainers,
+		Summary: "Compose 项目日志", Tags: []string{"Compose"}, NoEnvelope: true, ContentType: "text/plain",
+		Desc: "裸文本流（--no-color）。follow=1 为长连接，逐块 Flush，调用方断开即结束；" +
+			"不设 Hub 侧读取超时——流的寿命归调用方 ctx。",
+		Params: []route.Param{
+			{Name: "id", Desc: "服务器 ID", Required: true, Example: "1", SchemaType: "integer", SchemaFmt: "int64"},
+			{Name: "project", Desc: "项目名（白名单内目录名）", Required: true, Example: "watchtower"},
+			{Name: "follow", Desc: "持续跟随（仅认 1）", Required: false, Example: "1", SchemaType: "boolean"},
+		},
+		Responses: []route.Response{
+			{Status: 400, Desc: "项目名为空（本地拦截，不出门）"},
+			{Status: 403, Desc: "服务器已禁用"},
+			{Status: 404, Desc: "项目不存在或不在白名单"},
+			{Status: 502, Desc: "Agent 不可达或打开流失败"},
+		},
+		InternalRef: "cmd/hub/compose.go composeLogs",
+	}, middleware.Audit(s.st, "compose.logs", s.composeLogs))
+
 	// ---- 占位：S2 起逐步替换为真实实现 ----
 	tbl.Add(route.Entry{
 		Method: "GET", Path: "/api/v1/servers", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadMetrics,

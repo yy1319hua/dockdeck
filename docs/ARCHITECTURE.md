@@ -205,9 +205,11 @@ Agent 侧只读 `/proc`，不引入 gopsutil 这类额外依赖（交叉编译�
 1. **默认不写宿主机**：Hub 不主动写任何文件。写入路径只有两类，且都需显式请求——
    用户提交的 Compose YAML，以及文件管理模块在白名单目录内的操作。除此之外全部只读。
 2. **备份优先于变更**：写 Compose 文件与白名单内文件前，先落 `*.bak.<RFC3339>`；SQLite 用 `VACUUM INTO` 出快照，不复制运行中的 db 文件。
-3. **破坏性动作三重门**：保护名单命中即拒（`settings.protected_containers` 正则，默认含 `dockdeck-*`、
-   `watchtower`、部署时录入的现有容器名）；`prune` 类必须先 **在 UI 展示将被删清单**再执行——Engine 的 `/images/prune` 无 dry-run 参数，DockDeck 以「先 `GET /images?dangling=true` 取清单、UI 确认后 `POST /images/prune` 真删」两段式等价实现；
-   删除容器要求输入名字确认。所有此类操作进审计。
+3. **破坏性动作三重门**（S4.4 落地为 `internal/guard`，Hub 与 Agent 共享比较语义）：保护名单命中即拒
+   （`settings.protected_containers` 逗号分隔正则，缺省仅 `^dockdeck-`；watchtower/komari 由运维自行删除、
+   不入名单（2026-10-15 用户定），部署时录入的现有容器名追加进 settings）；`prune` 类必须先 **在 UI 展示将被删清单**再执行——Engine 的 `/images/prune` 无 dry-run 参数，DockDeck 以「先 `GET /images?dangling=true` 取清单、UI 确认后 `POST /images/prune` 真删」两段式等价实现；
+   删除容器要求输入名字确认（`confirm` 与目标 ID/名字完全一致，Hub 校验后透传，Agent 同守一道——
+   直连 Agent 的调用方也绕不过）。所有此类操作进审计。
 4. **不碰自身**：Hub/Agent 容器自身、其 volume、其网络在 API 层标记 `protected`，UI 灰置。
 5. **不猜语义**：Agent 只转发 Docker API，不批量重启、不自动更新、不改 restart policy、不动宿主机 systemd 单元。
 6. **失败即停**：Agent 对任何 5xx 不重试写操作；写操作全部幂等键 `X-DD-Request-Id` 落审计。

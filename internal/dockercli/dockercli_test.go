@@ -25,6 +25,10 @@ type fakeEngine struct {
 	// images 是 GET /images/json 的响应体（JSON 原样）；nil 返回 []。
 	// 收到的查询串（all/filters）随 paths 记录，供断言。
 	images []byte
+	// pullStream 是 POST /images/create 的响应体（NDJSON 原样）；nil 返回空流。
+	// pullStatus 非零时以该状态码响应（模拟 Engine 拒绝拉取）。
+	pullStream []byte
+	pullStatus int
 }
 
 func newFakeEngine(t *testing.T, apiVersion string) (*fakeEngine, string) {
@@ -75,16 +79,24 @@ func newFakeEngine(t *testing.T, apiVersion string) (*fakeEngine, string) {
 		})
 	})
 	mux.HandleFunc("/images/", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/images/json" {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/images/json":
+			w.Header().Set("Content-Type", "application/json")
+			if f.images == nil {
+				_, _ = w.Write([]byte("[]"))
+				return
+			}
+			_, _ = w.Write(f.images)
+		case r.Method == http.MethodPost && r.URL.Path == "/images/create":
+			if f.pullStatus != 0 {
+				w.WriteHeader(f.pullStatus)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(f.pullStream)
+		default:
 			w.WriteHeader(http.StatusNotFound)
-			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		if f.images == nil {
-			_, _ = w.Write([]byte("[]"))
-			return
-		}
-		_, _ = w.Write(f.images)
 	})
 	// Engine 对版本前缀路由：/v1.51/version 与 /version 等价。
 	// 剥掉 /vX.Y 前缀后再进 mux，模拟 Engine 的真实路由行为。

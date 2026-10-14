@@ -315,7 +315,8 @@ func pathParams(p string) []string {
 		if j < 0 {
 			return out
 		}
-		out = append(out, p[:j])
+		// Go mux 尾通配符 {ref...} 的文档名剥掉 "..."（规范里就是 {ref}）。
+		out = append(out, strings.TrimSuffix(p[:j], "..."))
 		p = p[j+1:]
 	}
 }
@@ -336,7 +337,7 @@ func OperationID(e route.Entry) string {
 	var b strings.Builder
 	b.WriteString(strings.ToLower(e.Method))
 	for _, seg := range strings.Split(e.Path, "/") {
-		seg = strings.NewReplacer("{", "", "}", "", "-", "", "_", "").Replace(seg)
+		seg = strings.NewReplacer("{", "", "}", "", "-", "", "_", "", ".", "").Replace(seg)
 		if seg == "" {
 			continue
 		}

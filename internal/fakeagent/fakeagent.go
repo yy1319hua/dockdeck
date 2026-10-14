@@ -46,6 +46,10 @@ type Fake struct {
 	selfID string
 	// logsBody 是日志端点（S3.4）的响应体：裸流，不走信封（与真 Agent 一致）。
 	logsBody string
+	// imageList / pullResult / pruneResult 是镜像端点（S4.1）的配置响应。
+	imageList   []protocol.ImageSummary
+	pullResult  protocol.PullResult
+	pruneResult protocol.PruneResult
 	// calls 记录每次进入业务端点的请求路径（已过鉴权），供断言「实际打到了哪」。
 	calls []string
 	// bodies 记录写端点的请求体（成功路径），供 e2e 断言 stop/kill/remove
@@ -175,6 +179,12 @@ func (f *Fake) Handler() http.Handler {
 	mux.Handle("POST /api/v1/containers/{id}/{action}", authed(f.serveContainerAction))
 	mux.Handle("DELETE /api/v1/containers/{id}", authed(f.serveContainerRemove))
 	mux.Handle("GET /api/v1/containers/{id}/logs", authed(f.serveContainerLogs))
+	// ---- 镜像端点（S4.1）：与真 Agent 路由同款方法限定；{ref...} 尾通配符
+	// 容纳含 "/" 的引用（library/nginx）。无自身守卫（真 Agent 同款）。----
+	mux.Handle("GET /api/v1/images", authed(f.serveImageList))
+	mux.Handle("POST /api/v1/images/pull", authed(f.serveImagePull))
+	mux.Handle("DELETE /api/v1/images/{ref...}", authed(f.serveImageDelete))
+	mux.Handle("POST /api/v1/images/prune", authed(f.serveImagePrune))
 	return mux
 }
 
@@ -395,4 +405,92 @@ func sanitizeLogName(id string) string {
 		return "container"
 	}
 	return string(out)
+}
+
+// ---- 镜像端点（S4.1）----
+
+func (f *Fake) serveImageList(w http.ResponseWriter, r *http.Request) {
+	if done, status := f.maybeFail(r); done {
+		w.WriteHeader(status)
+		return
+	}
+	f.mu.Lock()
+	list := f.imageList
+	f.mu.Unlock()
+	if list == nil {
+		list = []protocol.ImageSummary{}
+	}
+	httpx.WriteJSON(w, http.StatusOK, list)
+}
+
+func (f *Fake) serveImagePull(w http.ResponseWriter, r *http.Request) {
+	if done, status := f.maybeFail(r); done {
+		w.WriteHeader(status)
+		return
+	}
+	raw, _ := io.ReadAll(io.LimitReader(r.Body, 4<<10))
+	var b struct {
+		Ref string `json:"ref"`
+	}
+	if len(raw) > 0 && json.Unmarshal(raw, &b) != nil {
+		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, "请求体不是合法 JSON")
+		return
+	}
+	if !protocol.ValidImageRef(b.Ref) {
+		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, "非法镜像引用")
+		return
+	}
+	f.recordBody(raw)
+	f.mu.Lock()
+	res := f.pullResult
+	f.mu.Unlock()
+	// 流内错误按真 Agent 口径映射 502（HTTP 200 但业务失败）。
+	if res.Err != "" {
+		httpx.WriteError(w, http.StatusBadGateway, protocol.CodeUpstreamError, "拉取失败: "+res.Err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+func (f *Fake) serveImageDelete(w http.ResponseWriter, r *http.Request) {
+	if done, status := f.maybeFail(r); done {
+		w.WriteHeader(status)
+		return
+	}
+	ref := r.PathValue("ref")
+	if !protocol.ValidImageRef(ref) {
+		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, "非法镜像引用")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (f *Fake) serveImagePrune(w http.ResponseWriter, r *http.Request) {
+	if done, status := f.maybeFail(r); done {
+		w.WriteHeader(status)
+		return
+	}
+	f.mu.Lock()
+	res := f.pruneResult
+	f.mu.Unlock()
+	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+// SetImageList / SetPullResult / SetPruneResult 配置镜像端点（S4.1）响应。
+func (f *Fake) SetImageList(list []protocol.ImageSummary) {
+	f.mu.Lock()
+	f.imageList = list
+	f.mu.Unlock()
+}
+
+func (f *Fake) SetPullResult(res protocol.PullResult) {
+	f.mu.Lock()
+	f.pullResult = res
+	f.mu.Unlock()
+}
+
+func (f *Fake) SetPruneResult(res protocol.PruneResult) {
+	f.mu.Lock()
+	f.pruneResult = res
+	f.mu.Unlock()
 }

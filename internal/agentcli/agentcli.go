@@ -59,6 +59,9 @@ type Client struct {
 	// 置 0 用默认值；置负数表示不限（仅测试用）。
 	ReadTimeout  time.Duration
 	WriteTimeout time.Duration
+	// PullTimeout 是镜像拉取（POST /images/pull）的超时：长操作，
+	// 不能套 5s 写超时。置 0 用 ImagePullTimeout。
+	PullTimeout time.Duration
 
 	// MaxReadTries 是读请求最大尝试次数（含首次）。置 0 用默认值。
 	MaxReadTries int

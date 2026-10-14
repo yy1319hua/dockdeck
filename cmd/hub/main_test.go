@@ -187,7 +187,8 @@ func TestSpecHasNoDuplicateParameters(t *testing.T) {
 		placeholders := map[string]bool{}
 		for _, seg := range strings.Split(e.Path, "/") {
 			if strings.HasPrefix(seg, "{") && strings.HasSuffix(seg, "}") {
-				placeholders[seg[1:len(seg)-1]] = true
+				// 尾通配符 {ref...} 的文档名剥掉 "..."（与 openapi.pathParams 同口径）。
+				placeholders[strings.TrimSuffix(seg[1:len(seg)-1], "...")] = true
 			}
 		}
 		seen := map[string]bool{}

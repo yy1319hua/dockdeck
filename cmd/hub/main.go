@@ -370,6 +370,73 @@ func (s *server) routes() http.Handler {
 		InternalRef: "cmd/hub/containers.go containerRemove",
 	}, middleware.Audit(s.st, "container.remove", s.containerRemove))
 
+	// ---- S4.1 镜像转发（实时到 Agent，scope 复用容器 scope）----
+	tbl.Add(route.Entry{
+		Method: "GET", Path: "/api/v1/servers/{id}/images", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadContainers,
+		Summary: "镜像清单", Tags: []string{"Images"},
+		Desc: "实时取自 Agent 的 Engine 原生清单（all=true 含中间层）。" +
+			"dangling=true 只列悬空镜像（无 tag），是 prune dry-run 两段式的第一段。",
+		Params: []route.Param{
+			{Name: "id", Desc: "服务器 ID", Required: true, Example: "1", SchemaType: "integer", SchemaFmt: "int64"},
+			{Name: "all", Desc: "含中间层镜像（true/false，或 1/0；省略为 false）", Required: false, Example: "false", SchemaType: "boolean"},
+			{Name: "dangling", Desc: "只列悬空镜像（true/false，或 1/0；省略为 false）", Required: false, Example: "false", SchemaType: "boolean"},
+		},
+		Responses: []route.Response{
+			{Status: 403, Desc: "服务器已禁用"},
+			{Status: 502, Desc: "Agent 不可达或返回异常"},
+		},
+		InternalRef: "cmd/hub/images.go imageList",
+	}, middleware.Audit(s.st, "image.list", s.imageList))
+
+	tbl.Add(route.Entry{
+		Method: "POST", Path: "/api/v1/servers/{id}/images/pull", AuthMode: route.AuthScope, Scope: apitoken.ScopeWriteContainers,
+		Summary: "拉取镜像", Tags: []string{"Images"},
+		Desc: "请求体 {\"ref\":\"alpine:3.20\"}。长操作（大镜像以分钟计），Hub 侧超时 10 分钟。" +
+			"响应是汇总结果（最终状态/层清单），Engine 流内业务失败映射 502。",
+		Params: []route.Param{
+			{Name: "id", Desc: "服务器 ID", Required: true, Example: "1", SchemaType: "integer", SchemaFmt: "int64"},
+		},
+		Responses: []route.Response{
+			{Status: 400, Desc: "ref 为空或字符集非法（本地校验，不出门）"},
+			{Status: 403, Desc: "服务器已禁用"},
+			{Status: 502, Desc: "Agent 不可达，或 Engine 流内报错（如仓库不存在）"},
+		},
+		InternalRef: "cmd/hub/images.go imagePull",
+	}, middleware.Audit(s.st, "image.pull", s.imagePull))
+
+	tbl.Add(route.Entry{
+		Method: "DELETE", Path: "/api/v1/servers/{id}/images/{ref...}", AuthMode: route.AuthScope, Scope: apitoken.ScopeWriteContainers,
+		Summary: "删除镜像", Tags: []string{"Images"},
+		Desc: "ref 形如 alpine:3.20 或镜像 ID（可含 /，如 library/nginx:latest）。" +
+			"被容器占用的镜像 Engine 回 409；强删（先处理容器）不在本端点，是调用方决策链。",
+		Params: []route.Param{
+			{Name: "id", Desc: "服务器 ID", Required: true, Example: "1", SchemaType: "integer", SchemaFmt: "int64"},
+			{Name: "ref", Desc: "镜像引用（name:tag 或 ID）", Required: true, Example: "alpine:3.20"},
+		},
+		Responses: []route.Response{
+			{Status: 403, Desc: "服务器已禁用"},
+			{Status: 404, Desc: "镜像不存在"},
+			{Status: 409, Desc: "镜像被容器占用"},
+			{Status: 502, Desc: "Agent 不可达或返回异常"},
+		},
+		InternalRef: "cmd/hub/images.go imageDelete",
+	}, middleware.Audit(s.st, "image.delete", s.imageDelete))
+
+	tbl.Add(route.Entry{
+		Method: "POST", Path: "/api/v1/servers/{id}/images/prune", AuthMode: route.AuthScope, Scope: apitoken.ScopeWriteContainers,
+		Summary: "清理悬空镜像", Tags: []string{"Images"},
+		Desc: "真删（dry-run 两段式的第二段：前端先 GET images?dangling=true 展示清单，" +
+			"用户确认后才调本端点）。返回 Engine 的清理清单与回收字节数。",
+		Params: []route.Param{
+			{Name: "id", Desc: "服务器 ID", Required: true, Example: "1", SchemaType: "integer", SchemaFmt: "int64"},
+		},
+		Responses: []route.Response{
+			{Status: 403, Desc: "服务器已禁用"},
+			{Status: 502, Desc: "Agent 不可达或返回异常"},
+		},
+		InternalRef: "cmd/hub/images.go imagePrune",
+	}, middleware.Audit(s.st, "image.prune", s.imagePrune))
+
 	// ---- 占位：S2 起逐步替换为真实实现 ----
 	tbl.Add(route.Entry{
 		Method: "GET", Path: "/api/v1/servers", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadMetrics,

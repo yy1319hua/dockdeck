@@ -170,6 +170,9 @@ func TestOperationID(t *testing.T) {
 		{"POST", "/api/v1/api-tokens", "postApiV1Apitokens"},
 		{"DELETE", "/api/v1/api-tokens/{id}", "deleteApiV1ApitokensId"},
 		{"GET", "/api/v1/servers/{id}/containers/{cid}/logs", "getApiV1ServersIdContainersCidLogs"},
+		// 尾通配符 {ref...}（Go mux 容纳含 "/" 的镜像引用）：文档/标识符
+		// 层剥掉 "..." 与 "."，与单段参数同规格呈现。
+		{"DELETE", "/api/v1/servers/{id}/images/{ref...}", "deleteApiV1ServersIdImagesRef"},
 	}
 	for _, c := range cases {
 		e := route.Entry{Method: c.method, Path: c.path}
@@ -325,6 +328,22 @@ func TestNoDuplicateParameters(t *testing.T) {
 		}
 		if id.Description != "服务器 ID" || id.Example != "1" {
 			t.Errorf("%s %s：id 的描述/示例未从声明补全：%+v", e.Method, e.Path, id)
+		}
+	}
+}
+
+// TestPathParamsTailWildcard 覆盖 Go mux 尾通配符的文档名规范化：
+// {ref...}（容纳含 "/" 的镜像引用，如 library/nginx:latest）在 OpenAPI
+// 参数与路径模板里都呈现为 {ref}——"." 与 "..." 不是文档层词汇。
+func TestPathParamsTailWildcard(t *testing.T) {
+	got := pathParams("/api/v1/servers/{id}/images/{ref...}")
+	want := []string{"id", "ref"}
+	if len(got) != len(want) {
+		t.Fatalf("pathParams = %v 期望 %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("参数 %d = %q 期望 %q", i, got[i], want[i])
 		}
 	}
 }

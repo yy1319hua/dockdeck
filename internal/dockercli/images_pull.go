@@ -106,7 +106,8 @@ func splitImageRef(ref string) (fromImage, tag string) {
 // readPullStream 逐行读 NDJSON 进度流并汇总。
 // 行上限放到 1MB（默认 64KB）：progress 字段带全角进度条字符时可能很长。
 func readPullStream(r io.Reader) (*PullResult, error) {
-	res := &PullResult{}
+	// Layers 预置空 slice：与 list 同口径，空清单编码为 [] 非 null。
+	res := &PullResult{Layers: []string{}}
 	seen := map[string]bool{}
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64<<10), 1<<20)

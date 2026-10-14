@@ -153,3 +153,22 @@ func TestPull_LongTimeoutConfigured(t *testing.T) {
 		t.Errorf("PullTimeout = %v，pull 长操作至少给 5 分钟", PullTimeout)
 	}
 }
+
+// TestPull_EmptyLayersIsSlice 钉住空清单口径：没拉到任何层事件时
+// （如全部命中缓存）Layers 必须是 [] 非 null，与镜像 list 同口径。
+func TestPull_EmptyLayersIsSlice(t *testing.T) {
+	f, sock := newFakeEngine(t, "1.51")
+	c := New(sock)
+	f.pullStream = []byte(`{"status":"Image is up to date for alpine:3.20"}
+`)
+	res, err := c.Pull(context.Background(), "alpine:3.20")
+	if err != nil {
+		t.Fatalf("Pull: %v", err)
+	}
+	if res.Layers == nil {
+		t.Error("Layers 空应为 [] 非 null")
+	}
+	if len(res.Layers) != 0 {
+		t.Errorf("Layers 应为空: %v", res.Layers)
+	}
+}

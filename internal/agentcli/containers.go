@@ -63,9 +63,11 @@ func (c *Client) ContainerInspect(ctx context.Context, id string) (json.RawMessa
 // 发请求之前完成：该拒的请求不该出门。
 
 // lifecycleOpts 是 stop/kill 的可选请求体，字段按 Agent 侧 lifecycleBody 对齐。
-// 只序列化非零字段：没有选项就不发请求体，不发 {"timeout_sec":0} 这种噪音。
+// TimeoutSec 用指针：nil/缺省 = 引擎默认（10s），显式 0 = SIGTERM 后立即停止
+// （Docker 原生语义）。曾经这里是 int+omitempty，显式 0 被当噪音静默丢弃，
+// 「立即停止」悄悄变成「等 10 秒」——零值有意义，就不能用 omitempty 表达。
 type lifecycleOpts struct {
-	TimeoutSec int    `json:"timeout_sec,omitempty"`
+	TimeoutSec *int   `json:"timeout_sec,omitempty"`
 	Signal     string `json:"signal,omitempty"`
 }
 
@@ -91,12 +93,12 @@ func (c *Client) ContainerStart(ctx context.Context, id string) error {
 	return c.containerWrite(ctx, http.MethodPost, "start", id, "", nil)
 }
 
-// ContainerStop 停止容器。timeoutSec 是 SIGTERM 后等待秒数，
-// nil 用引擎默认（10s）；走请求体，与 Agent 侧口径一致。
+// ContainerStop 停止容器。timeoutSec 是 SIGTERM 后等待秒数：
+// nil 用引擎默认（10s），显式 0 表示立即停止；走请求体，与 Agent 侧口径一致。
 func (c *Client) ContainerStop(ctx context.Context, id string, timeoutSec *int) error {
 	var body []byte
 	if timeoutSec != nil {
-		body, _ = json.Marshal(lifecycleOpts{TimeoutSec: *timeoutSec})
+		body, _ = json.Marshal(lifecycleOpts{TimeoutSec: timeoutSec})
 	}
 	return c.containerWrite(ctx, http.MethodPost, "stop", id, "", body)
 }

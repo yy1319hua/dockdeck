@@ -143,6 +143,7 @@ func TestClient_ContainerInspectNotFound(t *testing.T) {
 // resize 的行列走查询串、remove 的 force/v 走查询串）。
 func TestClient_ContainerWriteOps(t *testing.T) {
 	timeout5 := 5
+	timeout0 := 0
 	cases := []struct {
 		name       string
 		call       func(context.Context, *Client) error
@@ -156,6 +157,10 @@ func TestClient_ContainerWriteOps(t *testing.T) {
 			"POST", "/api/v1/containers/c1/stop", ""},
 		{"stop-with-timeout", func(ctx context.Context, c *Client) error { return c.ContainerStop(ctx, "c1", &timeout5) },
 			"POST", "/api/v1/containers/c1/stop", `{"timeout_sec":5}`},
+		// 显式 0 = SIGTERM 后立即停止（Docker 语义），必须如实抵达 Agent；
+		// int+omitempty 时代它被当噪音丢掉，悄悄变成引擎默认 10s。
+		{"stop-timeout-zero", func(ctx context.Context, c *Client) error { return c.ContainerStop(ctx, "c1", &timeout0) },
+			"POST", "/api/v1/containers/c1/stop", `{"timeout_sec":0}`},
 		{"restart", func(ctx context.Context, c *Client) error { return c.ContainerRestart(ctx, "c1") },
 			"POST", "/api/v1/containers/c1/restart", ""},
 		{"pause", func(ctx context.Context, c *Client) error { return c.ContainerPause(ctx, "c1") },

@@ -180,6 +180,15 @@ func TestHubContainerActionForwards(t *testing.T) {
 		t.Errorf("timeout_sec 应透传到 Agent，得 %q", bodies[len(bodies)-1])
 	}
 
+	// 显式 0 = 立即停止（Docker 语义），必须原样抵达 Agent，不能被当成
+	// 「没有选项」静默丢弃——那条路上它会悄悄变成引擎默认 10s。
+	if resp, _ := h.do(t, http.MethodPost, base+"stop", `{"timeout_sec":0}`, tok, ""); resp.StatusCode != http.StatusOK {
+		t.Fatalf("stop(0) 应 200，得 %d", resp.StatusCode)
+	}
+	if bodies := fa.WriteBodies(); bodies[len(bodies)-1] != `{"timeout_sec":0}` {
+		t.Errorf("timeout_sec=0 应原样透传，得 %q", bodies[len(bodies)-1])
+	}
+
 	// kill 的信号规范化后走请求体（sigkill → SIGKILL；白名单在 protocol 单点）。
 	if resp, _ := h.do(t, http.MethodPost, base+"kill", `{"signal":"sigkill"}`, tok, ""); resp.StatusCode != http.StatusOK {
 		t.Fatalf("kill 应 200，得 %d", resp.StatusCode)

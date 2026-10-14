@@ -47,6 +47,15 @@ func (c *Client) Logs(ctx context.Context, id string, o protocol.LogsOptions) (*
 	if !protocol.ValidTail(o.Tail) {
 		return nil, fmt.Errorf("agentcli: tail 必须是 all 或数字，got %q", o.Tail)
 	}
+	// since/until 同样做出门前预检（合法性与 Agent 同款规则，单点 protocol）：
+	// 该拒的请求不出门。此处只判合法性、不归一——归一是 Agent 落 Engine
+	// 前的职责；Hub 对外保持 RFC3339 友好，原值转发。
+	if _, ok := protocol.NormalizeTimeParam(o.Since); !ok {
+		return nil, fmt.Errorf("agentcli: since 必须是 Unix 秒或 RFC3339，got %q", o.Since)
+	}
+	if _, ok := protocol.NormalizeTimeParam(o.Until); !ok {
+		return nil, fmt.Errorf("agentcli: until 必须是 Unix 秒或 RFC3339，got %q", o.Until)
+	}
 	q := url.Values{}
 	if o.Follow {
 		q.Set("follow", "1")

@@ -38,6 +38,20 @@ func logsQuery(r *http.Request) (dockercli.LogsOptions, error) {
 	if !protocol.ValidTail(o.Tail) {
 		return o, errors.New("tail 必须是 all 或数字")
 	}
+	// since/until 归一成 Unix 秒再落 Engine：实测 Engine 29.1.3 只认它，
+	// RFC3339 再正确也会 500（ARCHITECTURE.md「Engine 契约实测基线」）。
+	// 规则单点定义在 protocol，与 ValidTail 同款两侧共用——Hub 侧
+	// （agentcli）用同一函数做出门前预检，归一本端独占。
+	if v, ok := protocol.NormalizeTimeParam(o.Since); ok {
+		o.Since = v
+	} else {
+		return o, errors.New("since 必须是 Unix 秒或 RFC3339")
+	}
+	if v, ok := protocol.NormalizeTimeParam(o.Until); ok {
+		o.Until = v
+	} else {
+		return o, errors.New("until 必须是 Unix 秒或 RFC3339")
+	}
 	return o, nil
 }
 

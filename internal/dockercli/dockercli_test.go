@@ -20,7 +20,7 @@ type fakeEngine struct {
 	listener net.Listener
 	server   *http.Server
 	mu       sync.Mutex
-	paths    []string // 收到的请求路径（含版本前缀），供断言
+	paths    []string // 收到的请求 URI（含版本前缀与查询串），供断言
 	pingOK   bool     // false 时 /_ping 返回 500，模拟引擎半死
 }
 
@@ -53,6 +53,15 @@ func newFakeEngine(t *testing.T, apiVersion string) (*fakeEngine, string) {
 			"GoVersion": "go1.24.0", "GitCommit": "abc1234", "Experimental": false,
 		})
 	})
+	mux.HandleFunc("/containers/", func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/logs") {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/vnd.docker.multiplexed-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("logline\n"))
+	})
 	mux.HandleFunc("/info", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ID": "ABCD:1234", "Containers": 3, "ContainersRunning": 2,
@@ -65,7 +74,7 @@ func newFakeEngine(t *testing.T, apiVersion string) (*fakeEngine, string) {
 	// Engine 对版本前缀路由：/v1.51/version 与 /version 等价。
 	// 剥掉 /vX.Y 前缀后再进 mux，模拟 Engine 的真实路由行为。
 	strip := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		f.record(r.URL.Path)
+		f.record(r.URL.RequestURI())
 		if len(r.URL.Path) > 2 && r.URL.Path[0] == '/' && r.URL.Path[1] == 'v' {
 			rest := r.URL.Path[1:]
 			if i := strings.Index(rest, "/"); i > 0 && isVer(rest[1:i]) {
@@ -205,5 +214,53 @@ func TestSocketFileCleanup(t *testing.T) {
 	_, sock := newFakeEngine(t, "1.51")
 	if _, err := os.Stat(sock); err != nil {
 		t.Fatalf("socket 文件应存在: %v", err)
+	}
+}
+
+// TestLogsQueryEscaping 验证 Logs 拼给 Engine 的查询串：stdout/stderr 固定
+// 合流，since/until 经 QueryEscape——RFC3339 的 "+08:00" 必须成 %2B，
+// 否则 Engine 解析查询串时 + 变空格、时区静默丢失；纯数字（Agent 归一化
+// 后的形态）转义前后一致，不受影响。这条守的是库自身的防御：不把正确性
+// 寄托在调用方已经归一化。
+func TestLogsQueryEscaping(t *testing.T) {
+	f, sock := newFakeEngine(t, "1.51")
+	c := New(sock)
+
+	st, err := c.Logs(context.Background(), "abc123", LogsOptions{
+		Tail: "100", Since: "2026-10-14T08:00:00+08:00", Until: "2026-10-15T00:00:00Z",
+	})
+	if err != nil {
+		t.Fatalf("Logs: %v", err)
+	}
+	_ = st.Close()
+
+	paths := f.hitPaths()
+	if len(paths) == 0 {
+		t.Fatal("假 Engine 没收到请求")
+	}
+	got := paths[len(paths)-1]
+	for _, want := range []string{
+		"stdout=1&stderr=1",
+		"tail=100",
+		"since=2026-10-14T08%3A00%3A00%2B08%3A00", // + 必须活着到 Engine
+		"until=2026-10-15T00%3A00%3A00Z",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Engine 查询串应含 %q，got %q", want, got)
+		}
+	}
+	if strings.Contains(got, "since=2026-10-14T08:00:00") {
+		t.Errorf("RFC3339 不应裸拼进查询串（+ 会被吃成空格）：%q", got)
+	}
+
+	// 归一化后的 Unix 秒形态：转义中性，原样抵达。
+	st2, err := c.Logs(context.Background(), "abc123", LogsOptions{Since: "1700000000", Until: "0"})
+	if err != nil {
+		t.Fatalf("Logs(秒): %v", err)
+	}
+	_ = st2.Close()
+	got2 := f.hitPaths()[len(f.hitPaths())-1]
+	if !strings.Contains(got2, "since=1700000000") || !strings.Contains(got2, "until=0") {
+		t.Errorf("Unix 秒应原样抵达，got %q", got2)
 	}
 }

@@ -126,7 +126,11 @@ Hub/Agent 的口径与之对齐；升级引擎大版本时需复测：
   Agent 侧 ValidTail 提前 400——比 Engine 严是刻意的，防怪字符串打满带宽。
 - logs 的 `since`/`until`：**只认 Unix 秒**。RFC3339（含正确编码的 `+08:00`）会 500
   （`strconv.ParseInt` 失败，连 400 都不是）；`0` 与缺省等价（不过滤）；
-  未来时间戳返回空流而非报错。Hub 接口当前按 date-time 宣传——待归一化修复后对齐。
+  未来时间戳返回空流而非报错。**归一化已落地**（S3.6）：Agent 侧 logsQuery 经
+  `protocol.NormalizeTimeParam` 把 RFC3339 转 Unix 秒再打 Engine，非法值 400；
+  Hub 对外保持 RFC3339 友好（OpenAPI 按 date-time 宣传，Unix 秒兼容），
+  agentcli 用同一函数做出门前预检。Hub→Agent 的 URL 编码由 url.Values 保证，
+  Agent→Engine 归一后是纯数字，dockercli 仍保留 QueryEscape 防御。
 - logs `timestamps=1`：每行前缀 RFC3339 UTC 时间戳；日志正文可能含 ANSI 转色码
   （容器自身 logger 产出），前端按纯文本渲染需容忍或清洗。
 - `export=1` 的原始字节流与 `Content-Disposition` 由 Agent 拼装，docker CLI 可直接消费。

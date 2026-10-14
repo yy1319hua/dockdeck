@@ -3,6 +3,7 @@
 package protocol
 
 import (
+	"strconv"
 	"strings"
 	"time"
 )
@@ -121,9 +122,11 @@ type LogsOptions struct {
 	Follow bool
 	// Tail 是「末尾 N 行」（"all"或数字；空 = 引擎默认全部）。
 	Tail string
-	// Since / Until 是 RFC3339 或 Unix 秒（原样透传，不猜语义）。
-	//  Hub→Agent 拼查询串时必须 URL 编码："+08:00" 里的 + 不转义会被
-	// 解析成空格，时区信息静默丢失。
+	// Since / Until 接受 RFC3339 或 Unix 秒；Agent 落 Engine 前归一成
+	// Unix 秒（NormalizeTimeParam）——Engine 29.1.3 只认 Unix 秒，
+	// RFC3339 哪怕格式完全正确也会被它 strconv 失败回 500。
+	//  Hub→Agent 拼查询串时仍须 URL 编码："+08:00" 里的 + 不转义会被
+	// 解析成空格，时区信息静默丢失（agentcli 走 url.Values，已编码）。
 	Since, Until string
 	// Timestamps 在每行前加 Engine 时间戳。
 	Timestamps bool
@@ -144,6 +147,36 @@ func ValidTail(tail string) bool {
 		}
 	}
 	return true
+}
+
+// NormalizeTimeParam 把 since/until 查询值归一成 Engine 认识的 Unix 秒，
+// 返回 (归一后的值, 是否合法)。
+//
+// 背景是实测结论（ARCHITECTURE.md「Engine 契约实测基线」）：Engine 29.1.3
+// 对 since/until 只认 Unix 秒，RFC3339——哪怕格式完全正确——会被
+// strconv.ParseInt 失败回 500（连 400 都不是）。那是引擎解析器的脾气，
+// 不是客户端的错：我们在自己侧归一掉，不让它冒到调用方面前。
+//
+// 放行：空串（不设时间边界）；能按 int64 解析的（Unix 秒，含前导 +/-，
+// 重新格式化顺带抹掉前导零）；RFC3339（转 Unix 秒，小数秒截断——
+// Engine 的粒度本来就是秒）。
+// 拒绝：其余一切——在 Agent 边界 400，好过喂给引擎看它 500。
+//
+// Hub 侧（agentcli）用同一函数做出门前预检（只判合法性，不取值）：
+// 该拒的请求不出门；归一只发生在 Agent 落 Engine 前，Hub 对外保持
+// RFC3339 友好（OpenAPI 按 date-time 宣传的口径不变）。
+func NormalizeTimeParam(s string) (string, bool) {
+	if s == "" {
+		return "", true
+	}
+	if v, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return strconv.FormatInt(v, 10), true
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return "", false
+	}
+	return strconv.FormatInt(t.Unix(), 10), true
 }
 
 // ContainerStat 是单个容器的实时资源占用。

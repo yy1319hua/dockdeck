@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 
 	"github.com/yy1319hua/dockdeck/internal/protocol"
 )
@@ -38,10 +39,13 @@ func (c *Client) Logs(ctx context.Context, id string, o LogsOptions) (io.ReadClo
 		q += "&tail=" + o.Tail
 	}
 	if o.Since != "" {
-		q += "&since=" + o.Since
+		// QueryEscape 是防御性的：Agent 侧 logsQuery 已归一成 Unix 秒
+		// （纯数字，转义前后一致），但库不把正确性寄托在调用方身上——
+		// 万一有别的调用方递 RFC3339 进来，"+08:00" 也不会被解析成空格。
+		q += "&since=" + url.QueryEscape(o.Since)
 	}
 	if o.Until != "" {
-		q += "&until=" + o.Until
+		q += "&until=" + url.QueryEscape(o.Until)
 	}
 	if o.Timestamps {
 		q += "&timestamps=1"

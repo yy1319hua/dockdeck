@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -341,6 +342,54 @@ func TestValidTail(t *testing.T) {
 		if ValidTail(tail) {
 			t.Errorf("%q 应判定为非法", tail)
 		}
+	}
+}
+
+// TestNormalizeTimeParam 表驱动覆盖 since/until 归一化：Unix 秒原样放行
+// （前导零/正负号重新格式化）、RFC3339 转 Unix 秒（时区偏移必须算进去，
+// "+08:00" 与等价的 Z 必须同值）、空串放行；格式不对的一律拒——
+// 那是 Agent 边界 400 的输入，放过去 Engine 只会 500。
+func TestNormalizeTimeParam(t *testing.T) {
+	// 同一 Instant 的两种 RFC3339 写法（Z 与 +08:00），归一后必须同值。
+	wantUTC := strconv.FormatInt(
+		time.Date(2026, 10, 14, 0, 0, 0, 0, time.UTC).Unix(), 10)
+
+	cases := []struct {
+		in   string
+		want string
+		ok   bool
+	}{
+		{"", "", true},                               // 不设边界
+		{"0", "0", true},                             // 0 = 不过滤（Engine 语义）
+		{"1750000000", "1750000000", true},           // Unix 秒原样
+		{"007", "7", true},                           // 前导零抹掉
+		{"+100", "100", true},                        // ParseInt 认前导 +
+		{"-1", "-1", true},                           // 1970 前一秒，负值合法
+		{"2026-10-14T00:00:00Z", wantUTC, true},      // RFC3339 Z
+		{"2026-10-14T08:00:00+08:00", wantUTC, true}, // 同时刻的 +08:00 写法必须同值
+		{"2026-10-14T00:00:00.500Z", wantUTC, true},  // 小数秒截断（Engine 粒度是秒）
+		{"2026-10-14", "", false},                    // 只有日期，RFC3339 不认
+		{"2026-10-14T00:00:00", "", false},           // 缺时区，RFC3339 不认
+		{"2026-13-01T00:00:00Z", "", false},          // 月份越界
+		{"2026-02-30T00:00:00Z", "", false},          // 日期不存在
+		{"99999999999999999999999", "", false},       // int64 溢出
+		{"now", "", false},                           //
+		{"1.5", "", false},                           //
+		{"0x10", "", false},                          //
+		{"2026-10-14T00:00:00+08:00 ", "", false},    // 尾部空格不 trim
+	}
+	for _, c := range cases {
+		got, ok := NormalizeTimeParam(c.in)
+		if ok != c.ok || (c.ok && got != c.want) {
+			t.Errorf("NormalizeTimeParam(%q) = (%q,%v)，want (%q,%v)", c.in, got, ok, c.want, c.ok)
+		}
+	}
+	// 时区偏移必须真的算进去：若实现偷懒直接截断字符串或丢掉偏移，
+	// 这两个值就会分叉——它们是同一 Instant 的不同写法。
+	gotZ, _ := NormalizeTimeParam("2026-10-14T00:00:00Z")
+	gotPlus8, _ := NormalizeTimeParam("2026-10-14T08:00:00+08:00")
+	if gotZ != gotPlus8 {
+		t.Errorf("同时刻的两种 RFC3339 写法归一结果必须一致：%q vs %q", gotZ, gotPlus8)
 	}
 }
 

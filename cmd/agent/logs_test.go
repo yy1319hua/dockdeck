@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -138,4 +139,64 @@ func TestLogs_BadTail(t *testing.T) {
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("非法 tail 应 400，got %d", resp.StatusCode)
 	}
+}
+
+// TestLogs_NormalizesTimeParams 验证 since/until 在 Agent 侧归一成 Unix 秒
+// 再落 Engine（实测基线：Engine 29.1.3 只认 Unix 秒，RFC3339 会 500）。
+//   - RFC3339（含 +08:00 偏移，URL 里写作 %2B）转成对应 Unix 秒；
+//   - 纯数字原样放行；0 也放行（Engine 语义：不过滤）；
+//   - 既非秒也非 RFC3339 的值 400，不出门打 Engine。
+func TestLogs_NormalizesTimeParams(t *testing.T) {
+	wantSince := strconv.FormatInt(time.Date(2026, 10, 14, 0, 0, 0, 0, time.UTC).Unix(), 10)
+	wantUntil := strconv.FormatInt(time.Date(2026, 10, 15, 0, 0, 0, 0, time.UTC).Unix(), 10)
+
+	t.Run("rfc3339 转 unix 秒", func(t *testing.T) {
+		srv, f := agentWithLogs(t, muxFrame(0, "x\n"), false)
+		resp, body := hDo(t, srv, http.MethodGet,
+			"/api/v1/containers/abc123def456/logs?since=2026-10-14T08:00:00%2B08:00&until=2026-10-15T00:00:00Z", "")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("应 200，got %d：%s", resp.StatusCode, body)
+		}
+		got := f.nextPath(t)
+		if !strings.Contains(got, "since="+wantSince) || !strings.Contains(got, "until="+wantUntil) {
+			t.Errorf("Engine 应收到 Unix 秒，got %q（want since=%s until=%s）", got, wantSince, wantUntil)
+		}
+		if strings.Contains(got, "2026-10-") {
+			t.Errorf("RFC3339 不应原样抵达 Engine，got %q", got)
+		}
+	})
+
+	t.Run("unix 秒原样放行", func(t *testing.T) {
+		srv, f := agentWithLogs(t, muxFrame(0, "x\n"), false)
+		resp, _ := hDo(t, srv, http.MethodGet,
+			"/api/v1/containers/abc123def456/logs?since=1700000000&until=0", "")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("应 200，got %d", resp.StatusCode)
+		}
+		got := f.nextPath(t)
+		if !strings.Contains(got, "since=1700000000") || !strings.Contains(got, "until=0") {
+			t.Errorf("Unix 秒应原样透传，got %q", got)
+		}
+	})
+
+	t.Run("非法值 400 不出门", func(t *testing.T) {
+		for _, bad := range []string{
+			"2026-13-01T00:00:00Z", // 月份越界
+			"2026-10-14",           // 只有日期
+			"2026-10-14T00:00:00",  // 缺时区
+			"now",                  // 纯乱值
+		} {
+			srv, f := agentWithLogs(t, muxFrame(0, "x\n"), false)
+			resp, _ := hDo(t, srv, http.MethodGet,
+				"/api/v1/containers/abc123def456/logs?since="+url.QueryEscape(bad), "")
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Errorf("since=%q 应 400，got %d", bad, resp.StatusCode)
+			}
+			select {
+			case p := <-f.paths:
+				t.Errorf("since=%q 被 400 拒掉，不应有请求打到 Engine，却收到 %q", bad, p)
+			default:
+			}
+		}
+	})
 }

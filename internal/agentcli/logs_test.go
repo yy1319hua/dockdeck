@@ -12,8 +12,8 @@ import (
 	"github.com/yy1319hua/dockdeck/internal/protocol"
 )
 
-// TestClient_LogsLocalRejects 验证本地校验先行：非法 ID 与非法 tail
-// 在本地就拒，请求不出门（与 Agent 侧同款规则）。
+// TestClient_LogsLocalRejects 验证本地校验先行：非法 ID、非法 tail、
+// 非法 since/until 在本地就拒，请求不出门（与 Agent 侧同款规则）。
 func TestClient_LogsLocalRejects(t *testing.T) {
 	var hit bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -37,6 +37,14 @@ func TestClient_LogsLocalRejects(t *testing.T) {
 		}},
 		{"bad-tail-negative", func() error {
 			_, err := c.Logs(context.Background(), "c1", protocol.LogsOptions{Tail: "-5"})
+			return err
+		}},
+		{"bad-since", func() error {
+			_, err := c.Logs(context.Background(), "c1", protocol.LogsOptions{Since: "2026-13-01T00:00:00Z"})
+			return err
+		}},
+		{"bad-until", func() error {
+			_, err := c.Logs(context.Background(), "c1", protocol.LogsOptions{Until: "yesterday"})
 			return err
 		}},
 	}

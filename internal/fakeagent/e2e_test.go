@@ -161,3 +161,89 @@ func TestE2E_ReadRetryAgainstRealServer(t *testing.T) {
 		t.Errorf("应共 3 次请求，got %d：%v", got, f.Calls())
 	}
 }
+
+// TestE2E_ContainerWriteChain 验证写链路（S3.4）经真实验签中间件：
+// 签名覆盖请求体与查询串——stop 的 timeout_sec、kill 的 signal、remove 的
+// force/v 都与签名一起到达，Agent 回 {"ok":true} 信封。
+func TestE2E_ContainerWriteChain(t *testing.T) {
+	f, c := e2eFixture(t, "secret")
+	ctx := context.Background()
+
+	if err := c.ContainerStart(ctx, "c1"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	timeout5 := 5
+	if err := c.ContainerStop(ctx, "c1", &timeout5); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if err := c.ContainerKill(ctx, "c1", "sigterm"); err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+	if err := c.ContainerResize(ctx, "c1", 24, 80); err != nil {
+		t.Fatalf("Resize: %v", err)
+	}
+	if err := c.ContainerRemove(ctx, "c1", true, true); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+
+	want := []string{
+		"/api/v1/containers/c1/start",
+		"/api/v1/containers/c1/stop",
+		"/api/v1/containers/c1/kill",
+		"/api/v1/containers/c1/resize?h=24&w=80",
+		"/api/v1/containers/c1?force=1&v=1",
+	}
+	got := f.Calls()
+	if len(got) != len(want) {
+		t.Fatalf("调用次数 = %d，want %d：%v", len(got), len(want), got)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("第 %d 次调用 = %q，want %q", i+1, got[i], w)
+		}
+	}
+}
+
+// TestE2E_ContainerWriteSelfGuard 验证自我保护守卫在写链路上生效：
+// 命中自身容器（前缀匹配）→ 403 forbidden 原样透传给调用方。
+func TestE2E_ContainerWriteSelfGuard(t *testing.T) {
+	f, c := e2eFixture(t, "secret")
+	f.SetSelfID("self123")
+	ctx := context.Background()
+
+	// 全 ID 与前缀都算命中（与真 Agent 同口径）。
+	for _, id := range []string{"self123", "self"} {
+		err := c.ContainerStart(ctx, id)
+		perr, ok := err.(*protocol.Error)
+		if !ok || perr.Code != protocol.CodeForbidden {
+			t.Fatalf("ContainerStart(%q) 应透传 forbidden，got %v", id, err)
+		}
+	}
+	err := c.ContainerRemove(ctx, "self123", false, false)
+	perr, ok := err.(*protocol.Error)
+	if !ok || perr.Code != protocol.CodeForbidden {
+		t.Fatalf("Remove 自身应透传 forbidden，got %v", err)
+	}
+}
+
+// TestE2E_ContainerWriteNoRetry 验证写请求在真实 HTTP 往返下也绝不重试：
+// 假 Agent 连吐两次 503，客户端只打一次——Agent 侧写操作尚无幂等去重，
+// 重试可能把一次 stop 变成两次（红线）。
+func TestE2E_ContainerWriteNoRetry(t *testing.T) {
+	f, c := e2eFixture(t, "secret")
+	c.RetryBackoff = time.Nanosecond
+	f.FailNext(2, 503)
+
+	if err := c.ContainerStart(context.Background(), "c1"); err == nil {
+		t.Fatal("两次 503 后应报错")
+	}
+	got := 0
+	for _, p := range f.Calls() {
+		if strings.HasPrefix(p, "/api/v1/containers/c1/start") {
+			got++
+		}
+	}
+	if got != 1 {
+		t.Errorf("写请求绝不重试，实际请求 %d 次：%v", got, f.Calls())
+	}
+}

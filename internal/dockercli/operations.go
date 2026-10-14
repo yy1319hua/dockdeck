@@ -79,17 +79,17 @@ func (c *Client) Unpause(ctx context.Context, id string) error {
 }
 
 // Kill 向容器主进程发信号，signal 形如 SIGTERM/SIGKILL（空用引擎默认 SIGKILL）。
-// 白名单校验：信号是攻击者可注入的字符串，不在已知集合内的直接拒绝。
+// 白名单校验走 protocol.NormalizeSignal：信号是攻击者可注入的字符串，
+// 不在已知集合内的直接拒绝（Hub/Agent 两侧同一份集合）。
 func (c *Client) Kill(ctx context.Context, id, signal string) error {
-	if signal == "" {
-		return c.action(ctx, http.MethodPost, "kill", id, "")
-	}
-	switch strings.ToUpper(signal) {
-	case "SIGTERM", "SIGKILL", "SIGINT", "SIGHUP", "SIGQUIT", "SIGUSR1", "SIGUSR2":
-	default:
+	norm, ok := protocol.NormalizeSignal(signal)
+	if !ok {
 		return fmt.Errorf("dockercli: 不允许的信号 %q", signal)
 	}
-	return c.action(ctx, http.MethodPost, "kill", id, "?signal="+strings.ToUpper(signal))
+	if norm == "" {
+		return c.action(ctx, http.MethodPost, "kill", id, "")
+	}
+	return c.action(ctx, http.MethodPost, "kill", id, "?signal="+norm)
 }
 
 // Remove 删除容器。force 强删运行中的；v 连同匿名卷删除。

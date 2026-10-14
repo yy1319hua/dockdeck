@@ -5,6 +5,7 @@ package agentcli
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -134,5 +135,118 @@ func TestClient_ContainerInspectNotFound(t *testing.T) {
 	}
 	if attempts != 1 {
 		t.Errorf("确定性 404 不应重试，尝试次数 = %d", attempts)
+	}
+}
+
+// TestClient_ContainerWriteOps 表驱动覆盖 8 个写方法：HTTP 方法、路径、
+// 请求体逐项与 Agent 侧路由口径对齐（stop 的 timeout 走请求体、
+// resize 的行列走查询串、remove 的 force/v 走查询串）。
+func TestClient_ContainerWriteOps(t *testing.T) {
+	timeout5 := 5
+	cases := []struct {
+		name       string
+		call       func(context.Context, *Client) error
+		wantMethod string
+		wantPath   string
+		wantBody   string
+	}{
+		{"start", func(ctx context.Context, c *Client) error { return c.ContainerStart(ctx, "c1") },
+			"POST", "/api/v1/containers/c1/start", ""},
+		{"stop-no-timeout", func(ctx context.Context, c *Client) error { return c.ContainerStop(ctx, "c1", nil) },
+			"POST", "/api/v1/containers/c1/stop", ""},
+		{"stop-with-timeout", func(ctx context.Context, c *Client) error { return c.ContainerStop(ctx, "c1", &timeout5) },
+			"POST", "/api/v1/containers/c1/stop", `{"timeout_sec":5}`},
+		{"restart", func(ctx context.Context, c *Client) error { return c.ContainerRestart(ctx, "c1") },
+			"POST", "/api/v1/containers/c1/restart", ""},
+		{"pause", func(ctx context.Context, c *Client) error { return c.ContainerPause(ctx, "c1") },
+			"POST", "/api/v1/containers/c1/pause", ""},
+		{"unpause", func(ctx context.Context, c *Client) error { return c.ContainerUnpause(ctx, "c1") },
+			"POST", "/api/v1/containers/c1/unpause", ""},
+		{"kill-default", func(ctx context.Context, c *Client) error { return c.ContainerKill(ctx, "c1", "") },
+			"POST", "/api/v1/containers/c1/kill", ""},
+		{"kill-signal", func(ctx context.Context, c *Client) error { return c.ContainerKill(ctx, "c1", "sigterm") },
+			"POST", "/api/v1/containers/c1/kill", `{"signal":"SIGTERM"}`},
+		{"resize", func(ctx context.Context, c *Client) error { return c.ContainerResize(ctx, "c1", 24, 80) },
+			"POST", "/api/v1/containers/c1/resize?h=24&w=80", ""},
+		{"remove-bare", func(ctx context.Context, c *Client) error { return c.ContainerRemove(ctx, "c1", false, false) },
+			"DELETE", "/api/v1/containers/c1", ""},
+		{"remove-force-v", func(ctx context.Context, c *Client) error { return c.ContainerRemove(ctx, "c1", true, true) },
+			"DELETE", "/api/v1/containers/c1?force=1&v=1", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotMethod, gotPath, gotBody string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotMethod, gotPath = r.Method, r.URL.RequestURI()
+				raw, _ := io.ReadAll(r.Body)
+				gotBody = string(raw)
+				writeEnvelope(w, http.StatusOK, map[string]any{"ok": true})
+			}))
+			defer srv.Close()
+
+			if err := tc.call(context.Background(), quickClient(srv)); err != nil {
+				t.Fatalf("%s 应成功：%v", tc.name, err)
+			}
+			if gotMethod != tc.wantMethod || gotPath != tc.wantPath || gotBody != tc.wantBody {
+				t.Errorf("%s 请求不符：\ngot  %s %s body=%q\nwant %s %s body=%q",
+					tc.name, gotMethod, gotPath, gotBody, tc.wantMethod, tc.wantPath, tc.wantBody)
+			}
+		})
+	}
+}
+
+// TestClient_ContainerWriteLocalRejects 验证本地校验先行：非法 ID、非法信号、
+// 非正行列数——请求根本不出门（该拒的流量不该打到 Agent）。
+func TestClient_ContainerWriteLocalRejects(t *testing.T) {
+	var hit bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hit = true
+		writeEnvelope(w, http.StatusOK, map[string]any{"ok": true})
+	}))
+	defer srv.Close()
+	c := quickClient(srv)
+	ctx := context.Background()
+
+	badID := "..%2Fetc"
+	checks := []struct {
+		name string
+		err  error
+	}{
+		{"start-bad-id", c.ContainerStart(ctx, badID)},
+		{"remove-bad-id", c.ContainerRemove(ctx, badID, false, false)},
+		{"kill-bad-signal", c.ContainerKill(ctx, "c1", "SIGEVIL")},
+		{"resize-zero", c.ContainerResize(ctx, "c1", 0, 80)},
+		{"resize-negative", c.ContainerResize(ctx, "c1", 24, -1)},
+	}
+	for _, ck := range checks {
+		if ck.err == nil {
+			t.Errorf("%s 应被本地拒绝", ck.name)
+		}
+	}
+	if hit {
+		t.Error("本地校验失败的请求不应发出任何 HTTP 请求")
+	}
+}
+
+// TestClient_ContainerWriteForbidden 验证 Agent 的自我保护守卫（403 forbidden）
+// 原样到达调用方——Hub 需要区分「被守卫拒」与「网络不通」。
+func TestClient_ContainerWriteForbidden(t *testing.T) {
+	var attempts int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		w.WriteHeader(http.StatusForbidden)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": map[string]string{"code": protocol.CodeForbidden, "message": "拒绝操作 Agent 自身容器（不碰自身红线）"},
+		})
+	}))
+	defer srv.Close()
+
+	err := quickClient(srv).ContainerStart(context.Background(), "self1")
+	perr, ok := err.(*protocol.Error)
+	if !ok || perr.Code != protocol.CodeForbidden {
+		t.Fatalf("应透传 forbidden，got %v", err)
+	}
+	if attempts != 1 {
+		t.Errorf("写请求绝不重试，尝试次数 = %d", attempts)
 	}
 }

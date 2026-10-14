@@ -328,6 +328,29 @@ func TestValidFileAction(t *testing.T) {
 	}
 }
 
+// TestNormalizeSignal 表驱动覆盖 kill 信号白名单：大小写不敏感规范化，
+// 空串合法（引擎默认），集合外一律拒——两侧共用同一份集合。
+func TestNormalizeSignal(t *testing.T) {
+	for in, want := range map[string]string{
+		"":        "",
+		"SIGTERM": "SIGTERM",
+		"sigterm": "SIGTERM",
+		"SigKill": "SIGKILL",
+		"sighup":  "SIGHUP",
+	} {
+		got, ok := NormalizeSignal(in)
+		if !ok || got != want {
+			t.Errorf("NormalizeSignal(%q) = (%q,%v)，want (%q,true)", in, got, ok, want)
+		}
+	}
+	// 不做 trim、不做部分匹配：带空串噪音与近似词一律拒（与 ValidFileAction 同风格）。
+	for _, in := range []string{"SIGEVIL", "term", "SIGKILL;rm", " sigterm", "sigterm ", "SIGTERMX"} {
+		if _, ok := NormalizeSignal(in); ok {
+			t.Errorf("%q 应判定为非法信号", in)
+		}
+	}
+}
+
 // TestValidContainerID 表驱动覆盖容器 ID 字符集：合法形态（hex ID、前缀、
 // 名字）放行，注入与畸形形态本地就拒——这个校验是 Hub/Agent 两侧
 // 拼 URL 路径前的第一道门，字符集单点定义在 protocol。

@@ -2,7 +2,10 @@
 
 package protocol
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // ContainerInfo 是容器清单里的一条，对应 Agent 侧 Docker Engine API 的只读投影。
 //
@@ -86,6 +89,26 @@ func ValidContainerID(id string) bool {
 		}
 	}
 	return true
+}
+
+// allowedSignals 是 Hub/Agent 两侧允许的 kill 信号集。
+// 信号是攻击者可注入的字符串，白名单之外一律拒。
+var allowedSignals = map[string]bool{
+	"SIGTERM": true, "SIGKILL": true, "SIGINT": true,
+	"SIGHUP": true, "SIGQUIT": true, "SIGUSR1": true, "SIGUSR2": true,
+}
+
+// NormalizeSignal 规范化 kill 信号名（大写）并校验白名单。
+//
+// 空串是合法输入：表示用引擎默认（SIGKILL），此时返回 ("", true)，
+// 调用方不应把空信号拼进请求。Hub（客户端本地校验）与 Agent
+// （落 Engine 前校验）共用同一份集合，单点定义防漂移。
+func NormalizeSignal(signal string) (string, bool) {
+	if signal == "" {
+		return "", true
+	}
+	up := strings.ToUpper(signal)
+	return up, allowedSignals[up]
 }
 
 // ContainerStat 是单个容器的实时资源占用。

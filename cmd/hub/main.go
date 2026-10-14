@@ -491,6 +491,64 @@ func (s *server) routes() http.Handler {
 		InternalRef: "cmd/hub/compose.go composeLogs",
 	}, middleware.Audit(s.st, "compose.logs", s.composeLogs))
 
+	// ---- S4.7(2/2) Compose YAML 文件读写转发（Agent 侧 S4.3 已落地）----
+	tbl.Add(route.Entry{
+		Method: "GET", Path: "/api/v1/servers/{id}/compose/{project}/file", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadContainers,
+		Summary: "读取 Compose YAML", Tags: []string{"Compose"},
+		Desc: "返回项目 compose 文件的绝对路径与原文。只读——要改走下面的 diff 预览 + PUT 两段式。",
+		Params: []route.Param{
+			{Name: "id", Desc: "服务器 ID", Required: true, Example: "1", SchemaType: "integer", SchemaFmt: "int64"},
+			{Name: "project", Desc: "项目名（白名单内目录名）", Required: true, Example: "watchtower"},
+		},
+		Responses: []route.Response{
+			{Status: 400, Desc: "项目名为空（本地拦截，不出门）"},
+			{Status: 403, Desc: "服务器已禁用"},
+			{Status: 404, Desc: "项目不存在或不在白名单"},
+			{Status: 502, Desc: "Agent 不可达或读文件失败"},
+		},
+		InternalRef: "cmd/hub/compose.go composeFileGet",
+	}, middleware.Audit(s.st, "compose.file.read", s.composeFileGet))
+
+	tbl.Add(route.Entry{
+		Method: "POST", Path: "/api/v1/servers/{id}/compose/{project}/diff", AuthMode: route.AuthScope, Scope: apitoken.ScopeWriteContainers,
+		Summary: "Compose YAML 修改预览（diff）", Tags: []string{"Compose"},
+		Desc: "请求体 {\"content\":\"...\"}。返回新内容相对当前文件的 unified diff——**只算不写**，" +
+			"不落盘、不产生备份，是「先看 diff → 再确认写」两段式的第一段。" +
+			"scope 归 write：它是写入流程的一段（带请求体的 POST），与 PUT 同一把钥匙。",
+		Body: &route.Body{Type: "json"},
+		Params: []route.Param{
+			{Name: "id", Desc: "服务器 ID", Required: true, Example: "1", SchemaType: "integer", SchemaFmt: "int64"},
+			{Name: "project", Desc: "项目名（白名单内目录名）", Required: true, Example: "watchtower"},
+		},
+		Responses: []route.Response{
+			{Status: 400, Desc: "请求体不合法，或项目名为空（本地拦截，不出门）"},
+			{Status: 403, Desc: "服务器已禁用"},
+			{Status: 404, Desc: "项目不存在或不在白名单"},
+			{Status: 502, Desc: "Agent 不可达或计算 diff 失败"},
+		},
+		InternalRef: "cmd/hub/compose.go composeFileDiff",
+	}, middleware.Audit(s.st, "compose.diff", s.composeFileDiff))
+
+	tbl.Add(route.Entry{
+		Method: "PUT", Path: "/api/v1/servers/{id}/compose/{project}/file", AuthMode: route.AuthScope, Scope: apitoken.ScopeWriteContainers,
+		Summary: "写入 Compose YAML", Tags: []string{"Compose"},
+		Desc: "请求体 {\"content\":\"...\"}。Agent 侧**写前先把当前内容备份为 <file>.bak.<RFC3339>**，" +
+			"备份落盘成功才覆盖写（红线「备份优先于变更」）；响应回传备份路径供回滚。" +
+			"建议先用上面的 diff 端点预览再调本端点。",
+		Body: &route.Body{Type: "json"},
+		Params: []route.Param{
+			{Name: "id", Desc: "服务器 ID", Required: true, Example: "1", SchemaType: "integer", SchemaFmt: "int64"},
+			{Name: "project", Desc: "项目名（白名单内目录名）", Required: true, Example: "watchtower"},
+		},
+		Responses: []route.Response{
+			{Status: 400, Desc: "请求体不合法，或项目名为空（本地拦截，不出门）"},
+			{Status: 403, Desc: "服务器已禁用"},
+			{Status: 404, Desc: "项目不存在或不在白名单"},
+			{Status: 502, Desc: "Agent 不可达，或备份/写入失败"},
+		},
+		InternalRef: "cmd/hub/compose.go composeFilePut",
+	}, middleware.Audit(s.st, "compose.file.write", s.composeFilePut))
+
 	// ---- 占位：S2 起逐步替换为真实实现 ----
 	tbl.Add(route.Entry{
 		Method: "GET", Path: "/api/v1/servers", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadMetrics,

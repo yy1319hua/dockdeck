@@ -598,11 +598,13 @@ func (f *Fake) serveComposeFileDiff(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(status)
 		return
 	}
+	raw, _ := io.ReadAll(io.LimitReader(r.Body, 4<<10))
 	var req protocol.ComposeFileUpdate
-	if err := httpx.DecodeJSON(w, r, &req); err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, "请求体不合法: "+err.Error())
+	if len(raw) > 0 && json.Unmarshal(raw, &req) != nil {
+		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, "请求体不是合法 JSON")
 		return
 	}
+	f.recordBody(raw)
 	f.mu.Lock()
 	res := f.composeFileDiff
 	f.mu.Unlock()
@@ -614,11 +616,13 @@ func (f *Fake) serveComposeFilePut(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(status)
 		return
 	}
+	raw, _ := io.ReadAll(io.LimitReader(r.Body, 4<<10))
 	var req protocol.ComposeFileUpdate
-	if err := httpx.DecodeJSON(w, r, &req); err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, "请求体不合法: "+err.Error())
+	if len(raw) > 0 && json.Unmarshal(raw, &req) != nil {
+		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, "请求体不是合法 JSON")
 		return
 	}
+	f.recordBody(raw)
 	f.mu.Lock()
 	res := f.composeFileWritten
 	f.mu.Unlock()

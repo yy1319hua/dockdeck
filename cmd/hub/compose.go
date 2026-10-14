@@ -17,6 +17,7 @@ import (
 	"net/http"
 
 	"github.com/yy1319hua/dockdeck/internal/httpx"
+	"github.com/yy1319hua/dockdeck/internal/protocol"
 )
 
 // composeList 实现 GET /api/v1/servers/{id}/compose。
@@ -93,4 +94,60 @@ func (s *server) composeLogs(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+// composeFileGet 实现 GET /api/v1/servers/{id}/compose/{project}/file。
+// 返回 compose 文件的绝对路径与原文；只读，写走下面的 diff 预览 + PUT。
+func (s *server) composeFileGet(w http.ResponseWriter, r *http.Request) {
+	cl, ok := s.agentFor(w, r)
+	if !ok {
+		return
+	}
+	res, err := cl.ComposeFileGet(r.Context(), r.PathValue("project"))
+	if err != nil {
+		writeAgentError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+// composeFileDiff 实现 POST /api/v1/servers/{id}/compose/{project}/diff。
+// 「先看 diff → 再确认写」两段式的第一段：只算不写，不落盘、不产生备份。
+func (s *server) composeFileDiff(w http.ResponseWriter, r *http.Request) {
+	cl, ok := s.agentFor(w, r)
+	if !ok {
+		return
+	}
+	var body protocol.ComposeFileUpdate
+	if err := decodeOptionalBody(r, &body); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, err.Error())
+		return
+	}
+	res, err := cl.ComposeFileDiff(r.Context(), r.PathValue("project"), body.Content)
+	if err != nil {
+		writeAgentError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+// composeFilePut 实现 PUT /api/v1/servers/{id}/compose/{project}/file。
+// 写前备份由 Agent 侧完成（<file>.bak.<RFC3339>，备份落盘成功才动原文件），
+// 备份路径随响应回传供回滚——Hub 不复制这段语义，避免两侧漂移。
+func (s *server) composeFilePut(w http.ResponseWriter, r *http.Request) {
+	cl, ok := s.agentFor(w, r)
+	if !ok {
+		return
+	}
+	var body protocol.ComposeFileUpdate
+	if err := decodeOptionalBody(r, &body); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, err.Error())
+		return
+	}
+	res, err := cl.ComposeFilePut(r.Context(), r.PathValue("project"), body.Content)
+	if err != nil {
+		writeAgentError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res)
 }

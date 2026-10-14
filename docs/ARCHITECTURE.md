@@ -101,7 +101,7 @@ Hub API 前缀 `/api/v1`，响应统一 `{ "data": ..., "error": { "code", "mess
 | `DELETE .../containers/{cid}` | `write:containers` | 需 `confirm=<name>` 且非保护对象 |
 | `GET .../containers/{cid}/logs?tail=&since=&until=&follow=` | `read:containers` | 日志 |
 | `GET .../images` `POST .../images/pull` `DELETE .../images/{ref}` `POST .../prune` | `read:`/`write:containers` | 镜像 |
-| `GET .../compose` `GET/PUT .../compose/{project}/file` `POST .../compose/{project}/{action}` | `read:`/`write:containers` | Compose |
+| `GET .../compose` `POST .../compose/{project}/{action}` `GET .../compose/{project}/logs` | `read:`/`write:containers` | Compose（list/写动作/日志；YAML 文件读写延至 S4.3） |
 | `GET .../files?path=` `GET .../files/content?path=` | `read:metrics` | 文件列表与读取 |
 | `PUT .../files/content` `POST .../files/{action}` | `write:files` | 写/删/建目录/改名，限根白名单 |
 | `GET /audit` `GET /audit/export` | `read:audit` | 审计查询与导出 |
@@ -144,6 +144,25 @@ Hub/Agent 的口径与之对齐；升级引擎大版本时需复测：
 - delete（`DELETE /images/{ref}`，无 force）：未被容器占用时 HTTP 200；不存在时 404 `{"message":"No such image: …"}`（dockercli 映射 `CodeNotFound`，文案与容器侧逐字对齐）。
 - prune（`POST /images/prune`，**无 dry-run 参数**）：响应 `{"ImagesDeleted": [...], "SpaceReclaimed": N}`，其中 `ImagesDeleted` 为对象数组 `[{"Deleted":...},{"Untagged":...}]`，**无删除时为 `null` 而非 `[]`**。因 Engine 无 dry-run，DockDeck 用两段式：先 `GET /images?dangling=true` 展示将被清理清单，UI 确认后再 `POST /images/prune` 真删（对应红线第 2 条「prune 必先展示清单」的工程落地）。
 - 超时分级：pull / prune 双跳各 10 分钟（`dockercli.PullTimeout` 与 `agentcli.ImagePullTimeout` 同量级）；其余镜像写操作走 5s 写超时；`agentcli.ImagePull` 直调 `once` 绕过默认 5s 写超时（长操作单独计时）。
+
+#### Compose API 契约（S4.2，2026-10-14 node1 写实测，Docker Compose v5.1.4 / v2 系）
+
+Compose **没有 daemon API**：与容器/镜像走 Engine socket HTTP 不同，Compose 全部走宿主侧 `docker compose` v2 CLI（`exec.Command("docker","compose",...)`）。dockercli 用 `composeRunner` 抽象执行——`Captured` 抓 stdout+stderr 合流（ps/up/down 等要拿输出）、`Streamed` 返回 stdout 管道（logs --follow）；默认 `execComposeRunner`，测试注入假实现。
+
+- **白名单双关卡**（路径穿越唯一关卡）：
+  1. `discover` 只在 `DD_AGENT_COMPOSE_DIRS`（逗号分隔，与 `--compose-dirs` / `DiskMounts` 同款）配置目录内递归找 `docker-compose.y*ml` / `compose.y*ml`（大小写敏感），忽略无关 yml，单目录不可读不拖垮列举；
+  2. `ResolveProject(project)` 把项目名映射到白名单内真实路径，白名单外名字（含 `../` 穿越）一律 404。
+  Agent 绝不把任意字符串透传 shell：写动词经 `ValidComposeAction`（up/down/restart/pull）在 agentcli 与 Agent 双侧校验，非法动词 Agent 侧 400、未知项目 404；项目名只经白名单解析。
+- **实测 v2 CLI 行为**（node1，Docker Compose v5.1.4，即 v2 插件系）：
+  - `docker compose -f <file> ps --format json`：单服务时返回**单个 JSON 对象**（非数组），字段含 `State`（"running"/"exited"）、`Service`、`Image`、`Name`、`Status`、`Project`；**空输出（down 之后）= stopped**。dockercli 先按 `[]composeRow` 解、失败回退逐行，两种形态都吃。
+  - `up -d` / `down`(`-v`) / `restart` / `pull`：输出是纯文本（非 JSON），合并 stdout+stderr、`--no-color` 后透传为 `ComposeActionResult.Output` 给前端展示；成败写在 Output 里，不另造文案。
+  - `logs --no-color [service] [--follow]`：纯文本流，复用容器日志通道（裸流、不经信封、不复用读超时）；无输出服务返回空流（合法，非错误）。
+  - **compose 无 prune 子命令**：`down` 移除容器/网络（`-v` 也清卷），镜像不删；镜像清理是独立的 `docker image prune`（全局，不在 Compose 暴露范围）。故 DockDeck Compose 面故意不含 prune，与红线第 2 条「prune 必先展示清单」一致。
+- **API 形态（S4.2 实际落地，较第 104 行旧草图去掉了文件端点）**：
+  - `GET /api/v1/compose`：白名单扫描列项目，信封内层 `[]protocol.ComposeProject`，空清单 `[]` 非 `null`；
+  - `POST /api/v1/compose/{project}/{action}`：action ∈ {up,down,restart,pull}（非法动词本地拦不出门），返回 `ComposeActionResult.Output`；未知项目 404；
+  - `GET /api/v1/compose/{project}/logs?follow=`：裸 `text/plain` 流，复用容器日志的 `flushWriter` 逐帧下发。
+  - YAML 文件读写端点（`GET/PUT .../compose/{project}/file`）延至 **S4.3**（写前 `*.bak.<ts>` 备份、diff 预览，需先落地内部保护机制）。
 
 ## 主机指标采集
 

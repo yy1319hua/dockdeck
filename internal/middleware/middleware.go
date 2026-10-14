@@ -4,6 +4,7 @@ package middleware
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -157,13 +158,16 @@ func (rl *RateLimit) LoginRateLimit(next http.Handler) http.Handler {
 // 解析不了记 0：审计不因一个畸形 ID 而失败，那条请求本身早被 handler
 // 以 400 拒掉，失败记录比 server_id 更值得留。
 //
-// 读与写都审计（S3.4 起容器全线如此）：「谁看过哪台机器」与
-// 「谁动了哪台机器」同样是安全审计对象。流式端点（日志 follow）的
-// 审计行落在流结束时——连接多久，记录就多久后落库。
+// 读与写都审计（S3.4 起容器全线如此，S3.6 扩到指标读与 Token 写）：
+// 「谁看过哪台机器」与「谁动了哪台机器」同样是安全审计对象。流式端点
+// （日志 follow）的审计行落在流结束时——连接多久，记录就多久后落库。
 //
 // 摆放位置在鉴权链之内（apitoken.Require 通过后才执行）：匿名 401 与
 // scope 拒绝属鉴权层事件，由登录/Token 流程自行审计，不在此留行——
 // 否则每枚探针机器人都会在审计表里留痕，真正的操作记录反而难找。
+// 注意「打向不存在服务器的探测」不属此列：handler 照常执行并 404，
+// 审计行必须落得下去（audit_logs 无外键，迁移 0004）——失败也留痕，
+// 而那正是最该留的一类行。
 func Audit(st *store.Store, action string, fn http.HandlerFunc) http.HandlerFunc {
 	return audit(st, func(*http.Request) string { return action }, fn)
 }
@@ -199,7 +203,14 @@ func audit(st *store.Store, actionOf func(*http.Request) string, fn http.Handler
 }
 
 // serverIDFromPath 从 {id} 路径参数取服务器 ID，约定见 Audit 注释。
+// 只信 /api/v1/servers/ 前缀下的 {id}：别的端点也可能拿 {id} 当自己的
+// 参数名（/api/v1/api-tokens/{id} 的 {id} 是 Token ID），不问前缀就收，
+// 审计行会变成「动了 3 号服务器」而 3 其实是一枚 Token——搅浑审计表
+// 比留个 0 糟糕得多。Token ID 不丢：Target 列带着完整路径。
 func serverIDFromPath(r *http.Request) int64 {
+	if !strings.HasPrefix(r.URL.Path, "/api/v1/servers/") {
+		return 0
+	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
 		return 0

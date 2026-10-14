@@ -228,12 +228,12 @@ func (s *server) routes() http.Handler {
 		Summary: "签发 API Token", Tags: []string{"Tokens"}, Body: &route.Body{},
 		Desc: "字段：name（唯一）、scopes（取自 GET /api/v1/scopes）、ttl（7d|30d|90d|1y|never）。" +
 			"明文 plaintext 仅本次响应可见。",
-	}, s.tokens.CreateHandler)
+	}, middleware.Audit(s.st, "token.create", s.tokens.CreateHandler))
 
 	tbl.Add(route.Entry{
 		Method: "DELETE", Path: "/api/v1/api-tokens/{id}", AuthMode: route.AuthSession,
 		Summary: "撤销 API Token", Tags: []string{"Tokens"},
-	}, s.tokens.RevokeHandler)
+	}, middleware.Audit(s.st, "token.revoke", s.tokens.RevokeHandler))
 
 	// ---- S2.7 监控查询 ----
 	tbl.Add(route.Entry{
@@ -246,7 +246,7 @@ func (s *server) routes() http.Handler {
 			{Status: 404, Desc: "服务器不存在或尚无快照"},
 		},
 		InternalRef: "cmd/hub/metrics.go metricsLatest",
-	}, s.metricsLatest)
+	}, middleware.Audit(s.st, "metrics.latest", s.metricsLatest))
 
 	tbl.Add(route.Entry{
 		Method: "GET", Path: "/api/v1/servers/{id}/metrics/overview", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadMetrics,
@@ -264,7 +264,7 @@ func (s *server) routes() http.Handler {
 			{Status: 404, Desc: "服务器不存在"},
 		},
 		InternalRef: "cmd/hub/metrics.go metricsOverview",
-	}, s.metricsOverview)
+	}, middleware.Audit(s.st, "metrics.overview", s.metricsOverview))
 
 	// ---- S3.4 容器转发（实时到 Agent）----
 	// 与上面指标端点的分工：那些读 Hub 自己的库，这些实时转发。

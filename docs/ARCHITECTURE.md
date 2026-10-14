@@ -184,6 +184,13 @@ Agent 侧只读 `/proc`，不引入 gopsutil 这类额外依赖（交叉编译�
 - **转发 Agent**：Hub → Agent 的写请求原样转发该头；Agent 的引擎错误日志带它落行，Hub 审计与 Agent 日志可对同一次操作。
 - **边界（明确不做的）**：不做执行级去重——Agent 无状态、可随意重装，记忆键等于制造漂移源；写操作不重试（见上第 6 条），重复提交由调用方负责。该键的保证是**审计关联与排查对账**，不是「同一键只执行一次」。
 
+### 审计覆盖面（S3.4 起读+写全量，S3.6 补齐）
+
+- **已纳入**：容器 5 端点（list/inspect/logs/action/remove，S3.4）+ 指标 2 端点（`metrics.latest`/`metrics.overview`，读也审——「谁看过哪台机器」同样是安全审计对象，S3.6 补）+ Token 2 写端点（`token.create`/`token.revoke`，S3.6 补）。auth 的 login/logout/setup/password 由 handler 内自审计（含失败路径），不套中间件。
+- **机制**：`middleware.Audit` 包在 handler 外、鉴权链内——匿名 401 与 scope 403 属鉴权层事件不留行（否则探针机器人刷满审计表）；成功与失败（≥400）都落行，`server_id` 从 `{id}` 路径参数自动带（只认 `/api/v1/servers/` 前缀，Token 端点的 `{id}` 是 Token ID 不是服务器，记 0，ID 在 `target` 列不丢）。
+- **审计表无外键**（迁移 0004）：`server_id`/`user_id` 不引用活表——「打向不存在服务器的探测」必须留痕（旧 schema 下这种行被外键静默吞掉，恰是最该留的行）；审计行记录「请求打向哪、谁打的」，实体可以从未存在或已被删。对照：`metrics_latest`/`container_snapshots` 是活数据，外键保留。
+- **流式端点**（logs follow）的审计行落在流结束时——连接多久，记录多久后落库。
+
 ## 前端
 
 Vue 3 + Vite + TS，`vue-router` + `pinia`，图表 uPlot，无重型 UI 框架，自带深色设计系统。

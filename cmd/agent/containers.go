@@ -5,6 +5,10 @@
 // 职责边界：保护名单与名字确认是 Hub/UI 层的三重门；Agent 只守最后一道
 // 物理防线——绝不响应针对自身容器的写操作（红线「不碰自身」），
 // 且每个操作只针对单个容器（本文件没有任何批量入口）。
+//
+// S4.4：守卫逻辑迁入 internal/guard（比较语义两侧共享，杜绝漂移）；
+// remove 追加名字确认——Agent 与 Hub 同守一道，直连 Agent 的调用方
+// （排障时）也绕不过确认门。
 
 package main
 
@@ -18,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/yy1319hua/dockdeck/internal/dockercli"
+	"github.com/yy1319hua/dockdeck/internal/guard"
 	"github.com/yy1319hua/dockdeck/internal/httpx"
 	"github.com/yy1319hua/dockdeck/internal/protocol"
 )
@@ -25,8 +30,8 @@ import (
 // containersAPI 聚合容器端点的依赖。
 type containersAPI struct {
 	dc *dockercli.Client
-	// selfID 是自身容器标识（ID/名字/短 ID 都可能），写入命中即拒。
-	selfID string
+	// guard 是写操作守卫：self 识别（保护名单属 Hub 侧知识，Agent 不带）。
+	guard *guard.Guard
 }
 
 // newContainersAPI 构造。self 为空时取 hostname（容器内 HOSTNAME 即短 ID，
@@ -41,22 +46,13 @@ func newContainersAPI(socket, self string) *containersAPI {
 			self = h
 		}
 	}
-	return &containersAPI{dc: dockercli.New(socket), selfID: strings.ToLower(strings.TrimSpace(self))}
-}
-
-// isSelf 判断目标是否命中自身。比较是大小写不敏感的前缀匹配：
-// 容器 ID 的 12 位短形式与 64 位全形式、名字都覆盖到。
-func (a *containersAPI) isSelf(target string) bool {
-	if a.selfID == "" || target == "" {
-		return false
-	}
-	t := strings.ToLower(target)
-	return strings.HasPrefix(t, a.selfID) || strings.HasPrefix(a.selfID, t)
+	g, _ := guard.New(self) // 无名单正则，New 不会失败
+	return &containersAPI{dc: dockercli.New(socket), guard: g}
 }
 
 // guardWrite 是写操作的统一守卫。返回 true 表示已写响应，调用方直接 return。
 func (a *containersAPI) guardWrite(w http.ResponseWriter, id string) bool {
-	if a.isSelf(id) {
+	if a.guard.IsSelf(id) {
 		httpx.WriteError(w, http.StatusForbidden, protocol.CodeForbidden, "拒绝操作 Agent 自身容器（不碰自身红线）")
 		return true
 	}
@@ -164,6 +160,8 @@ func (a *containersAPI) action(w http.ResponseWriter, r *http.Request) {
 type removeBody struct {
 	Force   bool `json:"force"`
 	Volumes bool `json:"volumes"`
+	// Confirm 是名字确认：须与目标 ID/名字完全一致（guard.Confirm 语义）。
+	Confirm string `json:"confirm"`
 }
 
 // remove 实现 DELETE /api/v1/containers/{id}?force=&v=。
@@ -180,6 +178,15 @@ func (a *containersAPI) remove(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, "请求体不是合法 JSON")
 			return
 		}
+	}
+	// 破坏性确认：query 与 body 取并集（body 优先），语义同 force/v 的并集口径。
+	confirm := b.Confirm
+	if confirm == "" {
+		confirm = r.URL.Query().Get("confirm")
+	}
+	if err := guard.Confirm(id, confirm); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, err.Error())
+		return
 	}
 	force := b.Force || r.URL.Query().Get("force") == "1"
 	volumes := b.Volumes || r.URL.Query().Get("v") == "1"

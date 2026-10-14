@@ -146,14 +146,19 @@ func (c *Client) ContainerResize(ctx context.Context, id string, height, width i
 }
 
 // ContainerRemove 删除容器。force 强删运行中的；volumes 连同匿名卷删除。
-// 具名卷与 bind 目录不归 Engine 管，调用方走文件模块或显式 volume 删除。
-func (c *Client) ContainerRemove(ctx context.Context, id string, force, volumes bool) error {
+// confirm 是名字确认（S4.4）：Agent 侧也守这道门，须与目标 ID/名字完全
+// 一致，空值必被 Agent 以 400 拒绝。具名卷与 bind 目录不归 Engine 管，
+// 调用方走文件模块或显式 volume 删除。
+func (c *Client) ContainerRemove(ctx context.Context, id string, force, volumes bool, confirm string) error {
 	q := url.Values{}
 	if force {
 		q.Set("force", "1")
 	}
 	if volumes {
 		q.Set("v", "1")
+	}
+	if confirm != "" {
+		q.Set("confirm", confirm)
 	}
 	return c.containerWrite(ctx, http.MethodDelete, "", id, q.Encode(), nil)
 }

@@ -21,6 +21,7 @@ import (
 	"github.com/yy1319hua/dockdeck/internal/apitoken"
 	"github.com/yy1319hua/dockdeck/internal/crypto"
 	"github.com/yy1319hua/dockdeck/internal/fakeagent"
+	"github.com/yy1319hua/dockdeck/internal/guard"
 	"github.com/yy1319hua/dockdeck/internal/protocol"
 )
 
@@ -246,37 +247,87 @@ func TestHubContainerRemoveForwards(t *testing.T) {
 	tok := h.token(t, "rw", apitoken.ScopeWriteContainers)
 	base := "/api/v1/servers/" + strconv.FormatInt(sid, 10) + "/containers/abc123"
 
-	resp, body := h.do(t, http.MethodDelete, base, "", tok, "")
+	resp, body := h.do(t, http.MethodDelete, base+"?confirm=abc123", "", tok, "")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("remove 应 200，得 %d｜%s", resp.StatusCode, trim(body))
 	}
-	if calls := fa.Calls(); len(calls) != 1 || calls[0] != "/api/v1/containers/abc123" {
+	if calls := fa.Calls(); len(calls) != 1 || calls[0] != "/api/v1/containers/abc123?confirm=abc123" {
 		t.Errorf("转发路径不符，得 %v", calls)
 	}
 
 	// force/v 查询串透传（url.Values 编码后进签名路径）。
-	if resp, _ := h.do(t, http.MethodDelete, base+"?force=1&v=1", "", tok, ""); resp.StatusCode != http.StatusOK {
+	if resp, _ := h.do(t, http.MethodDelete, base+"?force=1&v=1&confirm=abc123", "", tok, ""); resp.StatusCode != http.StatusOK {
 		t.Fatalf("force+v 应 200，得 %d", resp.StatusCode)
 	}
-	if calls := fa.Calls(); calls[len(calls)-1] != "/api/v1/containers/abc123?force=1&v=1" {
+	if calls := fa.Calls(); calls[len(calls)-1] != "/api/v1/containers/abc123?confirm=abc123&force=1&v=1" {
 		t.Errorf("force/v 查询串不符，得 %q", calls[len(calls)-1])
 	}
 
-	// 请求体 force/v 透传（并集口径：body 与 query 任一即生效）。
+	// 请求体 force/v/confirm 透传（并集口径：body 与 query 任一即生效）。
 	// 注意到达 Agent 时统一走查询串——agentcli 的 remove 只发查询串，
 	// Hub 侧请求体只是并入查询串的输入通道之一。
-	if resp, _ := h.do(t, http.MethodDelete, base, `{"force":true,"volumes":true}`, tok, ""); resp.StatusCode != http.StatusOK {
+	if resp, _ := h.do(t, http.MethodDelete, base, `{"force":true,"volumes":true,"confirm":"abc123"}`, tok, ""); resp.StatusCode != http.StatusOK {
 		t.Fatalf("body remove 应 200，得 %d", resp.StatusCode)
 	}
-	if calls := fa.Calls(); calls[len(calls)-1] != "/api/v1/containers/abc123?force=1&v=1" {
-		t.Errorf("body 里的 force/v 应并集进查询串，得 %q", calls[len(calls)-1])
+	if calls := fa.Calls(); calls[len(calls)-1] != "/api/v1/containers/abc123?confirm=abc123&force=1&v=1" {
+		t.Errorf("body 里的 force/v/confirm 应并集进查询串，得 %q", calls[len(calls)-1])
 	}
 
-	// 自身守卫 403。
+	// 自身守卫 403（Hub 侧 confirm 已过，拦截发生在 Agent）。
 	fa.SetSelfID("abc123")
-	resp, body = h.do(t, http.MethodDelete, base, "", tok, "")
+	resp, body = h.do(t, http.MethodDelete, base+"?confirm=abc123", "", tok, "")
 	if resp.StatusCode != http.StatusForbidden || errorCode(t, body) != protocol.CodeForbidden {
 		t.Errorf("自身容器守卫应透传 403，得 %d｜%s", resp.StatusCode, trim(body))
+	}
+}
+
+// TestHubContainerRemoveGuards 验证 S4.4 三重门的前两道：名字确认（400）
+// 与保护名单（403，来自 settings.protected_containers）；名单正则坏配
+// 置宁 500 也不放行。
+func TestHubContainerRemoveGuards(t *testing.T) {
+	h, sid, fa := hubWithAgent(t, true)
+	tok := h.token(t, "rw", apitoken.ScopeWriteContainers)
+	base := "/api/v1/servers/" + strconv.FormatInt(sid, 10) + "/containers/legacy-db"
+
+	// 名字确认：缺 / 不符 → 400，Agent 收不到任何请求。
+	for _, c := range []struct{ name, url, body string }{
+		{"缺 confirm", base, ""},
+		{"confirm 不符", base + "?confirm=legacy", ""},
+		{"body confirm 不符", base, `{"confirm":"nope"}`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			resp, body := h.do(t, http.MethodDelete, c.url, c.body, tok, "")
+			if resp.StatusCode != http.StatusBadRequest || errorCode(t, body) != protocol.CodeBadRequest {
+				t.Errorf("应 400，得 %d｜%s", resp.StatusCode, trim(body))
+			}
+		})
+	}
+
+	// 保护名单命中 → 403（优先于 confirm 校验，不给试探空间）。
+	if err := h.st.SetSetting(context.Background(), guard.SettingKey, "^legacy-"); err != nil {
+		t.Fatalf("写保护名单: %v", err)
+	}
+	resp, body := h.do(t, http.MethodDelete, base+"?confirm=legacy-db", "", tok, "")
+	if resp.StatusCode != http.StatusForbidden || errorCode(t, body) != protocol.CodeForbidden {
+		t.Errorf("受保护容器应 403，得 %d｜%s", resp.StatusCode, trim(body))
+	}
+
+	// 名单外的容器不被误伤（「误删存量」的对偶面：不该拦的别拦）。
+	resp, _ = h.do(t, http.MethodDelete, "/api/v1/servers/"+strconv.FormatInt(sid, 10)+"/containers/web1?confirm=web1", "", tok, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("名单外容器应放行，得 %d", resp.StatusCode)
+	}
+
+	// 坏正则 → 500，不放行。
+	if err := h.st.SetSetting(context.Background(), guard.SettingKey, "["); err != nil {
+		t.Fatalf("写坏正则: %v", err)
+	}
+	resp, body = h.do(t, http.MethodDelete, "/api/v1/servers/"+strconv.FormatInt(sid, 10)+"/containers/web2?confirm=web2", "", tok, "")
+	if resp.StatusCode != http.StatusInternalServerError || errorCode(t, body) != protocol.CodeInternal {
+		t.Errorf("坏正则应 500，得 %d｜%s", resp.StatusCode, trim(body))
+	}
+	if calls := fa.Calls(); len(calls) > 0 && strings.Contains(calls[len(calls)-1], "web2") {
+		t.Errorf("坏正则时不该转发，但 Agent 收到 %q", calls[len(calls)-1])
 	}
 }
 

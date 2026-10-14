@@ -13,6 +13,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 	"strconv"
 
 	"github.com/yy1319hua/dockdeck/internal/agentcli"
+	"github.com/yy1319hua/dockdeck/internal/guard"
 	"github.com/yy1319hua/dockdeck/internal/httpx"
 	"github.com/yy1319hua/dockdeck/internal/protocol"
 	"github.com/yy1319hua/dockdeck/internal/store"
@@ -216,6 +218,13 @@ func (s *server) containerAction(w http.ResponseWriter, r *http.Request) {
 }
 
 // containerRemove 实现 DELETE /api/v1/servers/{id}/containers/{cid}。
+//
+// S4.4 三重门（本端点守前两道，Agent 自我保护是物理防线）：
+//  1. 保护名单命中即拒（403）——名单来自 settings.protected_containers
+//     （逗号分隔正则），空缺省用 guard.DefaultPatterns；
+//  2. 名字确认（400）——confirm 须与目标 ID/名字完全一致，query 与 body
+//     取并集（与 force/v 同款口径），并透传给 Agent（Agent 侧同守一道）。
+//
 // force/v 查询串与请求体取并集——与 Agent 侧 remove 同款口径
 // （Agent 也是 b.Force || query=="1"）。两处都认是为了让 curl 与
 // 前端表单都能用，语义并集不猜：任何一处置位即生效。
@@ -225,22 +234,58 @@ func (s *server) containerRemove(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	cid := r.PathValue("cid")
 	var body struct {
-		Force   bool `json:"force"`
-		Volumes bool `json:"volumes"`
+		Force   bool   `json:"force"`
+		Volumes bool   `json:"volumes"`
+		Confirm string `json:"confirm"`
 	}
 	if err := decodeOptionalBody(r, &body); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, err.Error())
 		return
 	}
 	q := r.URL.Query()
+	confirm := body.Confirm
+	if confirm == "" {
+		confirm = q.Get("confirm")
+	}
+	cg, err := s.containerGuard(r.Context())
+	if err != nil {
+		log.Printf("hub: 保护名单配置错误: %v", err)
+		httpx.WriteError(w, http.StatusInternalServerError, protocol.CodeInternal, "保护名单配置错误")
+		return
+	}
+	if cg.IsProtected(cid) {
+		httpx.WriteError(w, http.StatusForbidden, protocol.CodeForbidden, "受保护容器，拒绝删除（保护名单命中）")
+		return
+	}
+	if err := guard.Confirm(cid, confirm); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, err.Error())
+		return
+	}
 	force := body.Force || q.Get("force") == "1"
 	volumes := body.Volumes || q.Get("v") == "1"
-	if err := cl.ContainerRemove(r.Context(), r.PathValue("cid"), force, volumes); err != nil {
+	if err := cl.ContainerRemove(r.Context(), cid, force, volumes, confirm); err != nil {
 		writeAgentError(w, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// containerGuard 取保护名单并编译。名单存 settings.protected_containers
+// （逗号分隔正则），空缺省回落 DefaultPatterns；坏正则报错——名单是
+// 安全边界，宁可端点 500 也不静默放行。逐请求读取：settings 改动即时
+// 生效，SQLite 本地读的开销可忽略。
+func (s *server) containerGuard(ctx context.Context) (*guard.Guard, error) {
+	raw, err := s.st.GetSetting(ctx, guard.SettingKey)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return nil, err
+	}
+	list := guard.ParseList(raw)
+	if len(list) == 0 {
+		list = guard.DefaultPatterns
+	}
+	return guard.New("", list...)
 }
 
 // containerLogs 实现 GET /api/v1/servers/{id}/containers/{cid}/logs。

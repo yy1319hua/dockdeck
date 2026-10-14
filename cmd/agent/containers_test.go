@@ -7,6 +7,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -209,10 +210,12 @@ func TestContainers_WriteOps(t *testing.T) {
 		{http.MethodPost, "/api/v1/containers/abc123def456/pause", "POST /containers/abc123def456/pause", ""},
 		{http.MethodPost, "/api/v1/containers/abc123def456/unpause", "POST /containers/abc123def456/unpause", ""},
 		{http.MethodPost, "/api/v1/containers/abc123def456/kill", "POST /containers/abc123def456/kill?signal=SIGTERM", `{"signal":"sigterm"}`},
-		{http.MethodDelete, "/api/v1/containers/abc123def456?force=1&v=1", "DELETE /containers/abc123def456/?force=1&v=1", ""},
+		// confirm 只过 Agent 的确认门，不透传 Engine（Engine 无此参数）。
+		{http.MethodDelete, "/api/v1/containers/abc123def456?force=1&v=1&confirm=abc123def456", "DELETE /containers/abc123def456/?force=1&v=1", ""},
+		{http.MethodDelete, "/api/v1/containers/abc123def456?confirm=abc123def456", "DELETE /containers/abc123def456/", `{"confirm":"abc123def456"}`}, // body confirm 与 query 同效
 	}
-	for _, c := range cases {
-		t.Run(c.wantPath, func(t *testing.T) {
+	for i, c := range cases {
+		t.Run(fmt.Sprintf("case%02d", i), func(t *testing.T) { // 子名用短编号：路径拼接进 unix socket 名，过长会 bind 失败
 			srv, f := agentWith(t, "", "")
 			resp, body := hDo(t, srv, c.method, c.url, c.body)
 			if resp.StatusCode != http.StatusOK {
@@ -222,6 +225,29 @@ func TestContainers_WriteOps(t *testing.T) {
 				t.Errorf("Engine 路径 = %q，want %q", got, c.wantPath)
 			}
 		})
+	}
+}
+
+// TestContainers_RemoveConfirm 验证破坏性确认门（S4.4）：缺 confirm、
+// confirm 不符都 400，且不打到 Engine；一致才放行。
+func TestContainers_RemoveConfirm(t *testing.T) {
+	srv, f := agentWith(t, "", "")
+	for _, c := range []struct{ name, url, body string }{
+		{"缺 confirm", "/api/v1/containers/web1?force=1", ""},
+		{"confirm 不符", "/api/v1/containers/web1?confirm=web2", ""},
+		{"confirm 大小写敏感", "/api/v1/containers/web1?confirm=WEB1", ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			resp, body := hDo(t, srv, http.MethodDelete, c.url, c.body)
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Errorf("应 400，got %d：%s", resp.StatusCode, body)
+			}
+		})
+	}
+	select {
+	case p := <-f.paths:
+		t.Errorf("确认门应拦截在转发之前，但 Engine 收到 %q", p)
+	default:
 	}
 }
 

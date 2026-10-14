@@ -135,6 +135,16 @@ Hub/Agent 的口径与之对齐；升级引擎大版本时需复测：
   （容器自身 logger 产出），前端按纯文本渲染需容忍或清洗。
 - `export=1` 的原始字节流与 `Content-Disposition` 由 Agent 拼装，docker CLI 可直接消费。
 
+#### 镜像 API 契约（S4.1，2026-10-14 node1 写实测，Docker Engine 29.1.3 / API 1.52）
+
+- `/images/json`：dangling 过滤以 `filters={"dangling":["true"]}` 形态下发（Hub→Agent 一跳翻译，构造点固定、无注入面），空清单为 `[]` 非 `null`（与 containers 同口径）；`ImageSummary` 用 Engine 原生字段名 `RepoTags`/`Size`，不在本层重命名。
+- 镜像引用校验（`ValidImageRef`）：字符集 `[a-zA-Z0-9_.:/@-]`、首字符 alnum、≤255 字节、拒 `..`/`//`/残缺结尾；含 `@` 强制 `sha256:64hex`。node1 实测确认 `sha256:64hex` 形态的 digest 引用进 URL path 被 Engine 接受（delete 返回 404 而非 400，证明 path 合法）。
+- pull（`POST /images/create?fromImage=&tag=`）：进度为 NDJSON 流，首条事件 `{"status":"Pulling from library/alpine","id":"3.20"}` 的 **id 是 tag 名（含点，非层）**，层事件 id 为纯 hex（真实 Engine 为 12 位、≥8 位判定通过）；按 hex 形态过滤区分层与首条 tag 事件。末条 `{"status":"Status: Downloaded newer image for <ref>"}`。
+- **pull 失败的常见形态**：tag 不存在时 Engine **直接 404** + `{"message":"failed to resolve reference …: not found"}`（**不是** 200 + 流内 `error` 事件）。dockercli 在 HTTP 层拦截非 2xx，错误体读 `message` 字段（Docker 标准）；流内 `error` 字段检测仅作罕见场景（HTTP 200 但流内失败）防御。
+- delete（`DELETE /images/{ref}`，无 force）：未被容器占用时 HTTP 200；不存在时 404 `{"message":"No such image: …"}`（dockercli 映射 `CodeNotFound`，文案与容器侧逐字对齐）。
+- prune（`POST /images/prune`，**无 dry-run 参数**）：响应 `{"ImagesDeleted": [...], "SpaceReclaimed": N}`，其中 `ImagesDeleted` 为对象数组 `[{"Deleted":...},{"Untagged":...}]`，**无删除时为 `null` 而非 `[]`**。因 Engine 无 dry-run，DockDeck 用两段式：先 `GET /images?dangling=true` 展示将被清理清单，UI 确认后再 `POST /images/prune` 真删（对应红线第 2 条「prune 必先展示清单」的工程落地）。
+- 超时分级：pull / prune 双跳各 10 分钟（`dockercli.PullTimeout` 与 `agentcli.ImagePullTimeout` 同量级）；其余镜像写操作走 5s 写超时；`agentcli.ImagePull` 直调 `once` 绕过默认 5s 写超时（长操作单独计时）。
+
 ## 主机指标采集
 
 Agent 侧只读 `/proc`，不引入 gopsutil 这类额外依赖（交叉编译体积与可控性）：
@@ -170,7 +180,7 @@ Agent 侧只读 `/proc`，不引入 gopsutil 这类额外依赖（交叉编译�
    用户提交的 Compose YAML，以及文件管理模块在白名单目录内的操作。除此之外全部只读。
 2. **备份优先于变更**：写 Compose 文件与白名单内文件前，先落 `*.bak.<RFC3339>`；SQLite 用 `VACUUM INTO` 出快照，不复制运行中的 db 文件。
 3. **破坏性动作三重门**：保护名单命中即拒（`settings.protected_containers` 正则，默认含 `dockdeck-*`、
-   `watchtower`、部署时录入的现有容器名）；`prune` 类必须 `dry_run` 先行并在 UI 展示将被删清单；
+   `watchtower`、部署时录入的现有容器名）；`prune` 类必须先 **在 UI 展示将被删清单**再执行——Engine 的 `/images/prune` 无 dry-run 参数，DockDeck 以「先 `GET /images?dangling=true` 取清单、UI 确认后 `POST /images/prune` 真删」两段式等价实现；
    删除容器要求输入名字确认。所有此类操作进审计。
 4. **不碰自身**：Hub/Agent 容器自身、其 volume、其网络在 API 层标记 `protected`，UI 灰置。
 5. **不猜语义**：Agent 只转发 Docker API，不批量重启、不自动更新、不改 restart policy、不动宿主机 systemd 单元。

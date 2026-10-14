@@ -132,12 +132,12 @@ func TestComposeResolveProjectWhitelist(t *testing.T) {
 	}}
 	c := &ComposeClient{dirs: []string{base}, runner: runner}
 
-	if _, ok := c.resolveProject(context.Background(), "real"); !ok {
+	if _, ok := c.ResolveProject(context.Background(), "real"); !ok {
 		t.Error("real 应可解析")
 	}
 	// 白名单外的名字（含穿越尝试）一律 false
 	for _, name := range []string{"ghost", "../escape", "/etc/passwd", "real/../other"} {
-		if _, ok := c.resolveProject(context.Background(), name); ok {
+		if _, ok := c.ResolveProject(context.Background(), name); ok {
 			t.Errorf("resolveProject(%q) 不应解析成功（越出白名单）", name)
 		}
 	}

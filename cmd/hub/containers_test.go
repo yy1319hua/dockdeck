@@ -384,3 +384,103 @@ func TestHubContainerServerStates(t *testing.T) {
 		t.Errorf("非数字 ID 应 400，得 %d｜%s", resp.StatusCode, trim(body))
 	}
 }
+
+// ---- 审计（S3.4 第 6 步：读+写全量，server_id 自动带上）----
+
+// auditRow 是审计断言行（只取关心的列）。
+type auditRow struct {
+	Action    string
+	Result    string
+	ServerID  int64
+	Username  string
+	Target    string
+	RequestID string
+}
+
+// auditRows 读出全部审计行（新的在前）。
+func auditRows(t *testing.T, h *hub) []auditRow {
+	t.Helper()
+	rows, err := h.st.DB.Query(
+		`SELECT action, result, COALESCE(server_id,0), username, target, request_id
+		   FROM audit_logs ORDER BY id DESC`)
+	if err != nil {
+		t.Fatalf("读审计表: %v", err)
+	}
+	defer rows.Close()
+	var out []auditRow
+	for rows.Next() {
+		var r auditRow
+		if err := rows.Scan(&r.Action, &r.Result, &r.ServerID, &r.Username, &r.Target, &r.RequestID); err != nil {
+			t.Fatalf("扫描审计行: %v", err)
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+// TestHubContainerWritesAudit 验证全量审计：读与写都落库、动作按语义
+// 分开（restart 不是笼统的 action）、server_id 从 {id} 自动带上、
+// 身份取自觉银主体（Token 创建者）、失败也留痕、request_id 与响应头同源。
+func TestHubContainerWritesAudit(t *testing.T) {
+	h, sid, _ := hubWithAgent(t, true)
+	tok := h.token(t, "rw", apitoken.ScopeWriteContainers, apitoken.ScopeReadContainers)
+	spath := "/api/v1/servers/" + strconv.FormatInt(sid, 10)
+	base := spath + "/containers/abc123"
+
+	if resp, body := h.do(t, http.MethodPost, base+"/restart", "", tok, ""); resp.StatusCode != http.StatusOK {
+		t.Fatalf("restart 应 200，得 %d｜%s", resp.StatusCode, trim(body))
+	}
+	if resp, _ := h.get(t, spath+"/containers", tok, ""); resp.StatusCode != http.StatusOK {
+		t.Fatal("清单应 200")
+	}
+	// 失败也落库：未知动作 404（探针行为同样值得留痕）。
+	h.do(t, http.MethodPost, base+"/launch", "", tok, "")
+
+	rows := auditRows(t, h)
+	if len(rows) != 3 {
+		t.Fatalf("应落 3 条审计（写/读/失败），得 %d：%+v", len(rows), rows)
+	}
+	// 新的在前：launch(error) → list(ok) → restart(ok)。
+	want := []auditRow{
+		{Action: "container.launch", Result: "error", ServerID: sid, Username: "admin", Target: base + "/launch"},
+		{Action: "container.list", Result: "ok", ServerID: sid, Username: "admin", Target: spath + "/containers"},
+		{Action: "container.restart", Result: "ok", ServerID: sid, Username: "admin", Target: base + "/restart"},
+	}
+	for i, w := range want {
+		g := rows[i]
+		if g.Action != w.Action || g.Result != w.Result || g.ServerID != w.ServerID ||
+			g.Username != w.Username || g.Target != w.Target {
+			t.Errorf("审计行 %d 不符：\ngot  %+v\nwant %+v", i, g, w)
+		}
+		if g.RequestID == "" {
+			t.Errorf("审计行 %d 缺 request_id（与响应头 X-Request-Id 同源，排障要对得上）", i)
+		}
+	}
+}
+
+// TestHubContainerLogsThroughAudit 是审计包装不破坏流式转发的冒烟测试：
+// follow 心跳经审计包装后全部到达，且日志也落审计（流结束才落库）。
+// 注意它证明不了「Flush 真的透传了」——httptest recorder 不缓冲，
+// 缺透传也照单全收；真正的回归测试在 middleware 包
+// （TestStatusRecorderForwardsFlush，用 Flush 前不可见的假 writer）。
+func TestHubContainerLogsThroughAudit(t *testing.T) {
+	h, sid, fa := hubWithAgent(t, true)
+	fa.SetLogs("line-1\n")
+	tok := h.token(t, "ro", apitoken.ScopeReadContainers)
+	path := "/api/v1/servers/" + strconv.FormatInt(sid, 10) + "/containers/abc123/logs?follow=1"
+
+	resp, body := h.get(t, path, tok, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("应 200，得 %d｜%s", resp.StatusCode, trim(body))
+	}
+	for i := 1; i <= 5; i++ {
+		want := "--follow-tick-" + strconv.Itoa(i) + "--"
+		if !strings.Contains(string(body), want) {
+			t.Errorf("第 %d 帧心跳应经审计包装后到达，体=%q", i, body)
+		}
+	}
+	rows := auditRows(t, h)
+	if len(rows) != 1 || rows[0].Action != "container.logs" || rows[0].Result != "ok" {
+		t.Errorf("日志也应落审计（流结束才落库）：%+v", rows)
+	}
+}

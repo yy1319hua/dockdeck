@@ -283,7 +283,7 @@ func (s *server) routes() http.Handler {
 			{Status: 502, Desc: "Agent 不可达或返回异常"},
 		},
 		InternalRef: "cmd/hub/containers.go containerList",
-	}, s.containerList)
+	}, middleware.Audit(s.st, "container.list", s.containerList))
 
 	tbl.Add(route.Entry{
 		Method: "GET", Path: "/api/v1/servers/{id}/containers/{cid}", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadContainers,
@@ -299,7 +299,7 @@ func (s *server) routes() http.Handler {
 			{Status: 502, Desc: "Agent 不可达或返回异常"},
 		},
 		InternalRef: "cmd/hub/containers.go containerInspect",
-	}, s.containerInspect)
+	}, middleware.Audit(s.st, "container.inspect", s.containerInspect))
 
 	tbl.Add(route.Entry{
 		Method: "GET", Path: "/api/v1/servers/{id}/containers/{cid}/logs", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadContainers,
@@ -322,7 +322,7 @@ func (s *server) routes() http.Handler {
 			{Status: 502, Desc: "Agent 不可达或返回异常"},
 		},
 		InternalRef: "cmd/hub/containers.go containerLogs",
-	}, s.containerLogs)
+	}, middleware.Audit(s.st, "container.logs", s.containerLogs))
 
 	tbl.Add(route.Entry{
 		Method: "POST", Path: "/api/v1/servers/{id}/containers/{cid}/{action}", AuthMode: route.AuthScope, Scope: apitoken.ScopeWriteContainers,
@@ -346,7 +346,9 @@ func (s *server) routes() http.Handler {
 			{Status: 502, Desc: "Agent 不可达或返回异常"},
 		},
 		InternalRef: "cmd/hub/containers.go containerAction",
-	}, s.containerAction)
+	}, middleware.AuditFunc(s.st, func(r *http.Request) string {
+		return "container." + r.PathValue("action")
+	}, s.containerAction))
 
 	tbl.Add(route.Entry{
 		Method: "DELETE", Path: "/api/v1/servers/{id}/containers/{cid}", AuthMode: route.AuthScope, Scope: apitoken.ScopeWriteContainers,
@@ -366,7 +368,7 @@ func (s *server) routes() http.Handler {
 			{Status: 502, Desc: "Agent 不可达或返回异常"},
 		},
 		InternalRef: "cmd/hub/containers.go containerRemove",
-	}, s.containerRemove)
+	}, middleware.Audit(s.st, "container.remove", s.containerRemove))
 
 	// ---- 占位：S2 起逐步替换为真实实现 ----
 	tbl.Add(route.Entry{

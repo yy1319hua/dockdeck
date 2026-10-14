@@ -101,7 +101,7 @@ Hub API 前缀 `/api/v1`，响应统一 `{ "data": ..., "error": { "code", "mess
 | `DELETE .../containers/{cid}` | `write:containers` | 需 `confirm=<name>` 且非保护对象 |
 | `GET .../containers/{cid}/logs?tail=&since=&until=&follow=` | `read:containers` | 日志 |
 | `GET .../images` `POST .../images/pull` `DELETE .../images/{ref}` `POST .../prune` | `read:`/`write:containers` | 镜像 |
-| `GET .../compose` `POST .../compose/{project}/{action}` `GET .../compose/{project}/logs` `GET/PUT .../compose/{project}/file` `POST .../compose/{project}/diff` | `read:`/`write:containers` | Compose（list/写动作/日志；YAML 读写与 diff 预览，S4.2+S4.3。写 YAML 走 `ComposeDirs` 白名单而非 `fs-root`，故归 `write:containers` 而非 `write:files`） |
+| `GET .../compose` `POST .../compose/{project}/{action}` `GET .../compose/{project}/logs` `GET/PUT .../compose/{project}/file` `POST .../compose/{project}/diff` | `read:`/`write:containers` | Compose（list/写动作/日志；YAML 读写与 diff 预览。Agent 侧 S4.2+S4.3 落地，**Hub 侧转发 S4.7 补齐**。写 YAML 走 `ComposeDirs` 白名单而非 `fs-root`，故归 `write:containers` 而非 `write:files`） |
 | `GET .../files?path=` `GET .../files/content?path=` | `read:metrics` | 文件列表与读取 |
 | `PUT .../files/content` `POST .../files/{action}` | `write:files` | 写/删/建目录/改名，限根白名单 |
 | `GET /audit` `GET /audit/export` | `read:audit` | 审计查询与导出 |
@@ -145,7 +145,7 @@ Hub/Agent 的口径与之对齐；升级引擎大版本时需复测：
 - prune（`POST /images/prune`，**无 dry-run 参数**）：响应 `{"ImagesDeleted": [...], "SpaceReclaimed": N}`，其中 `ImagesDeleted` 为对象数组 `[{"Deleted":...},{"Untagged":...}]`，**无删除时为 `null` 而非 `[]`**。因 Engine 无 dry-run，DockDeck 用两段式：先 `GET /images?dangling=true` 展示将被清理清单，UI 确认后再 `POST /images/prune` 真删（对应红线第 2 条「prune 必先展示清单」的工程落地）。
 - 超时分级：pull / prune 双跳各 10 分钟（`dockercli.PullTimeout` 与 `agentcli.ImagePullTimeout` 同量级）；其余镜像写操作走 5s 写超时；`agentcli.ImagePull` 直调 `once` 绕过默认 5s 写超时（长操作单独计时）。
 
-#### Compose API 契约（S4.2 + S4.3，2026-10-14 node1 写实测，Docker Compose v5.1.4 / v2 系）
+#### Compose API 契约（S4.2 + S4.3 + S4.7，2026-10-14 node1 写实测，Docker Compose v5.1.4 / v2 系）
 
 Compose **没有 daemon API**：与容器/镜像走 Engine socket HTTP 不同，Compose 全部走宿主侧 `docker compose` v2 CLI（`exec.Command("docker","compose",...)`）。dockercli 用 `composeRunner` 抽象执行——`Captured` 抓 stdout+stderr 合流（ps/up/down 等要拿输出）、`Streamed` 返回 stdout 管道（logs --follow）；默认 `execComposeRunner`，测试注入假实现。
 
@@ -158,13 +158,23 @@ Compose **没有 daemon API**：与容器/镜像走 Engine socket HTTP 不同，
   - `up -d` / `down`(`-v`) / `restart` / `pull`：输出是纯文本（非 JSON），合并 stdout+stderr、`--no-color` 后透传为 `ComposeActionResult.Output` 给前端展示；成败写在 Output 里，不另造文案。
   - `logs --no-color [service] [--follow]`：纯文本流，复用容器日志通道（裸流、不经信封、不复用读超时）；无输出服务返回空流（合法，非错误）。
   - **compose 无 prune 子命令**：`down` 移除容器/网络（`-v` 也清卷），镜像不删；镜像清理是独立的 `docker image prune`（全局，不在 Compose 暴露范围）。故 DockDeck Compose 面故意不含 prune，与红线第 2 条「prune 必先展示清单」一致。
-- **API 形态（S4.2 + S4.3 实际落地；S4.3 补回了第 104 行草图里的文件端点）**：
+- **API 形态（S4.2 + S4.3 实际落地；S4.3 补回了第 104 行草图里的文件端点。下列为 Agent 侧路径）**：
   - `GET /api/v1/compose`：白名单扫描列项目，信封内层 `[]protocol.ComposeProject`，空清单 `[]` 非 `null`；
   - `POST /api/v1/compose/{project}/{action}`：action ∈ {up,down,restart,pull}（非法动词本地拦不出门），返回 `ComposeActionResult.Output`；未知项目 404；
   - `GET /api/v1/compose/{project}/logs?follow=`：裸 `text/plain` 流，复用容器日志的 `flushWriter` 逐帧下发；
   - `GET /api/v1/compose/{project}/file`（S4.3）：返回 `ComposeFile{config_file, content}`；
   - `POST /api/v1/compose/{project}/diff`（S4.3）：请求体 `{"content":...}`，返回 `ComposeFileDiff{diff}`——**只算不写**，不落盘、不产生备份；
   - `PUT /api/v1/compose/{project}/file`（S4.3）：请求体 `{"content":...}`，返回 `ComposeFileWritten{backup_file}`。
+- **Hub 侧转发（S4.7）**：Hub 在 `/api/v1/servers/{id}/compose...` 上镜像上面六条 Agent 路径，
+  只做鉴权、审计与转发（handler 不碰 SQL、不重新实现 Docker 逻辑，与镜像转发同款模板）：
+  - scope：list / logs / file 读归 `read:containers`；action / diff / PUT 归 `write:containers`
+    （diff 虽不落盘，但它是写入流程的一段、带请求体的 POST，与 PUT 同一把钥匙）；
+  - logs 是 `NoEnvelope` 裸流——与容器日志同款：内容类型从 Agent 响应透传、
+    不设 Hub 侧读超时（流寿命归调用方 ctx）、逐块 Flush；
+  - **白名单判定留在 Agent 侧**：Hub 只转发项目名，不复制一份 `ComposeDirs`——
+    复制就等于给「两侧口径漂移」开口子；
+  - 审计动作：compose.list / compose.action / compose.logs / compose.file.read /
+    compose.diff / compose.file.write（读也审，与容器、镜像同口径）。
 - **写前备份与 diff 预览（S4.3，红线第 2 条「备份优先于变更」的工程落地）**：
   - `WriteFile` 先把当前内容备份为 `<file>.bak.<RFC3339>` 再覆盖写，**备份落盘成功才动原文件**——任一失败即中止，不给「原文件已改但无备份」留口子；只编辑已发现的项目，源文件缺失即报错且不新建。
   - diff 由 `internal/diff.Unified` 自实现（LCS + 上下文窗口分块，`@@` 头与 `diff -u` 同语义：纯新增旧区间 `-0,0`、纯删除新区间 `+0,0`），**零新增依赖**；相同文本（含尾部换行归一）返回空串。预览与写入分两个端点，前端可「先看 diff → 再确认写」。

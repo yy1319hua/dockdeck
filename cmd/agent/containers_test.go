@@ -45,6 +45,9 @@ type fakeDocker struct {
 	server *http.Server
 	sock   string
 	paths  chan string
+	// 日志形态配置（serveLogs 设置后 /containers/*/logs 有响应）：
+	logsMuxed  []byte
+	logsFollow bool
 }
 
 func newFakeDocker(t *testing.T) *fakeDocker {
@@ -68,6 +71,10 @@ func newFakeDocker(t *testing.T) *fakeDocker {
 	})
 	mux.HandleFunc("/containers/", func(w http.ResponseWriter, r *http.Request) {
 		f.paths <- r.Method + " " + r.URL.Path + qmark(r.URL.RawQuery)
+		if strings.Contains(r.URL.Path, "/logs") {
+			f.serveLogs(w, r)
+			return
+		}
 		if r.Method == http.MethodGet {
 			_, _ = w.Write([]byte(`{"Id":"abc123def456","Name":"/web","State":{"Running":true}}`))
 			return

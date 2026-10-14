@@ -86,6 +86,7 @@ func buildHandler(token string, col *collector.Collector, src collector.Containe
 	mux.Handle("GET /api/v1/containers/{id}", agenthttp.Auth(token, nil)(http.HandlerFunc(capi.inspect)))
 	mux.Handle("POST /api/v1/containers/{id}/{action}", agenthttp.Auth(token, nil)(http.HandlerFunc(capi.action)))
 	mux.Handle("DELETE /api/v1/containers/{id}", agenthttp.Auth(token, nil)(http.HandlerFunc(capi.remove)))
+	mux.Handle("GET /api/v1/containers/{id}/logs", agenthttp.Auth(token, nil)(http.HandlerFunc(capi.logs)))
 	return mux
 }
 

@@ -49,9 +49,10 @@ type Entry struct {
 	Params      []Param  // 查询参数
 	Body        *Body    // nil = 无请求体
 	Responses   []Response
-	Status      int  // 成功状态码，默认 200
-	NoEnvelope  bool // true = 响应不是 {data,error} 信封
-	RateLimited bool // true = 套 IP 令牌桶（登录/建号这类可爆破入口）
+	Status      int    // 成功状态码，默认 200
+	NoEnvelope  bool   // true = 响应不是 {data,error} 信封
+	ContentType string // NoEnvelope 时成功响应的内容类型（如 text/plain）；空 = application/json
+	RateLimited bool   // true = 套 IP 令牌桶（登录/建号这类可爆破入口）
 	Deprecated  bool
 	InternalRef string // 内部实现定位串，不进 spec；供测试断言实装
 }

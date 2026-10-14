@@ -223,11 +223,20 @@ func operation(e route.Entry) *Operation {
 		okDesc = http.StatusText(status)
 	}
 	okSchema := &Schema{Ref: EnvelopeRef}
+	okCT := "application/json"
 	if e.NoEnvelope {
 		okSchema = &Schema{Type: "object"}
+		// 裸流端点（日志等）声明真实内容类型：文档对实装说谎比没有文档更糟。
+		// 动态内容类型（export 时的 octet-stream）在 Desc 里说明，spec 取主形态。
+		if e.ContentType != "" {
+			okCT = e.ContentType
+			if strings.HasPrefix(e.ContentType, "text/") {
+				okSchema = &Schema{Type: "string"}
+			}
+		}
 	}
 	op.Responses[strconv.Itoa(status)] = Response{Description: okDesc, Content: map[string]MediaType{
-		"application/json": {Schema: okSchema},
+		okCT: {Schema: okSchema},
 	}}
 	for _, c := range [4]int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound} {
 		op.Responses[strconv.Itoa(c)] = Response{Description: statusDesc(c, e), Content: map[string]MediaType{
@@ -235,8 +244,15 @@ func operation(e route.Entry) *Operation {
 		}}
 	}
 	for _, extra := range e.Responses {
+		// 错误状态码的载荷是 {error:{code,message}}，不是信封——声明错了
+		// 比不声明更糟：客户端代码生成器会照着造解析结构。
+		// （此前不分状态一律 EnvelopeRef，S3.4 起区分。）
+		schema := &Schema{Ref: EnvelopeRef}
+		if extra.Status >= 400 {
+			schema = &Schema{Ref: ErrorRef}
+		}
 		op.Responses[strconv.Itoa(extra.Status)] = Response{Description: extra.Desc, Content: map[string]MediaType{
-			"application/json": {Schema: &Schema{Ref: EnvelopeRef}},
+			"application/json": {Schema: schema},
 		}}
 	}
 

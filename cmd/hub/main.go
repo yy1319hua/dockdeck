@@ -266,6 +266,108 @@ func (s *server) routes() http.Handler {
 		InternalRef: "cmd/hub/metrics.go metricsOverview",
 	}, s.metricsOverview)
 
+	// ---- S3.4 容器转发（实时到 Agent）----
+	// 与上面指标端点的分工：那些读 Hub 自己的库，这些实时转发。
+	// 失败的 502 一律来自 Agent 侧（不可达/异常），Hub 自身故障是 500。
+	tbl.Add(route.Entry{
+		Method: "GET", Path: "/api/v1/servers/{id}/containers", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadContainers,
+		Summary: "容器清单", Tags: []string{"Containers"},
+		Desc: "实时取自 Agent 的 Engine 原生清单（未停止的默认不含，all=true 含已停止）。" +
+			"空清单编码为 [] 而非 null。",
+		Params: []route.Param{
+			{Name: "id", Desc: "服务器 ID", Required: true, Example: "1", SchemaType: "integer", SchemaFmt: "int64"},
+			{Name: "all", Desc: "含已停止容器（true/false，或 1/0；省略为 false）", Required: false, Example: "false", SchemaType: "boolean"},
+		},
+		Responses: []route.Response{
+			{Status: 403, Desc: "服务器已禁用"},
+			{Status: 502, Desc: "Agent 不可达或返回异常"},
+		},
+		InternalRef: "cmd/hub/containers.go containerList",
+	}, s.containerList)
+
+	tbl.Add(route.Entry{
+		Method: "GET", Path: "/api/v1/servers/{id}/containers/{cid}", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadContainers,
+		Summary: "容器详情", Tags: []string{"Containers"},
+		Desc: "Engine inspect JSON 原样透传（信封的 data 层），Hub 不做字段裁剪。",
+		Params: []route.Param{
+			{Name: "id", Desc: "服务器 ID", Required: true, Example: "1", SchemaType: "integer", SchemaFmt: "int64"},
+			{Name: "cid", Desc: "容器 ID 或名字", Required: true, Example: "9f3a2b1c4d5e"},
+		},
+		Responses: []route.Response{
+			{Status: 403, Desc: "服务器已禁用"},
+			{Status: 404, Desc: "容器不存在（Agent/Engine 报 404）"},
+			{Status: 502, Desc: "Agent 不可达或返回异常"},
+		},
+		InternalRef: "cmd/hub/containers.go containerInspect",
+	}, s.containerInspect)
+
+	tbl.Add(route.Entry{
+		Method: "GET", Path: "/api/v1/servers/{id}/containers/{cid}/logs", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadContainers,
+		Summary: "容器日志", Tags: []string{"Containers"}, NoEnvelope: true, ContentType: "text/plain",
+		Desc: "裸流透传，无信封：默认 stdout/stderr 合流文本（text/plain）；export=1 时 Engine 原始字节流下载" +
+			"（application/octet-stream + Content-Disposition，docker CLI 可直接消费）。" +
+			"follow=1 为长连接，逐块 Flush，浏览器断开即结束。",
+		Params: []route.Param{
+			{Name: "id", Desc: "服务器 ID", Required: true, Example: "1", SchemaType: "integer", SchemaFmt: "int64"},
+			{Name: "cid", Desc: "容器 ID 或名字", Required: true, Example: "9f3a2b1c4d5e"},
+			{Name: "follow", Desc: "持续跟随（仅认 1）", Required: false, Example: "1", SchemaType: "boolean"},
+			{Name: "tail", Desc: "尾部行数：all 或纯数字", Required: false, Example: "200"},
+			{Name: "since", Desc: "起始时间（RFC3339）", Required: false, Example: "2026-10-14T00:00:00Z", SchemaType: "string", SchemaFmt: "date-time"},
+			{Name: "until", Desc: "截止时间（RFC3339）", Required: false, Example: "2026-10-14T08:00:00Z", SchemaType: "string", SchemaFmt: "date-time"},
+			{Name: "timestamps", Desc: "每行带时间戳（仅认 1）", Required: false, Example: "1", SchemaType: "boolean"},
+			{Name: "export", Desc: "原始字节流导出下载（仅认 1）", Required: false, Example: "1", SchemaType: "boolean"},
+		},
+		Responses: []route.Response{
+			{Status: 403, Desc: "服务器已禁用"},
+			{Status: 502, Desc: "Agent 不可达或返回异常"},
+		},
+		InternalRef: "cmd/hub/containers.go containerLogs",
+	}, s.containerLogs)
+
+	tbl.Add(route.Entry{
+		Method: "POST", Path: "/api/v1/servers/{id}/containers/{cid}/{action}", AuthMode: route.AuthScope, Scope: apitoken.ScopeWriteContainers,
+		Summary: "容器操作", Tags: []string{"Containers"},
+		Desc: "action ∈ start|stop|restart|pause|unpause|kill|resize，未知动作 404。" +
+			"stop 请求体 {\"timeout_sec\":N}（SIGTERM 后等待秒数，省略用引擎默认）；" +
+			"kill 请求体 {\"signal\":\"SIGTERM\"}（白名单内信号，空用引擎默认）；" +
+			"resize 查询串 ?h=&w=（行列正整数，Engine 原生约定）；其余动作无选项。" +
+			"写操作不重试（Agent 侧尚无幂等去重），一次失败即如实回报。",
+		Params: []route.Param{
+			{Name: "id", Desc: "服务器 ID", Required: true, Example: "1", SchemaType: "integer", SchemaFmt: "int64"},
+			{Name: "cid", Desc: "容器 ID 或名字", Required: true, Example: "9f3a2b1c4d5e"},
+			{Name: "action", Desc: "start|stop|restart|pause|unpause|kill|resize", Required: true, Example: "restart"},
+			{Name: "h", Desc: "resize 行数（正整数）", Required: false, Example: "40", SchemaType: "integer", SchemaFmt: "int64"},
+			{Name: "w", Desc: "resize 列数（正整数）", Required: false, Example: "120", SchemaType: "integer", SchemaFmt: "int64"},
+		},
+		Responses: []route.Response{
+			{Status: 403, Desc: "服务器已禁用，或命中 Agent 自身容器（不碰自身红线）"},
+			{Status: 404, Desc: "容器不存在或未知操作"},
+			{Status: 409, Desc: "容器状态不允许该操作（Engine 报 409）"},
+			{Status: 502, Desc: "Agent 不可达或返回异常"},
+		},
+		InternalRef: "cmd/hub/containers.go containerAction",
+	}, s.containerAction)
+
+	tbl.Add(route.Entry{
+		Method: "DELETE", Path: "/api/v1/servers/{id}/containers/{cid}", AuthMode: route.AuthScope, Scope: apitoken.ScopeWriteContainers,
+		Summary: "删除容器", Tags: []string{"Containers"},
+		Desc: "force=1 强删运行中的容器；v=1 连同匿名卷删除（查询串与请求体取并集，与 Agent 侧同口径）。" +
+			"具名卷与 bind 目录不归 Engine 管，不在此清理。",
+		Params: []route.Param{
+			{Name: "id", Desc: "服务器 ID", Required: true, Example: "1", SchemaType: "integer", SchemaFmt: "int64"},
+			{Name: "cid", Desc: "容器 ID 或名字", Required: true, Example: "9f3a2b1c4d5e"},
+			{Name: "force", Desc: "强删运行中的容器（仅认 1）", Required: false, Example: "1", SchemaType: "boolean"},
+			{Name: "v", Desc: "连同匿名卷删除（仅认 1）", Required: false, Example: "1", SchemaType: "boolean"},
+		},
+		Responses: []route.Response{
+			{Status: 403, Desc: "服务器已禁用，或命中 Agent 自身容器（不碰自身红线）"},
+			{Status: 404, Desc: "容器不存在"},
+			{Status: 409, Desc: "Engine 拒绝删除（如运行中未 force）"},
+			{Status: 502, Desc: "Agent 不可达或返回异常"},
+		},
+		InternalRef: "cmd/hub/containers.go containerRemove",
+	}, s.containerRemove)
+
 	// ---- 占位：S2 起逐步替换为真实实现 ----
 	tbl.Add(route.Entry{
 		Method: "GET", Path: "/api/v1/servers", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadMetrics,

@@ -240,6 +240,9 @@ func TestAuthMatrix(t *testing.T) {
 
 // TestDeclaredScopeEqualsEnforcedScope 防止「Entry.Scope 改了但包装链没跟上」。
 // 每个 scope 端点都用一枚只含其它 scope 的 Token 打一遍，必须全部 403。
+// 按条目自身的方法发请求：Go mux 的方法限定模式下，GET 打不中
+// "POST /path" 模式（会落到 SPA 兜底拿 404），那测的就不是鉴权了。
+// 越权 Token 在包装链就被拦，handler 不会执行，无副作用可言。
 func TestDeclaredScopeEqualsEnforcedScope(t *testing.T) {
 	h := newHub(t)
 	probed := 0
@@ -253,7 +256,7 @@ func TestDeclaredScopeEqualsEnforcedScope(t *testing.T) {
 			other = apitoken.ScopeReadContainers
 		}
 		tok := h.token(t, "probe-"+strconv.Itoa(probed), other)
-		resp, body := h.get(t, samplePath(e.Path), tok, "")
+		resp, body := h.do(t, e.Method, samplePath(e.Path), "", tok, "")
 		if resp.StatusCode != http.StatusForbidden {
 			t.Errorf("%s %s（需 %s）带 scope %q 竟得 %d：%s",
 				e.Method, e.Path, e.Scope, other, resp.StatusCode, trim(body))

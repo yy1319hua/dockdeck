@@ -48,6 +48,10 @@ type Fake struct {
 	logsBody string
 	// calls 记录每次进入业务端点的请求路径（已过鉴权），供断言「实际打到了哪」。
 	calls []string
+	// bodies 记录写端点的请求体（成功路径），供 e2e 断言 stop/kill/remove
+	// 的选项（timeout_sec/signal/force/v）真的透传到了 Agent——
+	// 只记路径的话，「Hub 把请求体解错了字段名」这种静默丢选项无从发现。
+	bodies []string
 	// failNext 让下 N 次请求先返回给定状态码（测重试），随后恢复正常。
 	failNext   int
 	failStatus int
@@ -129,6 +133,23 @@ func (f *Fake) Calls() []string {
 	out := make([]string, len(f.calls))
 	copy(out, f.calls)
 	return out
+}
+
+// WriteBodies 返回写端点已记录的请求体副本（顺序与 Calls 中写请求一致）。
+func (f *Fake) WriteBodies() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]string, len(f.bodies))
+	copy(out, f.bodies)
+	return out
+}
+
+// recordBody 记录写端点的请求体。只在成功路径调用：
+// 被守卫/白名单拦下的请求没有「透传选项」可言。
+func (f *Fake) recordBody(raw []byte) {
+	f.mu.Lock()
+	f.bodies = append(f.bodies, string(raw))
+	f.mu.Unlock()
 }
 
 // Handler 装配鉴权中间件 + 端点。
@@ -269,10 +290,12 @@ func (f *Fake) serveContainerAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 请求体只校验「是合法 JSON」，语义由真 Agent/Engine 把关。
-	if raw, _ := io.ReadAll(io.LimitReader(r.Body, 4<<10)); len(raw) > 0 && !json.Valid(raw) {
+	raw, _ := io.ReadAll(io.LimitReader(r.Body, 4<<10))
+	if len(raw) > 0 && !json.Valid(raw) {
 		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, "请求体不是合法 JSON")
 		return
 	}
+	f.recordBody(raw)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -284,6 +307,10 @@ func (f *Fake) serveContainerRemove(w http.ResponseWriter, r *http.Request) {
 	if f.containerWriteGuard(w, r.PathValue("id")) {
 		return
 	}
+	// 真 Agent 的 remove 会读请求体（force/v 可走 body）；假 Agent 记录之，
+	// 让 e2e 能断言 Hub 的 body/查询串并集口径真的透传了过来。
+	raw, _ := io.ReadAll(io.LimitReader(r.Body, 4<<10))
+	f.recordBody(raw)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 

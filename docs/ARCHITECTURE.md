@@ -111,6 +111,26 @@ Hub API 前缀 `/api/v1`，响应统一 `{ "data": ..., "error": { "code", "mess
 Agent API 前缀 `/api/v1`：`/info` `/metrics` `/containers*` `/images*` `/compose*` `/logs` `/files*`，
 语义与 Hub 一一对应；Hub 只做鉴权、审计、聚合，不重新实现 Docker 逻辑。
 
+### Engine 契约实测基线（2026-10-14，node1 生产机 + ARM 宿主机，Docker Engine 29.1.3 / API 1.52）
+
+以下行为在 node1（10.0.0.10，Docker 29.1.3）与 ARM 宿主机（同版本）上**只读实测**确认，
+Hub/Agent 的口径与之对齐；升级引擎大版本时需复测：
+
+- `/_ping` 返回 200 并带 `Api-Version` 头；`/version` 报 `ApiVersion 1.52`、`MinAPIVersion 1.44`。
+- `containers/json` 默认只含 running；**空清单是 `[]` 不是 `null`**（Hub 侧同口径透传）。
+- inspect 透传 Engine 原生 JSON；容器不存在时 404 `{"message":"No such container: …"}`；
+  12 位短 ID 前缀可用（cid 校验按此放行）。
+- logs **必须显式选流**：不带 `stdout`/`stderr` 时 Engine 29.1.3 直接 400
+  （"you must choose at least one stream"）——dockercli 固定带 `stdout=1&stderr=1` 合流。
+- logs 的 `tail`：非法值（`abc`/`-1`）Engine 不报错、按全量返回（node1 上即 23MB 级），
+  Agent 侧 ValidTail 提前 400——比 Engine 严是刻意的，防怪字符串打满带宽。
+- logs 的 `since`/`until`：**只认 Unix 秒**。RFC3339（含正确编码的 `+08:00`）会 500
+  （`strconv.ParseInt` 失败，连 400 都不是）；`0` 与缺省等价（不过滤）；
+  未来时间戳返回空流而非报错。Hub 接口当前按 date-time 宣传——待归一化修复后对齐。
+- logs `timestamps=1`：每行前缀 RFC3339 UTC 时间戳；日志正文可能含 ANSI 转色码
+  （容器自身 logger 产出），前端按纯文本渲染需容忍或清洗。
+- `export=1` 的原始字节流与 `Content-Disposition` 由 Agent 拼装，docker CLI 可直接消费。
+
 ## 主机指标采集
 
 Agent 侧只读 `/proc`，不引入 gopsutil 这类额外依赖（交叉编译体积与可控性）：

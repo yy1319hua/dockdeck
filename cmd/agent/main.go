@@ -101,6 +101,12 @@ func buildHandler(token string, col *collector.Collector, src collector.Containe
 	mux.Handle("GET /api/v1/compose", agenthttp.Auth(token, nil)(http.HandlerFunc(compapi.list)))
 	mux.Handle("POST /api/v1/compose/{project}/{action}", agenthttp.Auth(token, nil)(http.HandlerFunc(compapi.action)))
 	mux.Handle("GET /api/v1/compose/{project}/logs", agenthttp.Auth(token, nil)(http.HandlerFunc(compapi.logs)))
+	// ---- Compose YAML 文件读写（S4.3）：GET 读、POST diff 预览、PUT 写（写前备份）。
+	// file/diff 是字面量段，比 POST 的 {action} 通配更具体，Go mux 按最具体优先匹配，
+	// 不会与 action 路由冲突（"diff" 本身也不是合法动作）。----
+	mux.Handle("GET /api/v1/compose/{project}/file", agenthttp.Auth(token, nil)(http.HandlerFunc(compapi.fileGet)))
+	mux.Handle("POST /api/v1/compose/{project}/diff", agenthttp.Auth(token, nil)(http.HandlerFunc(compapi.fileDiff)))
+	mux.Handle("PUT /api/v1/compose/{project}/file", agenthttp.Auth(token, nil)(http.HandlerFunc(compapi.filePut)))
 	return mux
 }
 

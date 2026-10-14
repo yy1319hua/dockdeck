@@ -189,3 +189,97 @@ func TestComposeAgentLogs(t *testing.T) {
 		t.Errorf("logs 流 = %q，期望 %q", body, op.logsData)
 	}
 }
+
+// ---- S4.3：Compose YAML 文件读写三端点 ----
+
+func TestComposeAgentFileGet(t *testing.T) {
+	op := &fakeComposeOp{
+		projects:    []protocol.ComposeProject{{Name: "web", ConfigFile: "/opt/web/docker-compose.yml"}},
+		fileContent: "services:\n  web:\n",
+	}
+	srv := agentWithCompose(t, op)
+	defer srv.Close()
+
+	resp, body := hGET(t, srv, "/api/v1/compose/web/file")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("file get 状态 %d body=%s", resp.StatusCode, body)
+	}
+	var got protocol.ComposeFile
+	if err := json.Unmarshal(dataOf(t, body), &got); err != nil {
+		t.Fatalf("解码 file: %v body=%s", err, body)
+	}
+	if got.ConfigFile != "/opt/web/docker-compose.yml" || got.Content != "services:\n  web:\n" {
+		t.Errorf("file get 返回 %+v", got)
+	}
+
+	// 白名单外/未知项目 → 404（不读文件）。
+	if r2, _ := hGET(t, srv, "/api/v1/compose/evil/file"); r2.StatusCode != http.StatusNotFound {
+		t.Errorf("未知项目 file get 应 404, got %d", r2.StatusCode)
+	}
+}
+
+func TestComposeAgentFileDiff(t *testing.T) {
+	op := &fakeComposeOp{
+		projects: []protocol.ComposeProject{{Name: "web", ConfigFile: "/opt/web/docker-compose.yml"}},
+		diffOut:  "@@ -1,1 +1,1 @@\n-a\n+b\n",
+	}
+	srv := agentWithCompose(t, op)
+	defer srv.Close()
+
+	resp, body := hDo(t, srv, http.MethodPost, "/api/v1/compose/web/diff", `{"content":"b\n"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("diff 状态 %d body=%s", resp.StatusCode, body)
+	}
+	var got protocol.ComposeFileDiff
+	if err := json.Unmarshal(dataOf(t, body), &got); err != nil {
+		t.Fatalf("解码 diff: %v", err)
+	}
+	if got.Diff != "@@ -1,1 +1,1 @@\n-a\n+b\n" {
+		t.Errorf("diff 返回 %q", got.Diff)
+	}
+
+	// 未知项目 → 404（在解 body 之前拦下，不浪费读）。
+	if r2, _ := hDo(t, srv, http.MethodPost, "/api/v1/compose/evil/diff", `{"content":"b\n"}`); r2.StatusCode != http.StatusNotFound {
+		t.Errorf("未知项目 diff 应 404, got %d", r2.StatusCode)
+	}
+	// 已知项目 + 未知字段 body → 400（DisallowUnknownFields）。
+	if r3, _ := hDo(t, srv, http.MethodPost, "/api/v1/compose/web/diff", `{"bogus":1}`); r3.StatusCode != http.StatusBadRequest {
+		t.Errorf("坏 body diff 应 400, got %d", r3.StatusCode)
+	}
+}
+
+func TestComposeAgentFilePut(t *testing.T) {
+	op := &fakeComposeOp{
+		projects:    []protocol.ComposeProject{{Name: "web", ConfigFile: "/opt/web/docker-compose.yml"}},
+		writeBackup: "/opt/web/docker-compose.yml.bak.2026-10-15T00:00:00+08:00",
+	}
+	srv := agentWithCompose(t, op)
+	defer srv.Close()
+
+	const next = "services:\n  web:\n    image: nginx:1.27\n"
+	resp, body := hDo(t, srv, http.MethodPut, "/api/v1/compose/web/file", `{"content":"`+`services:\n  web:\n    image: nginx:1.27\n`+`"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("put 状态 %d body=%s", resp.StatusCode, body)
+	}
+	var got protocol.ComposeFileWritten
+	if err := json.Unmarshal(dataOf(t, body), &got); err != nil {
+		t.Fatalf("解码 put: %v", err)
+	}
+	if got.BackupFile != "/opt/web/docker-compose.yml.bak.2026-10-15T00:00:00+08:00" {
+		t.Errorf("put 返回备份 %q", got.BackupFile)
+	}
+	// op 收到白名单路径 + 原文透传。
+	want := "/opt/web/docker-compose.yml|" + next
+	if len(op.wrote) != 1 || op.wrote[0] != want {
+		t.Errorf("wrote 记录不符: %#v", op.wrote)
+	}
+
+	// 未知项目 → 404，且不触发写入。
+	before := len(op.wrote)
+	if r2, _ := hDo(t, srv, http.MethodPut, "/api/v1/compose/evil/file", `{"content":"x"}`); r2.StatusCode != http.StatusNotFound {
+		t.Errorf("未知项目 put 应 404, got %d", r2.StatusCode)
+	}
+	if len(op.wrote) != before {
+		t.Errorf("未知项目不应触发写入")
+	}
+}

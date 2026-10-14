@@ -105,3 +105,64 @@ func (a *composeAPI) logs(w http.ResponseWriter, r *http.Request) {
 		log.Printf("agent: compose 日志流中断 (%s=%q): %v", protocol.HeaderRequestID, r.Header.Get(protocol.HeaderRequestID), err)
 	}
 }
+
+// fileGet 实现 GET /api/v1/compose/{project}/file：读取项目当前 compose 文件内容。
+// 先 ResolveProject（白名单外/穿越一律 404），再由 op 读真实文件。
+func (a *composeAPI) fileGet(w http.ResponseWriter, r *http.Request) {
+	project := r.PathValue("project")
+	p, ok := a.op.ResolveProject(r.Context(), project)
+	if !ok {
+		httpx.WriteError(w, http.StatusNotFound, protocol.CodeNotFound, "compose 项目不存在或不在白名单: "+project)
+		return
+	}
+	content, err := a.op.ReadFile(r.Context(), p.ConfigFile)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadGateway, protocol.CodeUpstreamError, "读取 compose 文件失败: "+err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, protocol.ComposeFile{ConfigFile: p.ConfigFile, Content: content})
+}
+
+// fileDiff 实现 POST /api/v1/compose/{project}/diff：计算请求体内容相对当前文件的
+// unified diff 供预览——不落盘、不产生备份。请求体 {"content": "..."}，走信封 JSON。
+func (a *composeAPI) fileDiff(w http.ResponseWriter, r *http.Request) {
+	project := r.PathValue("project")
+	p, ok := a.op.ResolveProject(r.Context(), project)
+	if !ok {
+		httpx.WriteError(w, http.StatusNotFound, protocol.CodeNotFound, "compose 项目不存在或不在白名单: "+project)
+		return
+	}
+	var req protocol.ComposeFileUpdate
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, "请求体不合法: "+err.Error())
+		return
+	}
+	d, err := a.op.Diff(r.Context(), p.ConfigFile, req.Content)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadGateway, protocol.CodeUpstreamError, "计算 compose diff 失败: "+err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, protocol.ComposeFileDiff{Diff: d})
+}
+
+// filePut 实现 PUT /api/v1/compose/{project}/file：写前先备份 <file>.bak.<ts>，再覆盖写。
+// 响应回传备份路径，供用户回滚。请求体 {"content": "..."}，走信封 JSON。
+func (a *composeAPI) filePut(w http.ResponseWriter, r *http.Request) {
+	project := r.PathValue("project")
+	p, ok := a.op.ResolveProject(r.Context(), project)
+	if !ok {
+		httpx.WriteError(w, http.StatusNotFound, protocol.CodeNotFound, "compose 项目不存在或不在白名单: "+project)
+		return
+	}
+	var req protocol.ComposeFileUpdate
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, "请求体不合法: "+err.Error())
+		return
+	}
+	backup, err := a.op.WriteFile(r.Context(), p.ConfigFile, req.Content)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadGateway, protocol.CodeUpstreamError, "写入 compose 文件失败: "+err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, protocol.ComposeFileWritten{BackupFile: backup})
+}

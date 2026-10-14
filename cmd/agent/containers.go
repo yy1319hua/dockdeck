@@ -92,7 +92,9 @@ func (a *containersAPI) list(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
-// inspect 实现 GET /api/v1/containers/{id}。原样转发 Engine JSON。
+// inspect 实现 GET /api/v1/containers/{id}。Engine JSON 原样进信封的 data 层——
+// 字段不增不减，但必须走信封：Hub 侧 agentcli 只认信封格式，
+// 裸写响应体会让它解出空信封、静默返回零值（S3.4 修，此前违反自家契约）。
 func (a *containersAPI) inspect(w http.ResponseWriter, r *http.Request) {
 	raw, err := a.dc.Inspect(r.Context(), r.PathValue("id"))
 	if err != nil {
@@ -100,9 +102,7 @@ func (a *containersAPI) inspect(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, code, protocol.CodeUpstreamError, msg)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(raw)
+	httpx.WriteJSON(w, http.StatusOK, json.RawMessage(raw))
 }
 
 // lifecycleBody 是 stop/kill 的可选请求体。

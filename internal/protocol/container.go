@@ -36,6 +36,58 @@ type PortBinding struct {
 	Protocol      string `json:"protocol"`
 }
 
+// ContainerSummary 是容器清单的一条，对应 Agent 侧 Docker Engine API
+// GET /containers/json 的原始投影。
+//
+// 定义放在 protocol 而非 dockercli：这个形状出现在 Hub↔Agent 线路上
+// （Agent 原样转发 Engine 字段，Hub 解码），两侧必须共用同一份定义，
+// 各自造 struct 必有字段悄悄对不上的一天。dockercli 保留同名别名，
+// S3.2 的既有代码零改动。
+//
+// Names 是数组（一个容器可有多个名字），取用方自己决定取哪个；
+// 本结构不做「取第一个名字」这种裁剪——那属于语义猜测。
+type ContainerSummary struct {
+	ID      string            `json:"Id"`
+	Names   []string          `json:"Names"`
+	Image   string            `json:"Image"`
+	ImageID string            `json:"ImageID"`
+	Command string            `json:"Command"`
+	Created int64             `json:"Created"`
+	State   string            `json:"State"`
+	Status  string            `json:"Status"`
+	Labels  map[string]string `json:"Labels"`
+}
+
+// ValidContainerID 判断容器 ID/名字是否合法。
+//
+// 规则与 Engine 命名规则一致：hex ID、ID 前缀与名字——
+// 首字符必须字母数字（Docker 名字即此规则，顺带拒掉 "." / ".." 这类
+// URL dot-segment，杜绝它们以路径段形态拼进 URL），其余字符
+// [a-zA-Z0-9_.-]，总长 1–128 字节，不带前导斜杠。
+// 容器 ID 会拼进 URL 路径，不校验等于给路径拼接注入开门：
+// Hub（拼转发路径前）与 Agent（拼 Engine 路径前）两侧都必须在本地过它，
+// 单点定义防止两侧字符集漂移。
+func ValidContainerID(id string) bool {
+	if id == "" || len(id) > 128 {
+		return false
+	}
+	// 首字符字母数字：Engine 规则，同时拒 dot-segment（"."/".."）。
+	first := id[0]
+	if !((first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z') || (first >= '0' && first <= '9')) {
+		return false
+	}
+	for i := 1; i < len(id); i++ {
+		ch := id[i]
+		switch {
+		case ch >= 'a' && ch <= 'z', ch >= 'A' && ch <= 'Z', ch >= '0' && ch <= '9':
+		case ch == '_' || ch == '.' || ch == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // ContainerStat 是单个容器的实时资源占用。
 //
 // 与 HostMetrics 一样只报当前值；MemUsage/MemLimit 单位 byte，

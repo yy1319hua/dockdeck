@@ -6,6 +6,7 @@
 package fakeagent
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -23,6 +24,10 @@ type Fake struct {
 	info       protocol.AgentInfo
 	metrics    *protocol.HostMetrics
 	containers []protocol.ContainerStat
+	// containerList / containerInspect 是容器读端点（S3.4）的配置响应。
+	// inspect 按 ID 取，取不到按真 Agent 的口径回 404——引擎没有这个容器。
+	containerList    []protocol.ContainerSummary
+	containerInspect map[string]json.RawMessage
 	// calls 记录每次进入业务端点的请求路径（已过鉴权），供断言「实际打到了哪」。
 	calls []string
 	// failNext 让下 N 次请求先返回给定状态码（测重试），随后恢复正常。
@@ -32,7 +37,11 @@ type Fake struct {
 
 // New 构造假 Agent，各端点响应为合理的最小样本。
 func New(token string) *Fake {
-	return &Fake{Token: token}
+	return &Fake{
+		Token:            token,
+		containerList:    []protocol.ContainerSummary{},
+		containerInspect: map[string]json.RawMessage{},
+	}
 }
 
 // SetInfo / SetMetrics / SetContainers 配置响应体。
@@ -45,6 +54,18 @@ func (f *Fake) SetMetrics(m *protocol.HostMetrics) {
 func (f *Fake) SetContainers(cs []protocol.ContainerStat) {
 	f.mu.Lock()
 	f.containers = cs
+	f.mu.Unlock()
+}
+
+// SetContainerList / SetContainerInspect 配置容器读端点（S3.4）。
+func (f *Fake) SetContainerList(cs []protocol.ContainerSummary) {
+	f.mu.Lock()
+	f.containerList = cs
+	f.mu.Unlock()
+}
+func (f *Fake) SetContainerInspect(m map[string]json.RawMessage) {
+	f.mu.Lock()
+	f.containerInspect = m
 	f.mu.Unlock()
 }
 
@@ -64,7 +85,8 @@ func (f *Fake) Calls() []string {
 	return out
 }
 
-// Handler 装配鉴权中间件 + 三个读端点。
+// Handler 装配鉴权中间件 + 读端点。
+// 读端点：info / metrics / containers-stats（S2）+ containers / containers/{id}（S3.4）。
 // 写端点不在此提供：S2 的 Agent 只有读，写语义随 S3 一并进假 Agent。
 func (f *Fake) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -74,6 +96,10 @@ func (f *Fake) Handler() http.Handler {
 	mux.Handle("/api/v1/info", authed(f.serveInfo))
 	mux.Handle("/api/v1/metrics", authed(f.serveMetrics))
 	mux.Handle("/api/v1/containers/stats", authed(f.serveContainers))
+	mux.Handle("/api/v1/containers", authed(f.serveContainerList))
+	// {id} 通配与上面的 stats 精确路径并存：Go mux 精确匹配优先，
+	// 与真 Agent 的路由优先级一致（main.go 同款注册顺序）。
+	mux.Handle("/api/v1/containers/{id}", authed(f.serveContainerInspect))
 	return mux
 }
 
@@ -131,4 +157,36 @@ func (f *Fake) serveContainers(w http.ResponseWriter, r *http.Request) {
 	cs := f.containers
 	f.mu.Unlock()
 	httpx.WriteJSON(w, http.StatusOK, cs)
+}
+
+func (f *Fake) serveContainerList(w http.ResponseWriter, r *http.Request) {
+	if done, status := f.maybeFail(r); done {
+		w.WriteHeader(status)
+		return
+	}
+	f.mu.Lock()
+	cs := f.containerList
+	f.mu.Unlock()
+	// 与真 Agent 一致：清单永不为 null（Engine 空清单是 []）。
+	if cs == nil {
+		cs = []protocol.ContainerSummary{}
+	}
+	httpx.WriteJSON(w, http.StatusOK, cs)
+}
+
+func (f *Fake) serveContainerInspect(w http.ResponseWriter, r *http.Request) {
+	if done, status := f.maybeFail(r); done {
+		w.WriteHeader(status)
+		return
+	}
+	id := r.PathValue("id")
+	f.mu.Lock()
+	raw, ok := f.containerInspect[id]
+	f.mu.Unlock()
+	if !ok {
+		httpx.WriteError(w, http.StatusNotFound, protocol.CodeNotFound, "容器不存在")
+		return
+	}
+	// 与真 Agent 一致：Engine JSON 原样进信封的 data 层，一个字段不增不减。
+	httpx.WriteJSON(w, http.StatusOK, json.RawMessage(raw))
 }

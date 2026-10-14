@@ -7,6 +7,7 @@ package fakeagent
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -71,6 +72,72 @@ func TestE2E_WrongToken(t *testing.T) {
 	}
 	if perr.Code != protocol.CodeUnauthorized {
 		t.Errorf("错误码 = %s，want %s", perr.Code, protocol.CodeUnauthorized)
+	}
+}
+
+// TestE2E_ContainerReadChain 验证容器读链路（S3.4）经真实验签中间件：
+// 清单的查询串（all）与 inspect 的路径都过 agenthttp.Auth——
+// 查询串进签名口径（CanonicalPath 含查询串）在这里被真中间件把着，
+// Calls 里能看到实际打到的路径字面。
+func TestE2E_ContainerReadChain(t *testing.T) {
+	f, c := e2eFixture(t, "secret")
+	f.SetContainerList([]protocol.ContainerSummary{
+		{ID: "c1", Names: []string{"/web"}, Image: "nginx:1.27", State: "running", Status: "Up 3 hours"},
+	})
+	f.SetContainerInspect(map[string]json.RawMessage{
+		"c1": json.RawMessage(`{"Id":"c1","Name":"/web","Config":{"Image":"nginx:1.27"}}`),
+	})
+
+	list, err := c.ContainerList(context.Background(), true)
+	if err != nil {
+		t.Fatalf("ContainerList: %v", err)
+	}
+	if len(list) != 1 || list[0].Image != "nginx:1.27" || list[0].Names[0] != "/web" {
+		t.Errorf("清单不符：%+v", list)
+	}
+
+	raw, err := c.ContainerInspect(context.Background(), "c1")
+	if err != nil {
+		t.Fatalf("ContainerInspect: %v", err)
+	}
+	if string(raw) != `{"Id":"c1","Name":"/web","Config":{"Image":"nginx:1.27"}}` {
+		t.Errorf("详情应原样透传，got %s", raw)
+	}
+
+	var sawList, sawInspect bool
+	for _, p := range f.Calls() {
+		switch p {
+		case "/api/v1/containers?all=true":
+			sawList = true
+		case "/api/v1/containers/c1":
+			sawInspect = true
+		}
+	}
+	if !sawList || !sawInspect {
+		t.Errorf("调用路径不符：%v", f.Calls())
+	}
+}
+
+// TestE2E_ContainerInspectMissing 验证不存在的容器：真 Agent 口径的 404
+// 业务错误被客户端透传，不重试也不伪装成网络故障。
+func TestE2E_ContainerInspectMissing(t *testing.T) {
+	f, c := e2eFixture(t, "secret")
+	f.SetContainerInspect(map[string]json.RawMessage{})
+	c.RetryBackoff = time.Nanosecond
+
+	_, err := c.ContainerInspect(context.Background(), "nope")
+	perr, ok := err.(*protocol.Error)
+	if !ok || perr.Code != protocol.CodeNotFound {
+		t.Fatalf("应透传 not_found，got %v", err)
+	}
+	got := 0
+	for _, p := range f.Calls() {
+		if strings.HasPrefix(p, "/api/v1/containers/nope") {
+			got++
+		}
+	}
+	if got != 1 {
+		t.Errorf("确定性 404 不应重试，实际请求 %d 次", got)
 	}
 }
 

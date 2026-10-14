@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -323,6 +324,26 @@ func TestValidFileAction(t *testing.T) {
 	for _, a := range []string{"", "rm", "MKDIR", "move", "delete "} {
 		if ValidFileAction(a) {
 			t.Errorf("%q 应判定为非法动作", a)
+		}
+	}
+}
+
+// TestValidContainerID 表驱动覆盖容器 ID 字符集：合法形态（hex ID、前缀、
+// 名字）放行，注入与畸形形态本地就拒——这个校验是 Hub/Agent 两侧
+// 拼 URL 路径前的第一道门，字符集单点定义在 protocol。
+func TestValidContainerID(t *testing.T) {
+	for _, id := range []string{"abc123def456", "abc", "my-container_1.2", "web", strings.Repeat("a", 128)} {
+		if !ValidContainerID(id) {
+			t.Errorf("%q 应判定为合法", id)
+		}
+	}
+	for _, id := range []string{
+		"", "..", ".", "a/b", "a b", "x?y=1", "../etc/passwd", "/web",
+		"a\x00b", "容器", strings.Repeat("a", 129),
+		"-dash", "_under", "...", // 首字符必须字母数字（Engine 规则 + 拒 dot-segment）
+	} {
+		if ValidContainerID(id) {
+			t.Errorf("%q 应判定为非法", id)
 		}
 	}
 }

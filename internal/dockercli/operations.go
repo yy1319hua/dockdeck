@@ -15,24 +15,14 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/yy1319hua/dockdeck/internal/protocol"
 )
 
-// idSafe 校验容器 ID/名字的合法字符。Engine 接受 hex ID、ID 前缀与名字
-// （名字含 [a-zA-Z0-9][a-zA-Z0-9_.-]）；其余一律拒，杜绝路径拼接注入。
+// idSafe 校验容器 ID/名字的合法字符。真定义在 protocol.ValidContainerID：
+// Hub 侧拼 Agent 转发路径前用同一份字符集（S3.4），两侧不容许漂移。
 func idSafe(id string) bool {
-	if id == "" || len(id) > 128 {
-		return false
-	}
-	for i := 0; i < len(id); i++ {
-		ch := id[i]
-		switch {
-		case ch >= 'a' && ch <= 'z', ch >= 'A' && ch <= 'Z', ch >= '0' && ch <= '9':
-		case ch == '_' || ch == '.' || ch == '-':
-		default:
-			return false
-		}
-	}
-	return true
+	return protocol.ValidContainerID(id)
 }
 
 // action 对容器执行无请求体的生命周期动作：start/stop/restart/pause/unpause。

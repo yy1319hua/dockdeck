@@ -141,15 +141,22 @@ func TestContainers_List(t *testing.T) {
 	}
 }
 
-// TestContainers_Inspect 验证详情原样转发（Engine 字段不增不减）。
+// TestContainers_Inspect 验证详情经信封原样转发（Engine 字段不增不减）。
+// 信封是 Hub↔Agent 的既有契约：data 层是 Engine 原样 JSON，外层不掺业务包装。
 func TestContainers_Inspect(t *testing.T) {
 	srv, _ := agentWith(t, "", "")
 	resp, body := hGET(t, srv, "/api/v1/containers/abc123def456")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("应 200，got %d：%s", resp.StatusCode, body)
 	}
-	if !json.Valid(body) || !contains(body, `"Name":"/web"`) {
-		t.Errorf("详情应原样转发：%s", body)
+	var env struct {
+		Data map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(body, &env); err != nil || env.Data["Name"] != "/web" {
+		t.Fatalf("详情应经信封原样转发：%s err=%v", body, err)
+	}
+	if !contains(body, `"Name":"/web"`) {
+		t.Errorf("Engine 原始字段应保留：%s", body)
 	}
 }
 

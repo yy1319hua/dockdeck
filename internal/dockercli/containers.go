@@ -12,22 +12,14 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+
+	"github.com/yy1319hua/dockdeck/internal/protocol"
 )
 
-// ContainerSummary 对应 GET /containers/json 的条目，按需取字段。
-// Names 是数组（一个容器可有多个名字），取用方自己决定取哪个；
-// 本包不做「取第一个名字」这种裁剪——那属于语义猜测。
-type ContainerSummary struct {
-	ID      string            `json:"Id"`
-	Names   []string          `json:"Names"`
-	Image   string            `json:"Image"`
-	ImageID string            `json:"ImageID"`
-	Command string            `json:"Command"`
-	Created int64             `json:"Created"`
-	State   string            `json:"State"`
-	Status  string            `json:"Status"`
-	Labels  map[string]string `json:"Labels"`
-}
+// ContainerSummary 是容器清单条目的类型别名，真定义在 internal/protocol：
+// 这个形状出现在 Hub↔Agent 线路上（Agent 原样转发 Engine 字段，Hub 解码），
+// 两侧共用同一份定义，各自 struct 必有字段悄悄对不上的一天。
+type ContainerSummary = protocol.ContainerSummary
 
 // List 列出容器。all=true 含已停止的。
 // 查询参数只有 all——filters 等高级功能等 UI 真需要时再加，不给攻击面留提前量。

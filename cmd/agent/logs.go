@@ -54,7 +54,7 @@ func (a *containersAPI) logs(w http.ResponseWriter, r *http.Request) {
 
 	stream, err := a.dc.Logs(r.Context(), id, o)
 	if err != nil {
-		code, msg := errToStatus(err)
+		code, msg := errToStatus(r, err)
 		httpx.WriteError(w, code, protocol.CodeUpstreamError, msg)
 		return
 	}
@@ -79,7 +79,7 @@ func (a *containersAPI) logs(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := dockercli.Demux(stream, flushWriter{w, flusher}); err != nil {
 		// 流中途断掉：状态码已发出，只能记日志。前端以连接关闭为结束信号。
-		log.Printf("agent: 日志流中断 (%s): %v", id, err)
+		log.Printf("agent: 日志流中断 (%s, %s=%q): %v", id, protocol.HeaderRequestID, r.Header.Get(protocol.HeaderRequestID), err)
 	}
 }
 

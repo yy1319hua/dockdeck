@@ -10,7 +10,9 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strconv"
 	"strings"
@@ -491,5 +493,86 @@ func TestHubContainerLogsThroughAudit(t *testing.T) {
 	rows := auditRows(t, h)
 	if len(rows) != 1 || rows[0].Action != "container.logs" || rows[0].Result != "ok" {
 		t.Errorf("日志也应落审计（流结束才落库）：%+v", rows)
+	}
+}
+
+// doHeader 与 do 相同，额外带自定义请求头（幂等键 e2e 用）。
+func (h *hub) doHeader(t *testing.T, method, path, body, bearer string, headers map[string]string) (*http.Response, []byte) {
+	t.Helper()
+	var rdr io.Reader
+	if body != "" {
+		rdr = strings.NewReader(body)
+	}
+	req := httptest.NewRequest(method, path, rdr)
+	req.Header.Set("Content-Type", "application/json")
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	w := httptest.NewRecorder()
+	h.handler.ServeHTTP(w, req)
+	resp := w.Result()
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	return resp, b
+}
+
+// TestHubContainerRequestIDKey 覆盖幂等键 X-DD-Request-Id 的端到端契约
+// （ARCHITECTURE.md「写操作全部幂等键落审计」）：
+//   - 客户端带的键：响应头回显、原样转发给 Agent、落进审计行——三处同一份值；
+//   - 不带的键：Hub 现场生成，三处仍是同一份值（对账不断链）；
+//   - 非法键：边缘 400，请求不出门（Audit 之前的拒绝，不留审计行）。
+func TestHubContainerRequestIDKey(t *testing.T) {
+	h, sid, fa := hubWithAgent(t, true)
+	tok := h.token(t, "rw", apitoken.ScopeWriteContainers)
+	spath := "/api/v1/servers/" + strconv.FormatInt(sid, 10)
+	base := spath + "/containers/abc123"
+
+	// 带键而来：三处同一份值。
+	resp, body := h.doHeader(t, http.MethodPost, base+"/stop", "", tok,
+		map[string]string{protocol.HeaderRequestID: "e2e-key-42"})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("stop 应 200，得 %d｜%s", resp.StatusCode, trim(body))
+	}
+	if got := resp.Header.Get(protocol.HeaderRequestID); got != "e2e-key-42" {
+		t.Errorf("响应头应回显客户端幂等键，得 %q", got)
+	}
+	if ids := fa.RequestIDs(); len(ids) == 0 || ids[len(ids)-1] != "e2e-key-42" {
+		t.Errorf("Agent 应收到原样转发的幂等键，得 %v", ids)
+	}
+	if rows := auditRows(t, h); len(rows) != 1 || rows[0].RequestID != "e2e-key-42" {
+		t.Errorf("审计行应记录客户端幂等键，得 %+v", rows)
+	}
+
+	// 不带键：Hub 生成，响应头/Agent/审计三处一致。
+	resp, body = h.doHeader(t, http.MethodPost, base+"/restart", "", tok, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("restart 应 200，得 %d｜%s", resp.StatusCode, trim(body))
+	}
+	gen := resp.Header.Get(protocol.HeaderRequestID)
+	if !protocol.ValidRequestID(gen) {
+		t.Errorf("缺省生成的键应合法，得 %q", gen)
+	}
+	if ids := fa.RequestIDs(); ids[len(ids)-1] != gen {
+		t.Errorf("Agent 应收到 Hub 生成的键，得 %q｜want %q", ids[len(ids)-1], gen)
+	}
+	if rows := auditRows(t, h); len(rows) != 2 || rows[0].RequestID != gen {
+		t.Errorf("审计行应记录生成的键，得 %+v", rows)
+	}
+
+	// 非法键：边缘 400 且不出门（该拒的请求不该打到 Agent）。
+	before := len(fa.Calls())
+	resp, body = h.doHeader(t, http.MethodPost, base+"/stop", "", tok,
+		map[string]string{protocol.HeaderRequestID: "bad key!"})
+	if resp.StatusCode != http.StatusBadRequest || errorCode(t, body) != protocol.CodeBadRequest {
+		t.Errorf("非法键应 400，得 %d｜%s", resp.StatusCode, trim(body))
+	}
+	if len(fa.Calls()) != before {
+		t.Error("非法键不应打到 Agent")
+	}
+	if rows := auditRows(t, h); len(rows) != 2 {
+		t.Errorf("边缘拒绝不留审计行，应仍 2 条，得 %d", len(rows))
 	}
 }

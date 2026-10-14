@@ -52,6 +52,9 @@ type Fake struct {
 	// 的选项（timeout_sec/signal/force/v）真的透传到了 Agent——
 	// 只记路径的话，「Hub 把请求体解错了字段名」这种静默丢选项无从发现。
 	bodies []string
+	// reqIDs 记录每次请求携带的 X-DD-Request-Id（与 Calls 同序，未带记空串），
+	// 供 e2e 断言 Hub 把客户端的幂等键原样转发给了 Agent。
+	reqIDs []string
 	// failNext 让下 N 次请求先返回给定状态码（测重试），随后恢复正常。
 	failNext   int
 	failStatus int
@@ -187,11 +190,22 @@ func (f *Fake) maybeFail(r *http.Request) (bool, int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, r.URL.RequestURI())
+	f.reqIDs = append(f.reqIDs, r.Header.Get(protocol.HeaderRequestID))
 	if f.failNext > 0 {
 		f.failNext--
 		return true, f.failStatus
 	}
 	return false, 0
+}
+
+// RequestIDs 返回每次请求的 X-DD-Request-Id 记录副本（与 Calls 同序；
+// 未带该头的请求记空串）。
+func (f *Fake) RequestIDs() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]string, len(f.reqIDs))
+	copy(out, f.reqIDs)
+	return out
 }
 
 func (f *Fake) serveInfo(w http.ResponseWriter, r *http.Request) {

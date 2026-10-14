@@ -9,6 +9,7 @@ import (
 
 	"github.com/yy1319hua/dockdeck/internal/crypto"
 	"github.com/yy1319hua/dockdeck/internal/httpx"
+	"github.com/yy1319hua/dockdeck/internal/protocol"
 	"github.com/yy1319hua/dockdeck/internal/store"
 )
 
@@ -47,9 +48,21 @@ func (r *StatusRecorder) Flush() {
 func (r *StatusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
 
 // RequestCtx 为每个请求注入 request id 与 client ip。
+// request id 即 ARCHITECTURE.md 承诺的幂等键 X-DD-Request-Id：
+// 规范头优先，旧头 X-Request-Id 兜底（入站兼容），都没有则现场生成。
+// 带值但形态非法 → 400：这个键要进审计、进响应头、转发给 Agent，
+// 悄悄换掉比拒掉更危险——客户端的重试关联会无声断掉。
 func RequestCtx(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id := r.Header.Get("X-Request-Id")
+		id := r.Header.Get(protocol.HeaderRequestID)
+		if id == "" {
+			id = r.Header.Get("X-Request-Id")
+		}
+		if id != "" && !protocol.ValidRequestID(id) {
+			httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest,
+				"非法的 "+protocol.HeaderRequestID+"：1-64 字符，限字母数字与 . _ -")
+			return
+		}
 		if id == "" {
 			if v, err := crypto.RandomToken(8); err == nil {
 				id = v

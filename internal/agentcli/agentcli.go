@@ -6,8 +6,9 @@
 //   - 超时分级：读（GET/HEAD）与写（其余 method）分别施加超时，写更短——
 //     Hub 对 Agent 的写操作要求快速见效，宁可失败也不挂死轮询循环；
 //   - 重试分级：读是幂等的，网络错误 / 429 / 5xx 可重试；写绝不重试——
-//     Agent 侧写操作尚无幂等去重（S3 引入 X-DD-Request-Id），盲目重试
-//     可能把一次 stop 变成两次，违反「不猜语义」红线；
+//     Agent 无状态、不做执行级去重，盲目重试可能把一次 stop 变成两次，
+//     违反「不猜语义」红线。写请求随行转发 X-DD-Request-Id 幂等键
+//     （审计关联用，见 newSignedRequest）；
 //   - /test 连通性：纳管与巡检共用，顺带报告协议版本是否兼容；
 //   - 每个请求（含读）都附 HMAC 签名：Agent 侧 Auth 中间件对全部请求强制验签。
 package agentcli
@@ -25,6 +26,7 @@ import (
 
 	"github.com/yy1319hua/dockdeck/internal/agenthttp"
 	"github.com/yy1319hua/dockdeck/internal/crypto"
+	"github.com/yy1319hua/dockdeck/internal/httpx"
 	"github.com/yy1319hua/dockdeck/internal/protocol"
 )
 
@@ -248,6 +250,13 @@ func (c *Client) newSignedRequest(ctx context.Context, method, path string, body
 	stamp := strconv.FormatInt(c.now().Unix(), 10)
 	req.Header.Set(agenthttp.HeaderTimestamp, stamp)
 	req.Header.Set(agenthttp.HeaderSignature, crypto.SignRequest([]byte(c.Token), stamp, method, agenthttp.CanonicalPath(req), body))
+	// 幂等键随行：客户端带给 Hub 的 X-DD-Request-Id 经 ctx 原样转发给 Agent，
+	// Agent 的错误日志带它落行，Hub 审计存同一份值——两端能对上同一次写操作。
+	// 该头不参与 HMAC（签名口径是 timestamp/method/URI/body），它也不是
+	// 安全凭据：Agent 不得据它做任何信任决策。
+	if id := httpx.RequestID(ctx); id != "" {
+		req.Header.Set(protocol.HeaderRequestID, id)
+	}
 	return req, nil
 }
 

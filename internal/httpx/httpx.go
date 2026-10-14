@@ -7,6 +7,8 @@ import (
 	"net"
 	"net/http"
 	"strings"
+
+	"github.com/yy1319hua/dockdeck/internal/protocol"
 )
 
 // ctxKey 是包内上下文键类型，避免与其它包碰撞。
@@ -133,6 +135,9 @@ func SecurityHeaders(next http.Handler) http.Handler {
 			"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "+
 				"img-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
 		if RequestID(r.Context()) != "" {
+			// 规范名 X-DD-Request-Id 回显幂等键；旧名 X-Request-Id 同步保留，
+			// 过渡期内两种客户端都能对上（入站两者都认，见 middleware.RequestCtx）。
+			h.Set(protocol.HeaderRequestID, RequestID(r.Context()))
 			h.Set("X-Request-Id", RequestID(r.Context()))
 		}
 		next.ServeHTTP(w, r)

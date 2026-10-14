@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yy1319hua/dockdeck/internal/httpx"
 	"github.com/yy1319hua/dockdeck/internal/protocol"
 )
 
@@ -227,5 +228,36 @@ func TestRetryableStatus(t *testing.T) {
 		if got := retryableStatus(code); got != want {
 			t.Errorf("retryableStatus(%d) = %v，want %v", code, got, want)
 		}
+	}
+}
+
+// TestClientForwardsRequestID 验证幂等键随行转发：ctx 里带的
+// X-DD-Request-Id 必须出现在发往 Agent 的请求头上——Hub 审计里存着
+// 同一份值，Agent 错误日志也落它，三处靠这个头对账；ctx 没有键时
+// 不白发这个头（发了空串反而干扰 Agent 侧判断「带没带」）。
+func TestClientForwardsRequestID(t *testing.T) {
+	var got string
+	var had bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get(protocol.HeaderRequestID)
+		had = len(r.Header.Values(protocol.HeaderRequestID)) > 0
+		writeEnvelope(w, http.StatusOK, map[string]any{"ok": true})
+	}))
+	defer srv.Close()
+	c := quickClient(srv)
+
+	ctx := httpx.WithRequestID(context.Background(), "e2e-key-42")
+	if err := c.ContainerStart(ctx, "c1"); err != nil {
+		t.Fatalf("应成功：%v", err)
+	}
+	if got != "e2e-key-42" {
+		t.Errorf("Agent 应收到转发的幂等键，得 %q", got)
+	}
+
+	if err := c.ContainerStart(context.Background(), "c1"); err != nil {
+		t.Fatalf("应成功：%v", err)
+	}
+	if had {
+		t.Error("ctx 无键时不应发 X-DD-Request-Id 头")
 	}
 }

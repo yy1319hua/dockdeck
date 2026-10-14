@@ -403,7 +403,11 @@ func (s *server) spec() *openapi.Doc {
 			"Token 权限由签发时勾选的 scope 决定，scope 不足返回 403；" +
 			"登录、改密、Token 管理等端点仅会话可用，Token 调用一律 401。\n\n" +
 			"**响应信封**：成功 `{\"data\":…}`，失败 `{\"error\":{\"code\",\"message\"}}`。" +
-			"客户端请判 `code` 而非中文文案。",
+			"客户端请判 `code` 而非中文文案。\n\n" +
+			"**幂等键 `X-DD-Request-Id`**：所有端点接受可选请求头 `X-DD-Request-Id`" +
+			"（1-64 字符，限字母数字与 `._-`，非法值 400）。缺省时 Hub 现场生成，" +
+			"响应头原样回显。写操作将该键落入审计并转发给 Agent——它用于审计关联与" +
+			"排查对账，不做执行级去重（Agent 无状态、写操作不重试）。",
 		License: &openapi.License{
 			Name: "PolyForm Noncommercial License 1.0.0",
 			URL:  "https://polyformproject.org/licenses/noncommercial/1.0.0",

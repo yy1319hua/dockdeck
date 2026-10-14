@@ -65,7 +65,9 @@ func (a *containersAPI) guardWrite(w http.ResponseWriter, id string) bool {
 
 // errToStatus 把 dockercli 的错误映射到 HTTP 状态码。
 // 文案里带 Engine 的原始片段（截断过），排查时能看到 Docker 说了什么。
-func errToStatus(err error) (int, string) {
+// 引擎错误同时落日志，带上 X-DD-Request-Id 幂等键——Hub 审计里存着同一份值，
+// 两端日志能对上同一次写操作（键由 Hub 转发而来，Agent 不信任它做任何决策）。
+func errToStatus(r *http.Request, err error) (int, string) {
 	msg := err.Error()
 	switch {
 	case strings.Contains(msg, "不存在 (404)"):
@@ -75,7 +77,7 @@ func errToStatus(err error) (int, string) {
 	case strings.Contains(msg, "非法容器标识") || strings.Contains(msg, "不允许的信号"):
 		return http.StatusBadRequest, msg
 	default:
-		log.Printf("agent: 容器操作引擎错误: %v", err)
+		log.Printf("agent: 容器操作引擎错误 (%s=%q): %v", protocol.HeaderRequestID, r.Header.Get(protocol.HeaderRequestID), err)
 		return http.StatusBadGateway, "Docker 引擎请求失败"
 	}
 }
@@ -85,7 +87,7 @@ func (a *containersAPI) list(w http.ResponseWriter, r *http.Request) {
 	all := r.URL.Query().Get("all") == "true"
 	out, err := a.dc.List(r.Context(), all)
 	if err != nil {
-		code, msg := errToStatus(err)
+		code, msg := errToStatus(r, err)
 		httpx.WriteError(w, code, protocol.CodeUpstreamError, msg)
 		return
 	}
@@ -98,7 +100,7 @@ func (a *containersAPI) list(w http.ResponseWriter, r *http.Request) {
 func (a *containersAPI) inspect(w http.ResponseWriter, r *http.Request) {
 	raw, err := a.dc.Inspect(r.Context(), r.PathValue("id"))
 	if err != nil {
-		code, msg := errToStatus(err)
+		code, msg := errToStatus(r, err)
 		httpx.WriteError(w, code, protocol.CodeUpstreamError, msg)
 		return
 	}
@@ -155,7 +157,7 @@ func (a *containersAPI) action(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusNotFound, protocol.CodeNotFound, "未知操作")
 		return
 	}
-	writeAction(w, err)
+	writeAction(w, r, err)
 }
 
 // removeBody 是 DELETE 的可选请求体（force/v 也可以走查询串，二者取并集）。
@@ -181,15 +183,16 @@ func (a *containersAPI) remove(w http.ResponseWriter, r *http.Request) {
 	}
 	force := b.Force || r.URL.Query().Get("force") == "1"
 	volumes := b.Volumes || r.URL.Query().Get("v") == "1"
-	writeAction(w, a.dc.Remove(r.Context(), id, force, volumes))
+	writeAction(w, r, a.dc.Remove(r.Context(), id, force, volumes))
 }
 
-// writeAction 统一写操作的成功/失败响应。
-func writeAction(w http.ResponseWriter, err error) {
+// writeAction 统一写操作的成功/失败响应。带 r 是为了让引擎错误日志
+// 落上 X-DD-Request-Id 幂等键（errToStatus 内使用）。
+func writeAction(w http.ResponseWriter, r *http.Request, err error) {
 	if err == nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 		return
 	}
-	code, msg := errToStatus(err)
+	code, msg := errToStatus(r, err)
 	httpx.WriteError(w, code, protocol.CodeUpstreamError, msg)
 }

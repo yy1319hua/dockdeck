@@ -5,7 +5,12 @@ package middleware
 import (
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
+
+	"github.com/yy1319hua/dockdeck/internal/httpx"
+	"github.com/yy1319hua/dockdeck/internal/protocol"
 )
 
 // flushGate 是一个「Flush 之前数据不上线」的假 ResponseWriter，
@@ -88,4 +93,97 @@ func TestServerIDFromPath(t *testing.T) {
 			t.Errorf("id=%q 应得 %d，got %d", c.id, c.want, got)
 		}
 	}
+}
+
+// TestRequestCtxAdoptsIdempotencyKey 覆盖幂等键 X-DD-Request-Id 的采纳规则
+// （ARCHITECTURE.md「写操作全部幂等键落审计」的入口）：
+//   - 规范头优先，旧头 X-Request-Id 兜底（入站兼容）；
+//   - 带值但形态非法 → 400 且不放行——悄悄换掉比拒掉更危险，
+//     客户端的重试关联会无声断掉；
+//   - 缺省现场生成，形态合法；
+//   - 响应头回显规范名（SecurityHeaders 与 RequestCtx 同序装配，
+//     与 main.go 真实链路一致）。
+func TestRequestCtxAdoptsIdempotencyKey(t *testing.T) {
+	build := func() (http.Handler, *string) {
+		var seen string
+		next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			seen = httpx.RequestID(r.Context())
+		})
+		return RequestCtx(httpx.SecurityHeaders(next)), &seen
+	}
+
+	call := func(h http.Handler, headers map[string]string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+
+	t.Run("规范头采纳并回显", func(t *testing.T) {
+		h, seen := build()
+		rec := call(h, map[string]string{protocol.HeaderRequestID: "e2e-key-42"})
+		if *seen != "e2e-key-42" {
+			t.Errorf("ctx 应采纳规范头，得 %q", *seen)
+		}
+		if got := rec.Header().Get(protocol.HeaderRequestID); got != "e2e-key-42" {
+			t.Errorf("响应头应回显规范名，得 %q", got)
+		}
+		if got := rec.Header().Get("X-Request-Id"); got != "e2e-key-42" {
+			t.Errorf("旧名响应头过渡期内应同步回显，得 %q", got)
+		}
+	})
+
+	t.Run("旧头兜底", func(t *testing.T) {
+		h, seen := build()
+		rec := call(h, map[string]string{"X-Request-Id": "legacy-7"})
+		if *seen != "legacy-7" {
+			t.Errorf("ctx 应兜底采纳旧头，得 %q", *seen)
+		}
+		if got := rec.Header().Get(protocol.HeaderRequestID); got != "legacy-7" {
+			t.Errorf("响应头应回显规范名，得 %q", got)
+		}
+	})
+
+	t.Run("规范头优先于旧头", func(t *testing.T) {
+		h, seen := build()
+		call(h, map[string]string{
+			protocol.HeaderRequestID: "canonical-1",
+			"X-Request-Id":           "legacy-2",
+		})
+		if *seen != "canonical-1" {
+			t.Errorf("两个头都在时应取规范头，得 %q", *seen)
+		}
+	})
+
+	// 非法值一律 400 且不碰 next——该拒的请求不该放行，
+	// 更不该被静默替换成合法值（那会让客户端的重试关联无声断掉）。
+	for _, bad := range []string{"bad key", "bad!", "键", "a\r\nX-Evil: 1", strings.Repeat("x", 65)} {
+		t.Run("非法值拒绝 "+strconv.Quote(bad), func(t *testing.T) {
+			h, seen := build()
+			rec := call(h, map[string]string{protocol.HeaderRequestID: bad})
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf("非法键应 400，得 %d", rec.Code)
+			}
+			if *seen != "" {
+				t.Errorf("非法键不应放行到 next，ctx 却拿了 %q", *seen)
+			}
+		})
+	}
+
+	t.Run("缺省现场生成", func(t *testing.T) {
+		h, seen := build()
+		rec := call(h, nil)
+		if *seen == "" {
+			t.Fatal("缺省应生成幂等键")
+		}
+		if !protocol.ValidRequestID(*seen) {
+			t.Errorf("生成的键应合法，得 %q", *seen)
+		}
+		if got := rec.Header().Get(protocol.HeaderRequestID); got != *seen {
+			t.Errorf("响应头应回显生成的键，得 %q｜want %q", got, *seen)
+		}
+	})
 }

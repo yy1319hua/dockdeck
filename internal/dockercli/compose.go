@@ -60,6 +60,19 @@ func (execComposeRunner) Streamed(ctx context.Context, args ...string) (io.ReadC
 	return stdout, nil
 }
 
+// ComposeOperator 是 Agent 端点依赖的抽象——真实实现是 ComposeClient（exec
+// `docker compose`），单测里换成假实现。把接口定义在 dockercli 让两侧共用，
+// Agent 不感知 exec 细节，只认这组方法。
+type ComposeOperator interface {
+	ListProjects(ctx context.Context) ([]protocol.ComposeProject, error)
+	ResolveProject(ctx context.Context, name string) (protocol.ComposeProject, bool)
+	Up(ctx context.Context, file string) (string, error)
+	Down(ctx context.Context, file string) (string, error)
+	Restart(ctx context.Context, file string) (string, error)
+	Pull(ctx context.Context, file string) (string, error)
+	Logs(ctx context.Context, file string, follow bool) (io.ReadCloser, error)
+}
+
 // ComposeClient 操作白名单目录内的 compose 项目。
 type ComposeClient struct {
 	dirs   []string

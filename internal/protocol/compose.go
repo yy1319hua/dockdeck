@@ -46,3 +46,10 @@ func ValidComposeAction(a string) bool {
 		return false
 	}
 }
+
+// ComposeActionResult 是写动作（up/down/restart/pull）的响应。Output 直接
+// 透传 compose 的原生输出（stdout+stderr 合流），Hub 层原样给前端展示，
+// 不另造文案——compose 的业务成败写在 Output 里。
+type ComposeActionResult struct {
+	Output string `json:"output"`
+}

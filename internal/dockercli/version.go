@@ -7,9 +7,9 @@ import "context"
 // Version 对应 GET /version 的响应。只取面板用得到的字段，多余字段忽略——
 // Engine 的返回一直在膨胀，按需声明可避免「新字段导致解码失败」这类脆断。
 type Version struct {
-	Version       string `json:"Version"`        // Docker 版本，如 29.1.3
-	APIVersion    string `json:"ApiVersion"`     // API 版本
-	MinAPIVersion string `json:"MinAPIVersion"`  // 服务器仍兼容的最老 API 版本
+	Version       string `json:"Version"`       // Docker 版本，如 29.1.3
+	APIVersion    string `json:"ApiVersion"`    // API 版本
+	MinAPIVersion string `json:"MinAPIVersion"` // 服务器仍兼容的最老 API 版本
 	GitCommit     string `json:"GitCommit"`
 	GoVersion     string `json:"GoVersion"`
 	Os            string `json:"Os"`

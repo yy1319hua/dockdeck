@@ -54,6 +54,11 @@ type Fake struct {
 	composeList   []protocol.ComposeProject
 	composeAction protocol.ComposeActionResult
 	composeLogs   string
+	// composeFile / composeFileDiff / composeFileWritten 是 Compose 文件端点
+	// （S4.3）的配置响应：GET 读、POST diff 预览、PUT 写（返回备份路径）。
+	composeFile        protocol.ComposeFile
+	composeFileDiff    protocol.ComposeFileDiff
+	composeFileWritten protocol.ComposeFileWritten
 	// calls 记录每次进入业务端点的请求路径（已过鉴权），供断言「实际打到了哪」。
 	calls []string
 	// bodies 记录写端点的请求体（成功路径），供 e2e 断言 stop/kill/remove
@@ -130,6 +135,24 @@ func (f *Fake) SetComposeAction(r protocol.ComposeActionResult) {
 func (f *Fake) SetComposeLogs(body string) {
 	f.mu.Lock()
 	f.composeLogs = body
+	f.mu.Unlock()
+}
+
+// SetComposeFile / SetComposeFileDiff / SetComposeFileWritten 配置 Compose
+// 文件端点（S4.3）响应。
+func (f *Fake) SetComposeFile(v protocol.ComposeFile) {
+	f.mu.Lock()
+	f.composeFile = v
+	f.mu.Unlock()
+}
+func (f *Fake) SetComposeFileDiff(v protocol.ComposeFileDiff) {
+	f.mu.Lock()
+	f.composeFileDiff = v
+	f.mu.Unlock()
+}
+func (f *Fake) SetComposeFileWritten(v protocol.ComposeFileWritten) {
+	f.mu.Lock()
+	f.composeFileWritten = v
 	f.mu.Unlock()
 }
 
@@ -211,6 +234,11 @@ func (f *Fake) Handler() http.Handler {
 	mux.Handle("GET /api/v1/compose", authed(f.serveComposeList))
 	mux.Handle("POST /api/v1/compose/{project}/{action}", authed(f.serveComposeAction))
 	mux.Handle("GET /api/v1/compose/{project}/logs", authed(f.serveComposeLogs))
+	// ---- Compose 文件端点（S4.3）：GET 读、POST diff、PUT 写。file/diff 是字面量段，
+	// 比 POST 的 {action} 通配更具体，与真 Agent 一样按最具体优先匹配。----
+	mux.Handle("GET /api/v1/compose/{project}/file", authed(f.serveComposeFileGet))
+	mux.Handle("POST /api/v1/compose/{project}/diff", authed(f.serveComposeFileDiff))
+	mux.Handle("PUT /api/v1/compose/{project}/file", authed(f.serveComposeFilePut))
 	return mux
 }
 
@@ -550,6 +578,51 @@ func (f *Fake) serveComposeLogs(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	io.WriteString(w, body)
+}
+
+// ---- Compose 文件端点（S4.3）——与真 Agent 同款：走信封 JSON，body 非法即 400 ----
+
+func (f *Fake) serveComposeFileGet(w http.ResponseWriter, r *http.Request) {
+	if done, status := f.maybeFail(r); done {
+		w.WriteHeader(status)
+		return
+	}
+	f.mu.Lock()
+	res := f.composeFile
+	f.mu.Unlock()
+	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+func (f *Fake) serveComposeFileDiff(w http.ResponseWriter, r *http.Request) {
+	if done, status := f.maybeFail(r); done {
+		w.WriteHeader(status)
+		return
+	}
+	var req protocol.ComposeFileUpdate
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, "请求体不合法: "+err.Error())
+		return
+	}
+	f.mu.Lock()
+	res := f.composeFileDiff
+	f.mu.Unlock()
+	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+func (f *Fake) serveComposeFilePut(w http.ResponseWriter, r *http.Request) {
+	if done, status := f.maybeFail(r); done {
+		w.WriteHeader(status)
+		return
+	}
+	var req protocol.ComposeFileUpdate
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, "请求体不合法: "+err.Error())
+		return
+	}
+	f.mu.Lock()
+	res := f.composeFileWritten
+	f.mu.Unlock()
+	httpx.WriteJSON(w, http.StatusOK, res)
 }
 
 // SetImageList / SetPullResult / SetPruneResult 配置镜像端点（S4.1）响应。

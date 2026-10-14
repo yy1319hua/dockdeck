@@ -328,3 +328,38 @@ func TestE2E_LogsExport(t *testing.T) {
 		t.Errorf("export 响应头不符：%+v", s)
 	}
 }
+
+// TestE2E_ComposeFileChain 验证 Compose 文件三端点端到端（S4.3）：agentcli →
+// 真实鉴权与自签 TLS → fakeagent 路由（GET 读 / POST diff / PUT 写）→ 信封往返。
+// 重点在路由真的挂上了、方法与路径与真 Agent 一字不差。
+func TestE2E_ComposeFileChain(t *testing.T) {
+	f, c := e2eFixture(t, "secret")
+	const cfg = "/opt/watchtower/docker-compose.yml"
+	f.SetComposeFile(protocol.ComposeFile{ConfigFile: cfg, Content: "services:\n  watchtower:\n"})
+	f.SetComposeFileDiff(protocol.ComposeFileDiff{Diff: "@@ -1,1 +1,1 @@\n-a\n+b\n"})
+	f.SetComposeFileWritten(protocol.ComposeFileWritten{BackupFile: cfg + ".bak.2026-10-15T01:00:00+08:00"})
+
+	got, err := c.ComposeFileGet(context.Background(), "watchtower")
+	if err != nil {
+		t.Fatalf("ComposeFileGet: %v", err)
+	}
+	if got.ConfigFile != cfg || got.Content != "services:\n  watchtower:\n" {
+		t.Errorf("ComposeFileGet 不符：%+v", got)
+	}
+
+	d, err := c.ComposeFileDiff(context.Background(), "watchtower", "b\n")
+	if err != nil {
+		t.Fatalf("ComposeFileDiff: %v", err)
+	}
+	if d.Diff != "@@ -1,1 +1,1 @@\n-a\n+b\n" {
+		t.Errorf("ComposeFileDiff 不符：%q", d.Diff)
+	}
+
+	w, err := c.ComposeFilePut(context.Background(), "watchtower", "b\n")
+	if err != nil {
+		t.Fatalf("ComposeFilePut: %v", err)
+	}
+	if w.BackupFile != cfg+".bak.2026-10-15T01:00:00+08:00" {
+		t.Errorf("ComposeFilePut 不符：%q", w.BackupFile)
+	}
+}

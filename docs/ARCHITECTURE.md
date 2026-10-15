@@ -304,6 +304,9 @@ Vue 3 + Vite + TS，`vue-router` + `pinia`，图表 uPlot，无重型 UI 框架�
 | 鉴权闭环 | `GET /auth/me` 是唯一事实来源（未登录也 200，靠 `setup_required` 区分该建号还是该登录）；会话由 Hub cookie 持有，前端**不落 localStorage**。守卫顺序：先探测 → 建号优先 → 登录兜底；**探测失败只报错不重定向**；`/login`、`/setup` 必须公开，否则自重定向成环 |
 | 布局 | 主界面由 `AppShell` / `AppSidebar` / `AppTopbar` 三件套承载。**套壳与否取决于路由层级，不是 CSS 开关**：`/` 及其子路由的父组件是 AppShell，`/login`·`/setup` 是顶层裸路由（居中单卡）——改布局时改路由结构，不要在 `App.vue` 里堆 if。响应式**先定手机**：`<1024px` 侧栏为 fixed 抽屉 + 遮罩（点遮罩 / Esc / 路由切换即关），`≥1024px` 才常驻成网格列并可折叠成图标条。`sidebarOpen`（抽屉）与 `sidebarCollapsed`（折叠）是两个独立状态：前者随路由关闭，后者是长期偏好，**路由切换不得重置** |
 | 导航与图标 | 侧栏菜单单一数据源 `src/config/nav.ts`：无 `to` 的项渲染为置灰不可点并带「待实现」，让布局先于功能页定型，S7 只需往里填页面。图标一律走 `AppIcon`（自制 24×24 描边 path，**不引图标库**），与「无重型 UI 框架」同一原则 |
+| 表单控件 | `src/styles/forms.css` 提供 `.field` / `.field__input` / `.btn` / `.btn--primary` / `.card` 等基础块，**任何页面写表单都用它们**，不得各写各的输入框——S7 设置页（改密、保护名单、API Token）全是表单，不统一迟早长出几种不一样的输入框 |
+| 认证错误语义 | 登录失败后端**统一回 `invalid_credentials`**（「用户不存在」与「口令错」刻意不区分，避免泄漏用户名是否存在），前端**不得**自作主张提示「用户名不存在」；`account_locked`(429)、`account_disabled`(403)、`already_initialized`(409) 的语义由后端 message 直接呈现。建号唯一硬规则是口令 ≥ 8 位（后端 `weak_password`），前端先拦一次省往返，后端仍复查 |
+| 跳转安全 | 登录后 `redirect` 参数**只接受站内路径**：必须以单个 `/` 开头且不以 `//` 开头——后者是协议相对地址，会把用户送到外站（开放重定向） |
 
 ## 构建与交付
 

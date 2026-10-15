@@ -6,7 +6,8 @@
 
 # 前端
 web/node_modules/
-web/dist/
+# 只排除 dist 下的内容、不排除 dist 目录本身：目录本身要留给 .gitkeep（见下）。
+web/dist/**
 web/.vite/
 web/coverage/
 
@@ -16,8 +17,11 @@ web/coverage/
 coverage.*
 vendor/
 
-# 内嵌占位：web/dist 由前端构建生成，不入库（避免与源码冲突）
-# 但 go:embed 需要目录存在，故保留 .gitkeep
+# 内嵌占位：web/dist 由前端构建生成，构建产物不入库（避免与源码冲突）。
+# 但 go:embed 要求该目录在编译期就存在，故让 dist 目录本身留在库中，只装一个 .gitkeep。
+# ⚠️ 上面对应的排除项必须写成 web/dist/** 而非 web/dist/：
+#    父目录被整目录排除后 Git 不再递归进去，其下的 ! 反选规则会全部失效——
+#    这正是 2026-10-15 记录的 GAP-8（表现：.gitkeep 从未入库，fresh clone 没有 web/dist）。
 !web/dist/.gitkeep
 
 # 运行时数据与凭据——绝不入库

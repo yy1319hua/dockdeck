@@ -12,7 +12,9 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "typecheck": "vue-tsc --noEmit"
+    "typecheck": "vue-tsc --noEmit",
+    "//postbuild": "vite build 的 emptyOutDir 会清空整个 dist（含 .gitkeep），构建后必须补回——否则 go:embed 依赖的目录占位会丢失，且会让 .gitkeep 在工作区反复显示成被删除（见 `docs/ARCHITECTURE.md`「构建与交付」）。",
+    "postbuild": "touch dist/.gitkeep"
   },
   "dependencies": {
     "pinia": "^4.1.0",

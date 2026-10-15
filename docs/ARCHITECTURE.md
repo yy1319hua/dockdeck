@@ -299,6 +299,9 @@ Vue 3 + Vite + TS，`vue-router` + `pinia`，图表 uPlot，无重型 UI 框架�
 | 开发期联调 | dev server 把 `/api` 反代到本机 Hub（`secure:false` 接受自签 TLS）；**该开关只存在于开发配置**，生产由 Hub 同源提供 SPA 与 `/api`，不经代理 |
 | 产物入库 | `web/dist` **不入库**（构建产物），`package-lock.json` **必须入库**（锁版本，防依赖漂移）。fresh clone 无 `web/dist` 目录，见 `docs/ARCHITECTURE.md`「构建与交付」——S6.5 接线前须先处置 |
 | Hub 侧接入 | `cmd/hub/main.go` 的 `/` catch-all 已是「非 `/api/` 前缀交静态资源、未命中回落 `index.html`」的 SPA 兜底，前端接入时 Go 侧**零改动** |
+| 请求层 | **零依赖 `fetch`**（`src/api/client.ts`），不引 axios：需求只到「同源 JSON + 会话 cookie」。**不得带 Bearer 头、不得改 credentials**——ARCHITECTURE 既定：会话不识别 Bearer，且 API Token 不能访问 UI 专属端点；同源由部署保证（生产 Hub 同源，开发期 vite 反代） |
+| 错误语义 | 失败一律 `{"error":{code,message}}`，前端归一为 `ApiError{status,code,message}`；**按 code（`protocol.Code*`）而非 HTTP 状态码判定处置**——`unauthorized`(401) 才引导重新登录，`forbidden`(403) 是权限问题不该踢人，`rate_limited`(429) 只需重试 |
+| 鉴权闭环 | `GET /auth/me` 是唯一事实来源（未登录也 200，靠 `setup_required` 区分该建号还是该登录）；会话由 Hub cookie 持有，前端**不落 localStorage**。守卫顺序：先探测 → 建号优先 → 登录兜底；**探测失败只报错不重定向**；`/login`、`/setup` 必须公开，否则自重定向成环 |
 
 ## 构建与交付
 

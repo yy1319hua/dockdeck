@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -184,5 +185,141 @@ func TestLoadAgent_DiskMounts(t *testing.T) {
 	}
 	if len(def.DiskMounts) != 1 || def.DiskMounts[0] != "/" {
 		t.Errorf("默认 DiskMounts = %v，want [/]", def.DiskMounts)
+	}
+}
+
+// clearFsEnv 清空文件管理相关环境变量，避免宿主/CI 环境串味。
+func clearFsEnv(t *testing.T) {
+	t.Helper()
+	for _, k := range []string{
+		"DD_AGENT_FS_ROOTS", "DD_AGENT_FS_MAX_FILE", "DD_AGENT_FS_MAX_DEPTH",
+		"DD_AGENT_FS_MAX_ENTRIES", "DD_AGENT_FS_DENY",
+	} {
+		t.Setenv(k, "")
+	}
+}
+
+// 未配 --fs-root 时模块必须整体关闭（FsRoots 空 → cmd/agent 不注册路由），
+// 但上限与黑名单仍要有默认值——它们是「万一配了根目录」时的兜底。
+func TestLoadAgent_FsDefaults(t *testing.T) {
+	clearFsEnv(t)
+	t.Setenv("DD_AGENT_TOKEN", "tok")
+	c, err := LoadAgent(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.FsRoots) != 0 {
+		t.Errorf("未配置时 FsRoots 应为空（模块关闭），got %v", c.FsRoots)
+	}
+	if c.FsMaxFile != DefaultFsMaxFile || c.FsMaxDepth != DefaultFsMaxDepth || c.FsMaxEntries != DefaultFsMaxEntries {
+		t.Errorf("上限默认值不对：file=%d depth=%d entries=%d",
+			c.FsMaxFile, c.FsMaxDepth, c.FsMaxEntries)
+	}
+	// 默认黑名单必须在：配置为空不能变成「谁都能读私钥」。
+	for _, want := range []string{"id_rsa", "*.key", ".env", ".ssh", "master.key"} {
+		if !slices.Contains(c.FsDeny, want) {
+			t.Errorf("默认黑名单缺少 %q，got %v", want, c.FsDeny)
+		}
+	}
+}
+
+func TestLoadAgent_FsRootsAndLimits(t *testing.T) {
+	clearFsEnv(t)
+	t.Setenv("DD_AGENT_TOKEN", "tok")
+	c, err := LoadAgent([]string{
+		"-fs-root", "/data/,/srv/www/",
+		"-fs-max-file", "1048576",
+		"-fs-max-depth", "3",
+		"-fs-max-entries", "50",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 根目录要 Clean 到规范形态：前缀比对依赖它，留着尾斜杠会让边界判定出错。
+	want := []string{"/data", "/srv/www"}
+	if !slices.Equal(c.FsRoots, want) {
+		t.Errorf("FsRoots = %v，want %v", c.FsRoots, want)
+	}
+	if c.FsMaxFile != 1048576 || c.FsMaxDepth != 3 || c.FsMaxEntries != 50 {
+		t.Errorf("上限未生效：file=%d depth=%d entries=%d", c.FsMaxFile, c.FsMaxDepth, c.FsMaxEntries)
+	}
+}
+
+func TestLoadAgent_FsRootsRequireAbsolutePath(t *testing.T) {
+	clearFsEnv(t)
+	t.Setenv("DD_AGENT_TOKEN", "tok")
+	for _, bad := range []string{"data", "./data", "../data", "data/sub"} {
+		if _, err := LoadAgent([]string{"-fs-root", bad}); err == nil {
+			t.Errorf("相对路径根 %q 应被拒绝（绝对路径是前缀比对的前提）", bad)
+		}
+	}
+}
+
+func TestLoadAgent_FsDenyOnlyAppends(t *testing.T) {
+	clearFsEnv(t)
+	t.Setenv("DD_AGENT_TOKEN", "tok")
+	c, err := LoadAgent([]string{"-fs-deny", "*.log,/var/lib/secret.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"*.log", "/var/lib/secret.txt"} {
+		if !slices.Contains(c.FsDeny, want) {
+			t.Errorf("追加的 pattern %q 未生效，got %v", want, c.FsDeny)
+		}
+	}
+	// 关键断言：追加配置不能把默认保护挤掉。
+	for _, want := range []string{"id_rsa", "*.key", ".env", ".ssh"} {
+		if !slices.Contains(c.FsDeny, want) {
+			t.Errorf("追加后默认 pattern %q 丢失，got %v", want, c.FsDeny)
+		}
+	}
+}
+
+func TestLoadAgent_FsLimitsRejectNonPositive(t *testing.T) {
+	clearFsEnv(t)
+	t.Setenv("DD_AGENT_TOKEN", "tok")
+	cases := [][]string{
+		{"-fs-max-file", "0"},
+		{"-fs-max-file", "-1"},
+		{"-fs-max-depth", "0"},
+		{"-fs-max-entries", "-5"},
+		{"-fs-max-entries", "abc"},
+	}
+	for _, args := range cases {
+		if _, err := LoadAgent(args); err == nil {
+			t.Errorf("%v 应被拒绝：上限必须为正整数", args)
+		}
+	}
+}
+
+func TestLoadAgent_FsEnv(t *testing.T) {
+	clearFsEnv(t)
+	t.Setenv("DD_AGENT_TOKEN", "tok")
+	t.Setenv("DD_AGENT_FS_ROOTS", "/srv/data, /srv/backup")
+	t.Setenv("DD_AGENT_FS_MAX_FILE", "2048")
+	t.Setenv("DD_AGENT_FS_MAX_DEPTH", "2")
+	t.Setenv("DD_AGENT_FS_MAX_ENTRIES", "10")
+	t.Setenv("DD_AGENT_FS_DENY", "*.bak")
+	c, err := LoadAgent(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(c.FsRoots, []string{"/srv/data", "/srv/backup"}) {
+		t.Errorf("FsRoots = %v", c.FsRoots)
+	}
+	if c.FsMaxFile != 2048 || c.FsMaxDepth != 2 || c.FsMaxEntries != 10 {
+		t.Errorf("环境变量上限未生效：file=%d depth=%d entries=%d", c.FsMaxFile, c.FsMaxDepth, c.FsMaxEntries)
+	}
+	if !slices.Contains(c.FsDeny, "*.bak") || !slices.Contains(c.FsDeny, "id_rsa") {
+		t.Errorf("FsDeny = %v，应含 *.bak 与默认 id_rsa", c.FsDeny)
+	}
+}
+
+func TestLoadAgent_FsEnvRejectsBadLimit(t *testing.T) {
+	clearFsEnv(t)
+	t.Setenv("DD_AGENT_TOKEN", "tok")
+	t.Setenv("DD_AGENT_FS_MAX_FILE", "0")
+	if _, err := LoadAgent(nil); err == nil {
+		t.Error("环境变量给了非正上限应报错")
 	}
 }

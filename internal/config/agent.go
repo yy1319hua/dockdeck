@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -17,6 +18,41 @@ import (
 // 用户后续可能纳入 WireGuard、ZeroTier 或纯局域网机器，届时用 --bind-ifaces
 // 或 --allow-cidr 追加即可，无需改代码。
 const DefaultBindIfaces = "tailscale0"
+
+// 文件管理模块的默认上限。
+//
+// 三个上限都可配，但都必须有默认值：文件管理是写能力，默认值要能兜住
+// 「没配也不出事」——单文件过大、目录过深、目录内条目过多，
+// 任一失控都会把 Agent 的内存或宿主机带宽吃掉。
+const (
+	// DefaultFsMaxFile 是单文件读写上限（字节）。读超限截断并标记，
+	// 写超限直接 413，不落半个文件。
+	DefaultFsMaxFile = 16 << 20
+	// DefaultFsMaxDepth 是相对白名单根的目录深度上限，根的直接子项为 1 层。
+	DefaultFsMaxDepth = 8
+	// DefaultFsMaxEntries 是单次目录列表返回的条目上限。
+	DefaultFsMaxEntries = 2000
+)
+
+// DefaultFsDeny 是敏感文件黑名单的内置默认值。
+//
+// 配置只能往它上面追加，删不掉——把默认保护做成「可被一个参数关掉」，
+// 等于给它留了后门。
+//
+// 匹配语义（由 internal/fsapi 实现）：
+//   - 对路径的每一级名字做 path.Match，任一命中即拒——故 ".env" 在任何层级都失效；
+//   - 对相对根的完整路径再做一次 path.Match——带 "/" 的模式（如 "etc/shadow"）由此生效。
+//
+// 判据是「宁可多拦」：漏拦一次私钥的代价，远大于多拦一个同名文件。
+var DefaultFsDeny = []string{
+	"id_rsa", "id_rsa.*", "id_ed25519", "id_ed25519.*", "id_ecdsa", "id_ecdsa.*",
+	"*.pem", "*.key", "*.p12", "*.pfx",
+	"*credential*", "*secret*", "*.token",
+	".env", ".env.*", ".netrc", ".pgpass",
+	"shadow", "shadow-", "gshadow", "passwd",
+	"master.key", "authorized_keys",
+	".ssh", ".aws", ".gnupg", ".git-credentials", ".docker/config.json",
+}
 
 // AgentConfig 是 Agent 的运行期配置。
 type AgentConfig struct {
@@ -48,6 +84,20 @@ type AgentConfig struct {
 	// compose 文件才会被列举与操作。空 = Compose 功能关闭（list 永远空）。
 	// 安全边界：路径穿越在 resolveProject 入口被挡，绝不出白名单。
 	ComposeDirs []string
+	// FsRoots 是文件管理模块的根白名单目录（可多个，绝对路径）。
+	// 空 = 模块关闭：cmd/agent 不注册任何 /files 路由，功能在网络层就不存在
+	// （红线「未配 --fs-root 时该模块不注册路由」）。
+	// 安全边界：所有路径先 realpath 解引用再做前缀比对，绝不出白名单。
+	FsRoots []string
+	// FsMaxFile 是单文件读写上限（字节）。
+	FsMaxFile int64
+	// FsMaxDepth 是目录深度上限（相对根，根的直接子项为 1 层）。
+	FsMaxDepth int
+	// FsMaxEntries 是单次目录列表的条目上限。
+	FsMaxEntries int
+	// FsDeny 是敏感文件黑名单 pattern（path.Match 语法）。
+	// 它 = DefaultFsDeny + 配置追加，配置删不掉默认保护。
+	FsDeny []string
 }
 
 // ifaceAddrs 返回「网卡名 → 该网卡上的 IP 列表」。
@@ -91,6 +141,12 @@ func agentDefaults() AgentConfig {
 		TLSMode:    TLSModeSelf,
 		BindIfaces: []string{DefaultBindIfaces},
 		DiskMounts: []string{"/"},
+		// 文件管理的上限与黑名单先落默认值；FsRoots 故意留空——
+		// 「没配根目录」就是要让模块整体关闭。
+		FsMaxFile:    DefaultFsMaxFile,
+		FsMaxDepth:   DefaultFsMaxDepth,
+		FsMaxEntries: DefaultFsMaxEntries,
+		FsDeny:       append([]string(nil), DefaultFsDeny...),
 	}
 }
 
@@ -139,6 +195,33 @@ func LoadAgent(args []string) (AgentConfig, error) {
 	if v := os.Getenv("DD_AGENT_COMPOSE_DIRS"); v != "" {
 		c.ComposeDirs = splitList(v)
 	}
+	if v := os.Getenv("DD_AGENT_FS_ROOTS"); v != "" {
+		c.FsRoots = splitList(v)
+	}
+	if v := os.Getenv("DD_AGENT_FS_MAX_FILE"); v != "" {
+		n, err := parsePositiveInt64("DD_AGENT_FS_MAX_FILE", v)
+		if err != nil {
+			return AgentConfig{}, err
+		}
+		c.FsMaxFile = n
+	}
+	if v := os.Getenv("DD_AGENT_FS_MAX_DEPTH"); v != "" {
+		n, err := parsePositiveInt("DD_AGENT_FS_MAX_DEPTH", v)
+		if err != nil {
+			return AgentConfig{}, err
+		}
+		c.FsMaxDepth = n
+	}
+	if v := os.Getenv("DD_AGENT_FS_MAX_ENTRIES"); v != "" {
+		n, err := parsePositiveInt("DD_AGENT_FS_MAX_ENTRIES", v)
+		if err != nil {
+			return AgentConfig{}, err
+		}
+		c.FsMaxEntries = n
+	}
+	if v := os.Getenv("DD_AGENT_FS_DENY"); v != "" {
+		c.FsDeny = append(c.FsDeny, splitList(v)...)
+	}
 
 	fs := flag.NewFlagSet("agent", flag.ContinueOnError)
 	fs.StringVar(&c.ListenAddr, "listen", c.ListenAddr, "监听地址 host:port")
@@ -149,6 +232,11 @@ func LoadAgent(args []string) (AgentConfig, error) {
 	dockerSocket := fs.String("docker-socket", c.DockerSocket, "Docker Engine unix socket 路径")
 	selfContainer := fs.String("self-container", c.SelfContainer, "Agent 自身容器 ID/名字（写入保护，默认取 hostname）")
 	composeDirs := fs.String("compose-dirs", strings.Join(c.ComposeDirs, ","), "Compose 白名单目录，逗号分隔（递归扫描其内 compose 文件）")
+	fsRoots := fs.String("fs-root", strings.Join(c.FsRoots, ","), "文件管理根白名单目录，逗号分隔（留空 = 关闭文件管理模块）")
+	fsDeny := fs.String("fs-deny", "", "追加的敏感文件黑名单 pattern，逗号分隔（内置默认名单不可删）")
+	fs.Int64Var(&c.FsMaxFile, "fs-max-file", c.FsMaxFile, "单文件读写上限（字节）")
+	fs.IntVar(&c.FsMaxDepth, "fs-max-depth", c.FsMaxDepth, "目录深度上限（相对白名单根）")
+	fs.IntVar(&c.FsMaxEntries, "fs-max-entries", c.FsMaxEntries, "单次目录列表条目上限")
 	tokenFile := fs.String("token-file", "", "读取 Agent token 的文件（优先用环境变量 DD_AGENT_TOKEN）")
 	insecure := fs.Bool("allow-insecure-bind", c.AllowInsecureBind, "跳过网卡白名单校验（不安全，仅调试）")
 	var tlsModeRaw string
@@ -186,6 +274,12 @@ func LoadAgent(args []string) (AgentConfig, error) {
 	if *composeDirs != "" {
 		c.ComposeDirs = splitList(*composeDirs)
 	}
+	if *fsRoots != "" {
+		c.FsRoots = splitList(*fsRoots)
+	}
+	if *fsDeny != "" {
+		c.FsDeny = append(c.FsDeny, splitList(*fsDeny)...)
+	}
 	if *insecure {
 		c.AllowInsecureBind = true
 	}
@@ -196,10 +290,45 @@ func LoadAgent(args []string) (AgentConfig, error) {
 	}
 	c.Token = token
 
+	if err := c.normalizeFs(); err != nil {
+		return AgentConfig{}, err
+	}
 	if err := c.Validate(); err != nil {
 		return AgentConfig{}, err
 	}
 	return c, nil
+}
+
+// normalizeFs 归一化文件管理配置：根目录必须是绝对路径并去掉冗余段，
+// 三个上限必须是正数，黑名单去重。
+//
+// 归一化放在入口而不是使用点：白名单前缀比对依赖「已 Clean 的绝对路径」这个前提，
+// 让每个使用点各自记得先 Clean，迟早会漏一处。
+func (c *AgentConfig) normalizeFs() error {
+	roots := make([]string, 0, len(c.FsRoots))
+	for _, raw := range c.FsRoots {
+		r := strings.TrimSpace(raw)
+		if r == "" {
+			continue
+		}
+		if !filepath.IsAbs(r) {
+			return fmt.Errorf("文件管理根目录必须是绝对路径: %q", raw)
+		}
+		roots = append(roots, filepath.Clean(r))
+	}
+	c.FsRoots = dedupeStrings(roots)
+
+	if c.FsMaxFile <= 0 {
+		return fmt.Errorf("单文件上限（--fs-max-file）必须是正整数，得到 %d", c.FsMaxFile)
+	}
+	if c.FsMaxDepth <= 0 {
+		return fmt.Errorf("目录深度上限（--fs-max-depth）必须是正整数，得到 %d", c.FsMaxDepth)
+	}
+	if c.FsMaxEntries <= 0 {
+		return fmt.Errorf("列表条目上限（--fs-max-entries）必须是正整数，得到 %d", c.FsMaxEntries)
+	}
+	c.FsDeny = dedupeStrings(c.FsDeny)
+	return nil
 }
 
 // Validate 校验监听地址与凭据是否可用。
@@ -288,6 +417,48 @@ func splitList(v string) []string {
 		}
 	}
 	return out
+}
+
+// dedupeStrings 保序去重，空串丢弃。
+func dedupeStrings(in []string) []string {
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	return out
+}
+
+// parsePositiveInt 解析正整数配置项，错误里带变量名，便于用户对上号。
+func parsePositiveInt(name, v string) (int, error) {
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil {
+		return 0, fmt.Errorf("%s 必须是正整数，得到 %q", name, v)
+	}
+	if n <= 0 {
+		return 0, fmt.Errorf("%s 必须是正整数，得到 %d", name, n)
+	}
+	return n, nil
+}
+
+// parsePositiveInt64 同上，用于以字节计的上限（可能超过 32 位）。
+func parsePositiveInt64(name, v string) (int64, error) {
+	n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s 必须是正整数，得到 %q", name, v)
+	}
+	if n <= 0 {
+		return 0, fmt.Errorf("%s 必须是正整数，得到 %d", name, n)
+	}
+	return n, nil
 }
 
 func parseCIDRs(v string) ([]net.IPNet, error) {

@@ -36,6 +36,16 @@ func run(args []string) error {
 		log.Printf("agent: ⚠️ 已启用 --allow-insecure-bind，%q 未经网卡白名单校验，请确认该地址不对外暴露", cfg.ListenAddr)
 	}
 
+	// GAP-1 纳管：配了 Hub 与 join_secret 时，启动即自注册。幂等、best-effort，
+	// 失败只告警不阻断服务（登记可在此后重启时重试）。放后台，避免拖慢监听就绪。
+	if cfg.HubURL != "" && cfg.JoinSecret != "" {
+		go func() {
+			if err := enrollToHub(cfg); err != nil {
+				log.Printf("agent: ⚠️ 纳管自注册失败（将在下次重启重试）：%v", err)
+			}
+		}()
+	}
+
 	// 文件管理可能未启用（未配 --fs-root 时返回 nil）；配了而根目录不可用则启动失败。
 	fapi, err := newFilesAPI(cfg)
 	if err != nil {

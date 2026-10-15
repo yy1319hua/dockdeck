@@ -63,6 +63,15 @@ type AgentConfig struct {
 	// Token 是 Hub→Agent 的共享密钥明文，同时用于 Bearer 校验与 HMAC 签名。
 	// 它只存在于内存里：Hub 侧的库中副本由机器主密钥加密存储。
 	Token string
+	// HubURL 是 Hub 基址（如 https://hub.example:443）。非空且配了 JoinSecret 时，
+	// Agent 启动会向其自注册（GAP-1 纳管）。空 = 不自注册。
+	HubURL string
+	// JoinSecret 是一次性纳管密钥：Agent 启动时凭它向 Hub 的 /servers/enroll 认领身份，
+	// 认领后它即成为本机的长期共享令牌（与 Token 同值）。空 = 不自注册。
+	JoinSecret string
+	// EnrollInsecure 自注册调用 Hub 时是否跳过 TLS 校验。Hub 用自签证书时为 true（默认），
+	// 生产可用 --enroll-insecure=false 强制校验（需 Hub 证书受信）。
+	EnrollInsecure bool
 	// CertDir 存放自签证书。
 	CertDir string
 	// TLSMode 与 Hub 侧同义：self 自签、none 明文（仅回环）。
@@ -149,6 +158,8 @@ func agentDefaults() AgentConfig {
 		FsMaxDepth:   DefaultFsMaxDepth,
 		FsMaxEntries: DefaultFsMaxEntries,
 		FsDeny:       append([]string(nil), DefaultFsDeny...),
+		// Hub 自签证书场景默认放行自注册的 TLS 校验；生产可显式关。
+		EnrollInsecure: true,
 	}
 }
 
@@ -224,6 +235,17 @@ func LoadAgent(args []string) (AgentConfig, error) {
 	if v := os.Getenv("DD_AGENT_FS_DENY"); v != "" {
 		c.FsDeny = append(c.FsDeny, splitList(v)...)
 	}
+	if v := os.Getenv("DD_HUB_URL"); v != "" {
+		c.HubURL = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("DD_AGENT_JOIN_SECRET"); v != "" {
+		c.JoinSecret = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("DD_AGENT_ENROLL_INSECURE"); v != "" {
+		if b, err := strconv.ParseBool(strings.TrimSpace(v)); err == nil {
+			c.EnrollInsecure = b
+		}
+	}
 
 	fs := flag.NewFlagSet("agent", flag.ContinueOnError)
 	fs.StringVar(&c.ListenAddr, "listen", c.ListenAddr, "监听地址 host:port")
@@ -240,6 +262,9 @@ func LoadAgent(args []string) (AgentConfig, error) {
 	fs.IntVar(&c.FsMaxDepth, "fs-max-depth", c.FsMaxDepth, "目录深度上限（相对白名单根）")
 	fs.IntVar(&c.FsMaxEntries, "fs-max-entries", c.FsMaxEntries, "单次目录列表条目上限")
 	tokenFile := fs.String("token-file", "", "读取 Agent token 的文件（优先用环境变量 DD_AGENT_TOKEN）")
+	hubURL := fs.String("hub-url", c.HubURL, "Hub 基址（https://host）；非空且配了 join_secret 时启动自注册纳管")
+	joinSecretFile := fs.String("join-secret-file", "", "读取纳管 join_secret 的文件（优先用环境变量 DD_AGENT_JOIN_SECRET）")
+	insecureEnroll := fs.Bool("enroll-insecure", c.EnrollInsecure, "自注册调用 Hub 时跳过 TLS 校验（Hub 自签证书场景默认开）")
 	insecure := fs.Bool("allow-insecure-bind", c.AllowInsecureBind, "跳过网卡白名单校验（不安全，仅调试）")
 	var tlsModeRaw string
 	fs.StringVar(&tlsModeRaw, "tls", string(c.TLSMode), "TLS 模式：self|none")
@@ -285,12 +310,30 @@ func LoadAgent(args []string) (AgentConfig, error) {
 	if *insecure {
 		c.AllowInsecureBind = true
 	}
+	c.HubURL = strings.TrimSpace(*hubURL)
+	c.EnrollInsecure = *insecureEnroll
+	if c.JoinSecret == "" && *joinSecretFile != "" {
+		b, err := os.ReadFile(*joinSecretFile)
+		if err != nil {
+			return AgentConfig{}, fmt.Errorf("读取 join_secret 文件失败: %w", err)
+		}
+		if t := strings.TrimSpace(string(b)); t != "" {
+			c.JoinSecret = t
+		} else {
+			return AgentConfig{}, fmt.Errorf("join_secret 文件为空: %s", *joinSecretFile)
+		}
+	}
 
 	token, err := loadAgentToken(*tokenFile)
 	if err != nil {
 		return AgentConfig{}, err
 	}
 	c.Token = token
+	// join_secret 即本机长期共享令牌初值：只配邀请未配 token 时据此派生，
+	// 让「只给一次性邀请」也能启动（Hub 侧存的就是这把 secret 的密文）。
+	if strings.TrimSpace(c.Token) == "" && c.JoinSecret != "" {
+		c.Token = c.JoinSecret
+	}
 
 	if err := c.normalizeFs(); err != nil {
 		return AgentConfig{}, err

@@ -14,6 +14,7 @@ const (
 	AuthNone    = "none"    // 公开，无需身份
 	AuthSession = "session" // 仅 cookie 会话（Token 不可调用）
 	AuthScope   = "scope"   // cookie 会话，或携带所需 scope 的 API Token
+	AuthJoin    = "join"    // 一次性纳管邀请 join_secret（Bearer），仅 Agent 启动自注册用
 )
 
 // Param 声明一个查询参数（路径参数由 Path 里的 {name} 自动得出，不在此列）。
@@ -92,6 +93,8 @@ func (t *Table) Add(e Entry, h http.HandlerFunc) {
 		if e.Scope == "" {
 			panic(fmt.Sprintf("route: %s %s 为 scope 端点但未声明所需 scope", e.Method, e.Path))
 		}
+	case AuthJoin:
+		// join 端点凭一次性邀请，无 scope 概念。
 	default:
 		panic(fmt.Sprintf("route: %s %s 鉴权模式非法：%q", e.Method, e.Path, e.AuthMode))
 	}

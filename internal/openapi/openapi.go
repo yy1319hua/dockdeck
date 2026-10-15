@@ -272,6 +272,10 @@ func operation(e route.Entry) *Operation {
 		op.Security = []map[string][]string{{}}
 	case route.AuthSession:
 		op.Security = []map[string][]string{{SchemeCookie: {}}}
+	case route.AuthJoin:
+		// 一次性纳管邀请：Bearer，但非 scoped API Token，单独声明以免与 Token 混同。
+		op.Security = []map[string][]string{{SchemeBearer: {}}}
+		op.Description += "\n\n本端点以一次性 join_secret 作 Bearer（由 POST /api/v1/servers/invite 签发），非 API Token。"
 	default:
 		// 会话或 Token 任一即可（两条都是合法的 security 要求，OR 语义）。
 		// OpenAPI 3.0 不能在 securityScheme 上表达 scope 依赖，因此 scope 写进描述。
@@ -290,6 +294,9 @@ func statusDesc(code int, e route.Entry) string {
 	case http.StatusUnauthorized:
 		if e.AuthMode == route.AuthNone {
 			return "公开端点，不使用"
+		}
+		if e.AuthMode == route.AuthJoin {
+			return "join_secret 无法识别"
 		}
 		return "未登录，或凭据无效/已过期"
 	case http.StatusForbidden:

@@ -139,3 +139,23 @@ func keysOf(m map[string]Entry) []string {
 	}
 	return out
 }
+
+// TestAddAcceptsJoinAuthMode：AuthJoin（一次性纳管邀请）是合法鉴权模式，
+// 应被登记表接受并按声明套包装，不落入「鉴权模式非法」的 panic。
+func TestAddAcceptsJoinAuthMode(t *testing.T) {
+	var mode string
+	mux := http.NewServeMux()
+	tbl := New(mux, func(e Entry, h http.Handler) http.Handler {
+		mode = e.AuthMode
+		return h
+	})
+	tbl.Add(Entry{Method: "POST", Path: "/api/v1/servers/enroll", AuthMode: AuthJoin, Summary: "x"}, ok200)
+	if mode != AuthJoin {
+		t.Fatalf("AuthJoin 应被接受，得 %q", mode)
+	}
+	rec := httptest.NewRecorder()
+	tbl.Mux().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/servers/enroll", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("join 端点应可路由，得 %d", rec.Code)
+	}
+}

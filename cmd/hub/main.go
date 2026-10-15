@@ -22,6 +22,7 @@ import (
 	"github.com/yy1319hua/dockdeck/internal/crypto"
 	"github.com/yy1319hua/dockdeck/internal/db"
 	"github.com/yy1319hua/dockdeck/internal/httpx"
+	"github.com/yy1319hua/dockdeck/internal/joinauth"
 	"github.com/yy1319hua/dockdeck/internal/middleware"
 	"github.com/yy1319hua/dockdeck/internal/openapi"
 	"github.com/yy1319hua/dockdeck/internal/protocol"
@@ -148,7 +149,9 @@ func (s *server) routes() http.Handler {
 			wrapped = h
 		case route.AuthSession:
 			wrapped = s.am.RequireAuth(h)
-		default:
+		case route.AuthJoin:
+			wrapped = joinauth.Verify(s.st)(h)
+		default: // route.AuthScope
 			wrapped = apitoken.Require(s.am.ServeSession, s.tokens, e.Scope)(h)
 		}
 		if e.RateLimited {
@@ -666,6 +669,33 @@ func (s *server) routes() http.Handler {
 		}
 		httpx.WriteJSON(w, http.StatusOK, list)
 	}))
+
+	// ---- GAP-1 纳管：签发一次性邀请（仅会话）+ Agent 启动自注册（join_secret）----
+	tbl.Add(route.Entry{
+		Method: "POST", Path: "/api/v1/servers/invite", AuthMode: route.AuthSession, Status: http.StatusCreated,
+		Summary: "签发纳管邀请", Tags: []string{"Servers"}, Body: &route.Body{},
+		Desc: "生成一枚一次性 join_secret，供 Agent 容器启动时自注册。明文仅本次响应可见。" +
+			"仅浏览器会话可调（与 Token 管理同口径：API Token 不得自签邀请，否则权限收不回来）。",
+		Responses: []route.Response{
+			{Status: 400, Desc: "请求体不合法"},
+			{Status: 401, Desc: "未登录"},
+		},
+	}, middleware.Audit(s.st, "server.invite", s.serverInvite))
+
+	tbl.Add(route.Entry{
+		Method: "POST", Path: "/api/v1/servers/enroll", AuthMode: route.AuthJoin, Status: http.StatusCreated,
+		RateLimited: true,
+		Summary:     "Agent 自注册纳管", Tags: []string{"Servers"}, Body: &route.Body{},
+		Desc: "Agent 启动时以 Authorization: Bearer <join_secret> 调用：认领邀请、写入 servers 行，" +
+			"并以同一 secret 作为本机长期共享令牌（Hub 侧密文存储）。**幂等**：同一 join_secret " +
+			"重复调用返回既有服务器 id 并刷新 base_url（重启/改址自愈）。",
+		Responses: []route.Response{
+			{Status: 400, Desc: "请求体不合法"},
+			{Status: 401, Desc: "join_secret 无法识别"},
+			{Status: 409, Desc: "同名主机已存在"},
+			{Status: 410, Desc: "邀请已过期或已不可用"},
+		},
+	}, s.serverEnroll)
 
 	// 前端 SPA 兜底：非 /api 路径交静态资源，未命中回 index.html。
 	static := assets.Handler()

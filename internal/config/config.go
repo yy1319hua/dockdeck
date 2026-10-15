@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -24,6 +25,10 @@ type Config struct {
 	DBPath        string
 	MasterKeyPath string
 	TLSMode       TLSMode
+	// MetricsIntervalSec 是轮询各 Agent 采集指标的周期（秒）。
+	MetricsIntervalSec int
+	// MetricsRetentionDays 是指标历史（metrics_snapshots）的保留天数。
+	MetricsRetentionDays int
 }
 
 // 安全默认值：绑定回环，绝不误绑公网 0.0.0.0。
@@ -33,10 +38,12 @@ func defaults() Config {
 		dataDir = "/srv/dockdeck/data"
 	}
 	return Config{
-		ListenAddr:    "127.0.0.1:8443",
-		DataDir:       dataDir,
-		TLSMode:       TLSModeSelf,
-		MasterKeyPath: filepath.Join(filepath.Dir(dataDir), "secrets", "master.key"),
+		ListenAddr:           "127.0.0.1:8443",
+		DataDir:              dataDir,
+		TLSMode:              TLSModeSelf,
+		MasterKeyPath:        filepath.Join(filepath.Dir(dataDir), "secrets", "master.key"),
+		MetricsIntervalSec:   30,
+		MetricsRetentionDays: 14,
 	}
 }
 
@@ -53,6 +60,20 @@ func Load(args []string) (Config, error) {
 		}
 		c.TLSMode = m
 	}
+	if v := os.Getenv("DD_METRICS_INTERVAL_SEC"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			return Config{}, fmt.Errorf("DD_METRICS_INTERVAL_SEC 需为正整数秒，得到 %q", v)
+		}
+		c.MetricsIntervalSec = n
+	}
+	if v := os.Getenv("DD_METRICS_RETENTION_DAYS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			return Config{}, fmt.Errorf("DD_METRICS_RETENTION_DAYS 需为正整数天，得到 %q", v)
+		}
+		c.MetricsRetentionDays = n
+	}
 
 	fs := flag.NewFlagSet("hub", flag.ContinueOnError)
 	fs.StringVar(&c.ListenAddr, "listen", c.ListenAddr, "监听地址 host:port，必须为 tailscale 网卡 IP 或回环")
@@ -60,6 +81,8 @@ func Load(args []string) (Config, error) {
 	fs.StringVar(&c.MasterKeyPath, "master-key", c.MasterKeyPath, "机器主密钥文件路径")
 	var tlsMode string
 	fs.StringVar(&tlsMode, "tls", string(c.TLSMode), "TLS 模式：self|none")
+	fs.IntVar(&c.MetricsIntervalSec, "metrics-interval-sec", c.MetricsIntervalSec, "指标采集周期（秒）")
+	fs.IntVar(&c.MetricsRetentionDays, "metrics-retention-days", c.MetricsRetentionDays, "指标历史保留天数")
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
 	}
@@ -94,6 +117,14 @@ func (c Config) Validate() error {
 	}
 	if c.TLSMode == TLSModeNone && !ip.IsLoopback() {
 		return fmt.Errorf("TLS_MODE=none 仅允许回环监听，当前为 %q；对外请用 self", host)
+	}
+	// 采集周期与保留期都必须是正数：0 会让 ticker 直接 panic，
+	// 负保留期会把所有历史一次性清空。
+	if c.MetricsIntervalSec <= 0 {
+		return fmt.Errorf("指标采集周期须为正整数秒，得到 %d", c.MetricsIntervalSec)
+	}
+	if c.MetricsRetentionDays <= 0 {
+		return fmt.Errorf("指标保留天数须为正整数，得到 %d", c.MetricsRetentionDays)
 	}
 	return nil
 }

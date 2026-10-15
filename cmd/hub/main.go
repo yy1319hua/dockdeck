@@ -23,6 +23,7 @@ import (
 	"github.com/yy1319hua/dockdeck/internal/db"
 	"github.com/yy1319hua/dockdeck/internal/httpx"
 	"github.com/yy1319hua/dockdeck/internal/joinauth"
+	"github.com/yy1319hua/dockdeck/internal/metricsync"
 	"github.com/yy1319hua/dockdeck/internal/middleware"
 	"github.com/yy1319hua/dockdeck/internal/openapi"
 	"github.com/yy1319hua/dockdeck/internal/protocol"
@@ -108,10 +109,23 @@ func run(args []string) error {
 		}
 	}()
 
+	// 指标轮询器：没有它 metrics_latest / metrics_snapshots 永远不会有数据（GAP-9）。
+	// 与 HTTP 服务同生命周期——收到关闭信号时先停采集，再关监听。
+	pollCtx, stopPoll := context.WithCancel(context.Background())
+	defer stopPoll()
+	poller := metricsync.New(
+		st,
+		time.Duration(cfg.MetricsIntervalSec)*time.Second,
+		time.Duration(cfg.MetricsRetentionDays)*24*time.Hour,
+		log.Printf,
+	)
+	go poller.Run(pollCtx)
+
 	// 等待关闭信号或监听错误。
 	stop := make(chan struct{})
 	go func() {
 		waitForShutdown()
+		stopPoll() // 先停采集，避免关闭期间还在写库
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		_ = httpSrv.Shutdown(ctx)

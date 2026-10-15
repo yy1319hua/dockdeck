@@ -3,9 +3,12 @@
 package store
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/yy1319hua/dockdeck/internal/crypto"
@@ -103,5 +106,52 @@ func TestServerConn_CorruptTokenCipher(t *testing.T) {
 	}
 	if _, err := s.ServerConn(context.Background(), id); err == nil {
 		t.Fatal("损坏密文应报错，不应静默放行")
+	}
+}
+
+func TestListServers_EmptyReturnsSlice(t *testing.T) {
+	s := newServerStore(t)
+	list, err := s.ListServers(context.Background())
+	if err != nil {
+		t.Fatalf("ListServers: %v", err)
+	}
+	if list == nil {
+		t.Fatal("空清单应返回空切片而非 nil")
+	}
+	if len(list) != 0 {
+		t.Errorf("len = %d，期望 0", len(list))
+	}
+}
+
+func TestListServers_ReturnsAllIncludingDisabled(t *testing.T) {
+	s := newServerStore(t)
+	a := seedServer(t, s, "srv-a", "agent-tok-a", true)
+	b := seedServer(t, s, "srv-b", "agent-tok-b", false)
+
+	list, err := s.ListServers(context.Background())
+	if err != nil {
+		t.Fatalf("ListServers: %v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("len = %d，期望 2", len(list))
+	}
+	byID := map[int64]ServerSummary{}
+	for _, ss := range list {
+		byID[ss.ID] = ss
+	}
+	if !byID[a].Enabled {
+		t.Errorf("srv-a 应为启用")
+	}
+	if byID[b].Enabled {
+		t.Errorf("srv-b 应为禁用")
+	}
+	// 列表不得携带秘密：ServerSummary 类型本身不含 Token，
+	// 这里额外断言序列化结果不含明文 Agent 令牌。
+	buf := new(bytes.Buffer)
+	if err := json.NewEncoder(buf).Encode(list); err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if strings.Contains(buf.String(), "agent-tok-a") || strings.Contains(buf.String(), "agent-tok-b") {
+		t.Errorf("列表泄露了 Agent 令牌：%s", buf.String())
 	}
 }

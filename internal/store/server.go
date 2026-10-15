@@ -62,3 +62,48 @@ func (s *Store) ServerConn(ctx context.Context, id int64) (*ServerConn, error) {
 	c.Token = string(plain)
 	return &c, nil
 }
+
+// ServerSummary 是受管主机在列表接口的公开投影：只含管理所需字段，
+// 绝不携带 Agent 令牌（token_cipher / 解密后的 Token 一律不入此结构）。
+type ServerSummary struct {
+	ID        int64
+	Name      string
+	BaseURL   string
+	Arch      string
+	DockVer   string
+	Enabled   bool
+	LastSeen  string
+	LastError string
+}
+
+// ListServers 返回全部受管主机（含已禁用），供管理列表使用。
+// 与 ServerConn 不同，这里不解密 Agent 令牌、也不触达任何秘密字段。
+func (s *Store) ListServers(ctx context.Context) ([]ServerSummary, error) {
+	rows, err := s.DB.QueryContext(ctx,
+		`SELECT id, name, base_url, arch, docker_ver, enabled, last_seen, last_error FROM servers ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]ServerSummary, 0)
+	for rows.Next() {
+		var (
+			ss   ServerSummary
+			arch sql.NullString
+			dv   sql.NullString
+			on   int
+			seen sql.NullString
+			errs sql.NullString
+		)
+		if err := rows.Scan(&ss.ID, &ss.Name, &ss.BaseURL, &arch, &dv, &on, &seen, &errs); err != nil {
+			return nil, err
+		}
+		ss.Arch = arch.String
+		ss.DockVer = dv.String
+		ss.Enabled = on != 0
+		ss.LastSeen = seen.String
+		ss.LastError = errs.String
+		out = append(out, ss)
+	}
+	return out, rows.Err()
+}

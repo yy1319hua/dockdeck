@@ -50,6 +50,51 @@ func TestFileWrittenJSON(t *testing.T) {
 	}
 }
 
+// 上传上限是 Hub/Agent 共享的硬数字，钉住它：改它必须是有意识的两侧同步发版。
+func TestMaxFileUploadBytesIsPinned(t *testing.T) {
+	if MaxFileUploadBytes != 16<<20 {
+		t.Errorf("MaxFileUploadBytes = %d，want %d（改它要同步 Hub 转发侧的读 body 上限）",
+			MaxFileUploadBytes, 16<<20)
+	}
+}
+
+// 空清单必须是 []，不是 null——与容器/镜像清单同一口径。
+func TestFilesListJSON(t *testing.T) {
+	b, err := json.Marshal(FilesList{Path: "", Entries: []FileEntry{}, Truncated: false})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	s := string(b)
+	for _, want := range []string{`"path":""`, `"entries":[]`, `"truncated":false`} {
+		if !strings.Contains(s, want) {
+			t.Errorf("FilesList 缺少 %s: %s", want, s)
+		}
+	}
+	if strings.Contains(s, `"entries":null`) {
+		t.Errorf("空清单不该序列化成 null: %s", s)
+	}
+
+	full := FilesList{
+		Path:      "sub",
+		Entries:   []FileEntry{{Name: "a.txt", Path: "sub/a.txt", Size: 3, Mode: "0644"}},
+		Truncated: true,
+	}
+	b2, err := json.Marshal(full)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b2), `"truncated":true`) {
+		t.Errorf("截断标记应出现在响应体里: %s", b2)
+	}
+	var got FilesList
+	if err := json.Unmarshal(b2, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Path != "sub" || len(got.Entries) != 1 || got.Entries[0].Name != "a.txt" || !got.Truncated {
+		t.Errorf("往返不一致：%+v", got)
+	}
+}
+
 func TestFileActionDoneJSON(t *testing.T) {
 	rename := FileActionDone{Action: ActionRename, Path: "a.txt", Dest: "b.txt"}
 	b, err := json.Marshal(rename)

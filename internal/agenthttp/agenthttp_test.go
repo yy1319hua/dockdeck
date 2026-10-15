@@ -141,7 +141,7 @@ func TestAuth_RejectsTamperedQuery(t *testing.T) {
 }
 
 func TestAuth_RejectsOversizedBody(t *testing.T) {
-	big := make([]byte, maxBodyBytes+1)
+	big := make([]byte, DefaultMaxBodyBytes+1)
 	for i := range big {
 		big[i] = 'a'
 	}
@@ -149,6 +149,36 @@ func TestAuth_RejectsOversizedBody(t *testing.T) {
 	w := runAuth(t, req)
 	if w.Code != http.StatusRequestEntityTooLarge || errCode(t, w) != protocol.CodeTooLarge {
 		t.Errorf("got %d/%s", w.Code, errCode(t, w))
+	}
+}
+
+// 文件上传要能带大于默认上限的 body：AuthN 抬高上限后，
+// 同一个 1.5 MiB 请求应当放行（而不是像 Auth 那样 413）。
+func TestAuthN_RaisesBodyLimitForUploads(t *testing.T) {
+	big := make([]byte, DefaultMaxBodyBytes+DefaultMaxBodyBytes/2)
+	for i := range big {
+		big[i] = 'a'
+	}
+	req := signed(t, http.MethodPut, "/files/content?path=a.txt", big, fixedNow.Unix())
+
+	h := AuthN(testToken, func() time.Time { return fixedNow }, 4<<20)(http.HandlerFunc(echoBody))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("抬高上限后 1.5 MiB 请求应放行，got %d body=%s", w.Code, w.Body.String())
+	}
+	if int64(w.Body.Len()) != int64(len(big)) {
+		t.Errorf("body 长度 = %d，want %d", w.Body.Len(), len(big))
+	}
+
+	// 上限之外仍要拒：抬高不是取消。
+	over := make([]byte, (4<<20)+1)
+	req2 := signed(t, http.MethodPut, "/files/content?path=a.txt", over, fixedNow.Unix())
+	h2 := AuthN(testToken, func() time.Time { return fixedNow }, 4<<20)(http.HandlerFunc(echoBody))
+	w2 := httptest.NewRecorder()
+	h2.ServeHTTP(w2, req2)
+	if w2.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("超过自定义上限应 413，got %d", w2.Code)
 	}
 }
 

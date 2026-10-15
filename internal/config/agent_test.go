@@ -7,8 +7,11 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/yy1319hua/dockdeck/internal/protocol"
 )
 
 // withIfaces 替换网卡枚举，让白名单分支在没有任何真实 tailscale 网卡的机器上也可测。
@@ -321,5 +324,24 @@ func TestLoadAgent_FsEnvRejectsBadLimit(t *testing.T) {
 	t.Setenv("DD_AGENT_FS_MAX_FILE", "0")
 	if _, err := LoadAgent(nil); err == nil {
 		t.Error("环境变量给了非正上限应报错")
+	}
+}
+
+// 单文件上限不能超过 protocol 的共享常量：它同时是单请求内存占用的上界，
+// 无界等于给 Agent 装了个内存放大器。
+func TestLoadAgent_FsMaxFileHasHardCeiling(t *testing.T) {
+	clearFsEnv(t)
+	t.Setenv("DD_AGENT_TOKEN", "tok")
+	over := strconv.FormatInt(protocol.MaxFileUploadBytes+1, 10)
+	if _, err := LoadAgent([]string{"-fs-max-file", over}); err == nil {
+		t.Fatal("超过共享上限应报错")
+	}
+	at := strconv.FormatInt(protocol.MaxFileUploadBytes, 10)
+	c, err := LoadAgent([]string{"-fs-max-file", at})
+	if err != nil {
+		t.Fatalf("恰好等于上限应放行，got %v", err)
+	}
+	if c.FsMaxFile != protocol.MaxFileUploadBytes {
+		t.Errorf("FsMaxFile = %d，want %d", c.FsMaxFile, protocol.MaxFileUploadBytes)
 	}
 }

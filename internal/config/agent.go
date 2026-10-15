@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/yy1319hua/dockdeck/internal/protocol"
 )
 
 // DefaultBindIfaces 是默认的允许绑定网卡。
@@ -320,6 +322,12 @@ func (c *AgentConfig) normalizeFs() error {
 
 	if c.FsMaxFile <= 0 {
 		return fmt.Errorf("单文件上限（--fs-max-file）必须是正整数，得到 %d", c.FsMaxFile)
+	}
+	// 上界由 protocol 的共享常量定：Agent 鉴权层要读完整个 body 才能验签，
+	// 所以「单文件上限」实际等于「单个上传请求的最大内存占用」。
+	if c.FsMaxFile > protocol.MaxFileUploadBytes {
+		return fmt.Errorf("单文件上限（--fs-max-file）不得超过 %d 字节：鉴权层要对整个请求体验签，上限即单请求内存占用（见 protocol.MaxFileUploadBytes）",
+			protocol.MaxFileUploadBytes)
 	}
 	if c.FsMaxDepth <= 0 {
 		return fmt.Errorf("目录深度上限（--fs-max-depth）必须是正整数，得到 %d", c.FsMaxDepth)

@@ -75,6 +75,27 @@ type FileActionDone struct {
 	Dest   string `json:"dest,omitempty"`
 }
 
+// FilesList 是目录列举的结果。
+//
+// Path 是请求路径的原样回显（便于调用方对账）；Truncated 表示因条目上限被截断——
+// 它是数据的一部分，所以放响应体而不是 HTTP 头，App 与 UI 都看得见。
+type FilesList struct {
+	Path      string      `json:"path"`
+	Entries   []FileEntry `json:"entries"`
+	Truncated bool        `json:"truncated"`
+}
+
+// MaxFileUploadBytes 是文件上传的共享上限（16 MiB）。
+//
+// 放在 protocol 而不是两侧各自定义：Hub 与 Agent 必须用同一个数字。
+// Agent 鉴权层要先读完整个 body 才能算 HMAC，Hub 转发时同样要把 body
+// 读进内存签名，两边上限一旦漂移，就会冒出「Hub 放行、Agent 413」这类
+// 只在大文件上才暴露的错位。
+//
+// 它同时是「单请求最大内存占用」的上界，因此不允许无限大：要传更大的文件，
+// 改这个常量并两侧一起发版，而不是让运维随手调参。
+const MaxFileUploadBytes = 16 << 20
+
 // ValidFileAction 判断动作取值是否合法。
 //
 // 写操作入口必须先过它：未知动作一律拒绝，避免出现「动作名拼错却执行了默认分支」的情况。

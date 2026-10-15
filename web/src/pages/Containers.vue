@@ -1,0 +1,510 @@
+<!--
+  S7.3 容器列表：全局页 + 顶部主机切换器（用户拍板），行内操作 + 二次确认，
+  日志走同页抽屉（tail/时间戳/follow/导出）。
+
+  数据口径（两个来源，分开降级）：
+   * 身份与状态来自 Agent 实时转发（GET /servers/{id}/containers）——失败即错误；
+   * CPU/内存占用来自 Hub 指标轮询快照（metrics_latest）——拿不到只显示「—」，
+     不算失败（Agent 没跑 Docker 时整个为 null）。
+   * 在线点以后端 last_seen 为准（isOnline），与总览页同一把尺。
+
+  确认范围（用户拍板）：remove 输名确认（后端 guard 硬契约，confirm 须与 URL 里的
+  cid 完全一致——故删除用容器名作 cid，让用户输名字而不是 64 位 ID）；
+  stop/kill 简单确认；start/restart/pause/unpause 直接执行、toast 回报。
+-->
+<template>
+  <div class="ct">
+    <header class="ct__head">
+      <div>
+        <h1 class="ct__title">容器</h1>
+        <p class="ct__sub">
+          {{ ct.selected ? ct.selected.name : '未选择主机' }} · {{ ct.rows.length }} 个容器<template v-if="ct.refreshing"> · 刷新中…</template>
+        </p>
+      </div>
+      <button type="button" class="btn" :disabled="ct.loading" @click="ct.load()">刷新</button>
+    </header>
+
+    <div class="ct__bar">
+      <label class="ct__host">
+        主机
+        <select
+          class="field__input ct__select"
+          :value="ct.selectedId"
+          :disabled="ct.servers.length === 0"
+          @change="onSelectHost"
+        >
+          <option v-for="s in ct.servers" :key="s.id" :value="s.id">
+            {{ s.name }}{{ isOnline(s) ? '' : s.enabled ? '（离线）' : '（已禁用）' }}
+          </option>
+        </select>
+      </label>
+      <label class="ct__all">
+        <input type="checkbox" :checked="ct.showAll" @change="ct.toggleShowAll()" />
+        显示已停止
+      </label>
+    </div>
+
+    <p v-if="ct.error" class="ct__err">{{ ct.error }}</p>
+
+    <table v-else-if="ct.rows.length > 0" class="ct__table">
+      <thead>
+        <tr>
+          <th>容器</th>
+          <th>镜像</th>
+          <th>状态</th>
+          <th class="num">CPU</th>
+          <th class="num">内存</th>
+          <th class="ct__acts-col">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-for="row in ct.rows" :key="row.container.id">
+          <td class="ct__name" :title="row.container.name">{{ row.container.name }}</td>
+          <td class="ct__image" :title="row.container.image">{{ row.container.image }}</td>
+          <td>
+            <span class="badge" :class="badgeClass(row.container.state)">{{ row.container.status || row.container.state }}</span>
+          </td>
+          <td class="num">{{ row.stat ? formatPercent(row.stat.cpu_percent) : '—' }}</td>
+          <td class="num">{{ memText(row) }}</td>
+          <td class="ct__acts">
+            <template v-if="row.container.state === 'running'">
+              <button type="button" class="link" :disabled="acting" @click="askStop(row)">停止</button>
+              <button type="button" class="link" :disabled="acting" @click="direct(row, 'restart', '重启')">重启</button>
+              <button type="button" class="link" :disabled="acting" @click="direct(row, 'pause', '暂停')">暂停</button>
+              <button type="button" class="link link--warn" :disabled="acting" @click="askKill(row)">杀死</button>
+            </template>
+            <template v-else-if="row.container.state === 'paused'">
+              <button type="button" class="link" :disabled="acting" @click="direct(row, 'unpause', '恢复')">恢复</button>
+              <button type="button" class="link" :disabled="acting" @click="askStop(row)">停止</button>
+              <button type="button" class="link link--warn" :disabled="acting" @click="askKill(row)">杀死</button>
+            </template>
+            <template v-else>
+              <button type="button" class="link" :disabled="acting" @click="direct(row, 'start', '启动')">启动</button>
+            </template>
+            <button type="button" class="link" @click="openLogs(row)">日志</button>
+            <button type="button" class="link link--danger" :disabled="acting" @click="askRemove(row)">删除</button>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div v-else-if="!ct.loading && !ct.error" class="ct__empty">
+      <template v-if="ct.servers.length === 0">
+        <p class="ct__empty-title">还没有纳管的主机</p>
+        <p class="ct__empty-hint">纳管方式见 S5.8：Hub 签发 join_secret，Agent 启动时自注册。</p>
+      </template>
+      <template v-else>
+        <p class="ct__empty-title">没有容器</p>
+        <p class="ct__empty-hint">该机当前没有运行中的容器；可勾选「显示已停止」查看全部。</p>
+      </template>
+    </div>
+
+    <!-- 删除：输名确认 + force/v 选项 -->
+    <AppConfirm
+      :open="confirming?.kind === 'remove'"
+      :title="`删除容器 ${confirming?.row.container.name ?? ''}`"
+      :message="confirmMessage"
+      danger
+      :require-name="confirming?.row.container.name ?? ''"
+      confirm-label="删除"
+      @confirm="onConfirmAction"
+      @cancel="confirming = null"
+    >
+      <label class="opt"><input v-model="removeForce" type="checkbox" /> 强制删除（容器运行中时必需）</label>
+      <label class="opt"><input v-model="removeVolumes" type="checkbox" /> 连同匿名卷删除</label>
+    </AppConfirm>
+
+    <!-- 停止：简单确认 + 可选超时 -->
+    <AppConfirm
+      :open="confirming?.kind === 'stop'"
+      :title="`停止容器 ${confirming?.row.container.name ?? ''}`"
+      :message="confirmMessage"
+      @confirm="onConfirmAction"
+      @cancel="confirming = null"
+    >
+      <label class="opt-row">
+        停止超时（秒，留空用引擎默认）
+        <input v-model="stopTimeout" class="field__input opt-row__input" type="number" min="0" step="1" placeholder="引擎默认" />
+      </label>
+    </AppConfirm>
+
+    <!-- 杀死：简单确认 + 信号选择 -->
+    <AppConfirm
+      :open="confirming?.kind === 'kill'"
+      :title="`杀死容器 ${confirming?.row.container.name ?? ''}`"
+      :message="confirmMessage"
+      danger
+      @confirm="onConfirmAction"
+      @cancel="confirming = null"
+    >
+      <label class="opt-row">
+        信号
+        <select v-model="killSignal" class="field__input opt-row__input">
+          <option>SIGTERM</option>
+          <option>SIGKILL</option>
+          <option>SIGINT</option>
+          <option>SIGHUP</option>
+          <option>SIGQUIT</option>
+          <option>SIGUSR1</option>
+          <option>SIGUSR2</option>
+        </select>
+      </label>
+    </AppConfirm>
+
+    <ContainerLogs
+      :open="logTarget !== null"
+      :server-id="ct.selectedId"
+      :cid="logTarget?.container.id ?? ''"
+      :name="logTarget?.container.name ?? ''"
+      @close="logTarget = null"
+    />
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import AppConfirm from '@/components/AppConfirm.vue'
+import ContainerLogs from '@/components/ContainerLogs.vue'
+import { containerAction, removeContainer } from '@/api/containers'
+import { isOnline } from '@/api/servers'
+import { formatBytes, formatPercent } from '@/utils/format'
+import { useContainersStore, type ContainerRow } from '@/stores/containers'
+import { useUiStore } from '@/stores/ui'
+
+const ct = useContainersStore()
+const ui = useUiStore()
+
+onMounted(() => ct.start())
+onUnmounted(() => ct.stop())
+
+/** 任一写操作在飞时禁用全表操作按钮，防连点。 */
+const acting = ref(false)
+
+type ConfirmKind = 'remove' | 'stop' | 'kill'
+const confirming = ref<{ kind: ConfirmKind; row: ContainerRow } | null>(null)
+const removeForce = ref(false)
+const removeVolumes = ref(false)
+const stopTimeout = ref('')
+const killSignal = ref('SIGTERM')
+const logTarget = ref<ContainerRow | null>(null)
+
+const confirmMessage = computed(() => {
+  const name = confirming.value?.row.container.name ?? ''
+  switch (confirming.value?.kind) {
+    case 'remove':
+      return `删除不可恢复。请输入 ${name} 以确认。`
+    case 'stop':
+      return `将向 ${name} 发送停止信号，正在处理中的请求会中断。`
+    case 'kill':
+      return `将立即向 ${name} 发送信号，不给优雅退出的机会。`
+    default:
+      return ''
+  }
+})
+
+function badgeClass(state: string): string {
+  switch (state) {
+    case 'running':
+      return 'badge--ok'
+    case 'paused':
+      return 'badge--warn'
+    case 'restarting':
+      return 'badge--info'
+    default:
+      return 'badge--off'
+  }
+}
+
+function memText(row: ContainerRow): string {
+  const s = row.stat
+  if (!s) {
+    return '—'
+  }
+  // MemLimit 为 0 表示未设内存上限，此时百分比无意义（protocol 约定，不展示）。
+  const pct = s.mem_limit > 0 ? ` / ${formatPercent(s.mem_percent)}` : ''
+  return `${formatBytes(s.mem_usage)}${pct}`
+}
+
+function onSelectHost(e: Event) {
+  const v = Number((e.target as HTMLSelectElement).value)
+  if (Number.isFinite(v) && v > 0) {
+    void ct.selectServer(v)
+  }
+}
+
+/** 无需确认的动作：执行 → toast → 重拉清单反映新状态。 */
+async function direct(row: ContainerRow, action: 'start' | 'restart' | 'pause' | 'unpause', label: string) {
+  if (acting.value) {
+    return
+  }
+  acting.value = true
+  try {
+    await containerAction(ct.selectedId, row.container.id, action)
+    ui.notifyNotice(`已${label} ${row.container.name}`)
+    await ct.load()
+  } catch (e) {
+    ui.notifyError(e)
+  } finally {
+    acting.value = false
+  }
+}
+
+function askStop(row: ContainerRow) {
+  stopTimeout.value = ''
+  confirming.value = { kind: 'stop', row }
+}
+
+function askKill(row: ContainerRow) {
+  killSignal.value = 'SIGTERM'
+  confirming.value = { kind: 'kill', row }
+}
+
+function askRemove(row: ContainerRow) {
+  removeForce.value = false
+  removeVolumes.value = false
+  confirming.value = { kind: 'remove', row }
+}
+
+function openLogs(row: ContainerRow) {
+  logTarget.value = row
+}
+
+async function onConfirmAction() {
+  const cur = confirming.value
+  if (!cur) {
+    return
+  }
+  confirming.value = null
+  acting.value = true
+  try {
+    if (cur.kind === 'remove') {
+      // cid 用容器名：后端 confirm 须与 URL 里的 cid 完全一致，
+      // 让用户输名字而不是 64 位 ID（Engine 接受名字作容器引用）。
+      await removeContainer(ct.selectedId, cur.row.container.name, {
+        force: removeForce.value,
+        volumes: removeVolumes.value,
+        confirm: cur.row.container.name,
+      })
+      ui.notifyNotice(`已删除 ${cur.row.container.name}`)
+    } else if (cur.kind === 'stop') {
+      const t = stopTimeout.value.trim()
+      await containerAction(ct.selectedId, cur.row.container.id, 'stop', t ? { timeout_sec: Number(t) } : {})
+      ui.notifyNotice(`已停止 ${cur.row.container.name}`)
+    } else {
+      await containerAction(ct.selectedId, cur.row.container.id, 'kill', { signal: killSignal.value })
+      ui.notifyNotice(`已向 ${cur.row.container.name} 发送 ${killSignal.value}`)
+    }
+    await ct.load()
+  } catch (e) {
+    ui.notifyError(e)
+  } finally {
+    acting.value = false
+  }
+}
+</script>
+
+<style scoped>
+.ct {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.ct__head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.ct__title {
+  font-size: var(--text-xl);
+}
+
+.ct__sub {
+  margin-top: var(--space-1);
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+}
+
+.ct__head .btn {
+  margin-left: auto;
+  flex: none;
+}
+
+.ct__bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.ct__host,
+.ct__all {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+}
+
+.ct__select {
+  height: 32px;
+  width: auto;
+  min-width: 180px;
+  padding: 0 var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.ct__err {
+  padding: var(--space-3);
+  background: var(--danger-subtle);
+  border: 1px solid var(--danger-border);
+  border-radius: var(--radius-md);
+  color: var(--danger);
+  font-size: var(--text-sm);
+}
+
+.ct__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.ct__table th {
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--border-default);
+  color: var(--fg-subtle);
+  font-weight: var(--weight-normal);
+  text-align: left;
+}
+
+.ct__table td {
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
+  vertical-align: middle;
+}
+
+.ct__table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.ct__name {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--weight-medium);
+}
+
+.ct__image {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-muted);
+}
+
+.badge {
+  display: inline-block;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.badge--ok {
+  background: var(--success-subtle);
+  border: 1px solid var(--success-border);
+  color: var(--success);
+}
+
+.badge--warn {
+  background: var(--warning-subtle);
+  border: 1px solid var(--warning-border);
+  color: var(--warning);
+}
+
+.badge--info {
+  background: var(--accent-subtle);
+  border: 1px solid var(--accent-border);
+  color: var(--fg-default);
+}
+
+.badge--off {
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border-default);
+  color: var(--fg-subtle);
+}
+
+.ct__acts-col {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.ct__acts {
+  white-space: nowrap;
+}
+
+.link {
+  padding: 0 var(--space-1);
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.link:hover:not(:disabled) {
+  color: var(--accent-hover);
+  text-decoration: underline;
+}
+
+.link:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.link--warn {
+  color: var(--warning);
+}
+
+.link--danger {
+  color: var(--danger);
+}
+
+.ct__empty {
+  padding: var(--space-6);
+  background: var(--bg-elev-1);
+  border: 1px dashed var(--border-default);
+  border-radius: var(--radius-md);
+  text-align: center;
+}
+
+.ct__empty-title {
+  color: var(--fg-muted);
+  font-size: var(--text-base);
+}
+
+.ct__empty-hint {
+  margin-top: var(--space-2);
+  color: var(--fg-subtle);
+  font-size: var(--text-xs);
+}
+
+.opt,
+.opt-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+}
+
+.opt-row__input {
+  height: 32px;
+  width: 140px;
+  font-size: var(--text-sm);
+}
+</style>

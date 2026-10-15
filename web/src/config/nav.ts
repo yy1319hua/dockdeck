@@ -15,8 +15,10 @@ export interface NavItem {
 
 export const navItems: NavItem[] = [
   { label: '总览', icon: 'overview', to: 'home' },
+  // 主机详情是按机维度页（/servers/:id，要 id），侧栏无法静态链接——
+  // 从总览卡片进入；此项保持置灰，不做假链接。
   { label: '主机详情', icon: 'host' },
-  { label: '容器', icon: 'container' },
+  { label: '容器', icon: 'container', to: 'containers' },
   { label: '镜像', icon: 'image' },
   { label: 'Compose', icon: 'compose' },
   { label: '文件', icon: 'files' },

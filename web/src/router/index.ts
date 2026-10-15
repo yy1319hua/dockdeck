@@ -2,6 +2,7 @@ import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import AppShell from '@/components/layout/AppShell.vue'
 import Overview from '@/pages/Overview.vue'
 import HostDetail from '@/pages/HostDetail.vue'
+import Containers from '@/pages/Containers.vue'
 import DesignTokens from '@/pages/DesignTokens.vue'
 import Login from '@/pages/Login.vue'
 import Setup from '@/pages/Setup.vue'
@@ -40,6 +41,13 @@ const routes: RouteRecordRaw[] = [
         name: 'host-detail',
         component: HostDetail,
         meta: { title: '主机详情 · DockDeck', requiresAuth: true },
+      },
+      {
+        // S7.3 容器页：全局页 + 顶部主机切换器（清单按机维度，切换在页内做）。
+        path: 'containers',
+        name: 'containers',
+        component: Containers,
+        meta: { title: '容器 · DockDeck', requiresAuth: true },
       },
       {
         // 设计令牌色卡页：开发期自检用。

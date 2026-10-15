@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import AppShell from '@/components/layout/AppShell.vue'
 import Overview from '@/pages/Overview.vue'
+import HostDetail from '@/pages/HostDetail.vue'
 import DesignTokens from '@/pages/DesignTokens.vue'
 import Login from '@/pages/Login.vue'
 import Setup from '@/pages/Setup.vue'
@@ -33,6 +34,12 @@ const routes: RouteRecordRaw[] = [
         component: Overview,
         // S6.4 已定：状态与数据须登录才显示。未登录由守卫挡到 /login。
         meta: { title: '总览 · DockDeck', requiresAuth: true },
+      },
+      {
+        path: 'servers/:id',
+        name: 'host-detail',
+        component: HostDetail,
+        meta: { title: '主机详情 · DockDeck', requiresAuth: true },
       },
       {
         // 设计令牌色卡页：开发期自检用。

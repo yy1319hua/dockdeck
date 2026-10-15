@@ -6,10 +6,16 @@
   拿不到曲线（点数不足）时退回显示累计值并注明，绝不编一个速率出来。
 -->
 <template>
-  <article class="card host" :class="{ 'host--offline': !live.online }">
+  <article
+    class="card host"
+    :class="{ 'host--offline': !live.online }"
+    @click="goDetail"
+  >
     <header class="host__head">
       <span class="host__dot" :class="live.online ? 'host__dot--on' : 'host__dot--off'" />
-      <h3 class="host__name" :title="live.server.name">{{ live.server.name }}</h3>
+      <h3 class="host__name" :title="live.server.name">
+        <RouterLink :to="`/servers/${live.server.id}`" @click.stop>{{ live.server.name }}</RouterLink>
+      </h3>
       <span class="host__seen">{{ seenText }}</span>
     </header>
 
@@ -33,7 +39,7 @@
     </div>
 
     <div class="host__chart">
-      <MetricChart :points="points" />
+      <MetricChart :points="points" metric="cpu" :height="56" />
     </div>
 
     <p v-if="live.error" class="host__err" :title="live.error">{{ live.error }}</p>
@@ -43,12 +49,19 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import MetricChart from '@/components/MetricChart.vue'
 import { fetchOverview, type HostPointWire } from '@/api/metrics'
 import type { ServerLive } from '@/stores/overview'
 import { formatAgo, formatBytes, formatPercent, formatRate } from '@/utils/format'
 
 const props = defineProps<{ live: ServerLive }>()
+const router = useRouter()
+
+// 整卡可点进详情；标题本身也是真链接，键盘用户不必依赖点击。
+function goDetail() {
+  void router.push(`/servers/${props.live.server.id}`)
+}
 
 const points = ref<HostPointWire[]>([])
 let disposed = false
@@ -128,6 +141,7 @@ const netText = computed(() => {
 
 <style scoped>
 .host {
+  cursor: pointer;
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
@@ -159,6 +173,14 @@ const netText = computed(() => {
 .host__dot--off {
   background: var(--danger);
   box-shadow: 0 0 0 3px var(--danger-subtle);
+}
+
+.host__name a {
+  color: inherit;
+}
+
+.host__name a:hover {
+  color: var(--accent-hover);
 }
 
 .host__name {

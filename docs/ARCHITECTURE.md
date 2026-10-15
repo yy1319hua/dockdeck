@@ -102,8 +102,8 @@ Hub API 前缀 `/api/v1`，响应统一 `{ "data": ..., "error": { "code", "mess
 | `GET .../containers/{cid}/logs?tail=&since=&until=&follow=` | `read:containers` | 日志 |
 | `GET .../images` `POST .../images/pull` `DELETE .../images/{ref}` `POST .../prune` | `read:`/`write:containers` | 镜像 |
 | `GET .../compose` `POST .../compose/{project}/{action}` `GET .../compose/{project}/logs` `GET/PUT .../compose/{project}/file` `POST .../compose/{project}/diff` | `read:`/`write:containers` | Compose（list/写动作/日志；YAML 读写与 diff 预览。Agent 侧 S4.2+S4.3 落地，**Hub 侧转发 S4.7 补齐**。写 YAML 走 `ComposeDirs` 白名单而非 `fs-root`，故归 `write:containers` 而非 `write:files`） |
-| `GET .../files?path=` `GET .../files/stat?path=` `GET .../files/content?path=` | `read:files` | 文件列表/元信息/读取（**scope 由原定的 `read:metrics` 改为 `read:files`**：与「写不蕴含读、读文件≠读指标」的既有口径一致。Agent 侧 S5.1 已落地，Hub 侧路由随 S5.5） |
-| `PUT .../files/content` `POST .../files/{action}` | `write:files` | 写/删/建目录/改名，限根白名单，写前自动 `*.bak.<RFC3339>` 备份（Agent 侧 S5.1 已落地，Hub 侧路由随 S5.5） |
+| `GET .../files?path=` `GET .../files/stat?path=` `GET .../files/content?path=` | `read:files` | 文件列表/元信息/读取（**scope 由原定的 `read:metrics` 改为 `read:files`**：与「写不蕴含读、读文件≠读指标」的既有口径一致。Agent 侧 S5.1 已落地，Hub 侧路由已随 S5.5 落地） |
+| `PUT .../files/content` `POST .../files/{action}` | `write:files` | 写/删/建目录/改名，限根白名单，写前自动 `*.bak.<RFC3339>` 备份（Agent 侧 S5.1 已落地，Hub 侧路由已随 S5.5 落地） |
 | `GET /audit` `GET /audit/export` | `read:audit` | 审计查询与导出 |
 | `GET /ws` | 会话 | WebSocket：`log`、`stats` 推送 |
 | `GET /api/openapi.json` | 公开 | spec 本体 |
@@ -181,13 +181,13 @@ Compose **没有 daemon API**：与容器/镜像走 Engine socket HTTP 不同，
   - 文件操作直接吃 `ResolveProject` 给出的白名单路径（穿越拦截仍是白名单这一关，不另行校验路径）；三个端点均**先解析项目再解 body**：未知项目一律 404（不读、不写、也不解 body），已知项目 body 非法（`httpx.DecodeJSON` 的 `DisallowUnknownFields`）400。
   - 路由：`file` / `diff` 是字面量段，比 `POST .../{project}/{action}` 的通配更具体，Go mux 按最具体优先匹配，不与 action 路由冲突（"diff" 本身也不是合法动作）。
 
-#### 文件管理契约（S5.1–S5.4/S5.6，Agent 侧已落地；Hub 侧转发与 scope 随 S5.5）
+#### 文件管理契约（S5.1–S5.4/S5.6 Agent 侧 + S5.5 Hub 侧转发/审计/scope，均已落地）
 
 文件管理是这个项目里唯一的通用写能力，边界因此收得比别处紧：**未配 `--fs-root` 时 Agent 一条路由都不注册**，
 功能在网络层就不存在；配了根目录而根不可用时**启动直接失败**，不静默降级成「模块关闭」
 （用户以为开着、实际是关的，这种误解比启动失败危险）。
 
-Agent 路由（Hub 侧同构路径 `/api/v1/servers/{id}/files*` 随 S5.5）：
+Agent 路由（Hub 侧同构路径 `/api/v1/servers/{id}/files*` 已随 S5.5 落地，审计动作 `file.list`/`file.stat`/`file.content`/`file.write`/`file.action`）：
 
 | Agent 路由 | 语义 | scope（S5.5 启用） |
 | --- | --- | --- |
@@ -272,7 +272,7 @@ Agent 侧只读 `/proc`，不引入 gopsutil 这类额外依赖（交叉编译�
 
 ### 审计覆盖面（S3.4 起读+写全量，S3.6 补齐）
 
-- **已纳入**：容器 5 端点（list/inspect/logs/action/remove，S3.4）+ 指标 2 端点（`metrics.latest`/`metrics.overview`，读也审——「谁看过哪台机器」同样是安全审计对象，S3.6 补）+ Token 2 写端点（`token.create`/`token.revoke`，S3.6 补）。auth 的 login/logout/setup/password 由 handler 内自审计（含失败路径），不套中间件。
+- **已纳入**：容器 5 端点（list/inspect/logs/action/remove，S3.4）+ 指标 2 端点（`metrics.latest`/`metrics.overview`，读也审——「谁看过哪台机器」同样是安全审计对象，S3.6 补）+ Token 2 写端点（`token.create`/`token.revoke`，S3.6 补）+ 文件 5 端点（`file.list`/`file.stat`/`file.content`/`file.write`/`file.action`，读+写全量，S5.5）。auth 的 login/logout/setup/password 由 handler 内自审计（含失败路径），不套中间件。
 - **机制**：`middleware.Audit` 包在 handler 外、鉴权链内——匿名 401 与 scope 403 属鉴权层事件不留行（否则探针机器人刷满审计表）；成功与失败（≥400）都落行，`server_id` 从 `{id}` 路径参数自动带（只认 `/api/v1/servers/` 前缀，Token 端点的 `{id}` 是 Token ID 不是服务器，记 0，ID 在 `target` 列不丢）。
 - **审计表无外键**（迁移 0004）：`server_id`/`user_id` 不引用活表——「打向不存在服务器的探测」必须留痕（旧 schema 下这种行被外键静默吞掉，恰是最该留的行）；审计行记录「请求打向哪、谁打的」，实体可以从未存在或已被删。对照：`metrics_latest`/`container_snapshots` 是活数据，外键保留。
 - **流式端点**（logs follow）的审计行落在流结束时——连接多久，记录多久后落库。

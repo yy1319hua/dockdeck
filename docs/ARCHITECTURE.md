@@ -54,7 +54,7 @@ Agent 启动时校验绑定地址属于 tailscale0，否则拒绝启动（`--all
   token 为服务端生成的随机串，**库里只存 SHA-256，明文仅在创建时显示一次**；
   带 scope 与过期时间，撤销后立即失效。scope：
   `read:metrics`（主机与容器指标只读）、`read:containers`（容器/镜像/Compose 清单只读）、
-  `write:containers`（容器操作）、`write:files`（文件写）、`read:audit`（审计只读）。
+  `write:containers`（容器操作）、`read:files`（文件列表/元信息/读取）、`write:files`（文件写）、`read:audit`（审计只读）。
   Token 不能访问 UI 专属端点，cookie 会话不识别 Bearer 头——避免会话固定与 CSRF 面扩散。
 - Hub 侧：自签证书 + 指纹写入设置页；`DD_TLS_MODE=self|none`。
   `none` 只允许监听 127.0.0.1，用于反代场景。
@@ -102,8 +102,8 @@ Hub API 前缀 `/api/v1`，响应统一 `{ "data": ..., "error": { "code", "mess
 | `GET .../containers/{cid}/logs?tail=&since=&until=&follow=` | `read:containers` | 日志 |
 | `GET .../images` `POST .../images/pull` `DELETE .../images/{ref}` `POST .../prune` | `read:`/`write:containers` | 镜像 |
 | `GET .../compose` `POST .../compose/{project}/{action}` `GET .../compose/{project}/logs` `GET/PUT .../compose/{project}/file` `POST .../compose/{project}/diff` | `read:`/`write:containers` | Compose（list/写动作/日志；YAML 读写与 diff 预览。Agent 侧 S4.2+S4.3 落地，**Hub 侧转发 S4.7 补齐**。写 YAML 走 `ComposeDirs` 白名单而非 `fs-root`，故归 `write:containers` 而非 `write:files`） |
-| `GET .../files?path=` `GET .../files/content?path=` | `read:metrics` | 文件列表与读取 |
-| `PUT .../files/content` `POST .../files/{action}` | `write:files` | 写/删/建目录/改名，限根白名单 |
+| `GET .../files?path=` `GET .../files/stat?path=` `GET .../files/content?path=` | `read:files` | 文件列表/元信息/读取（**scope 由原定的 `read:metrics` 改为 `read:files`**：与「写不蕴含读、读文件≠读指标」的既有口径一致。Agent 侧 S5.1 已落地，Hub 侧路由随 S5.5） |
+| `PUT .../files/content` `POST .../files/{action}` | `write:files` | 写/删/建目录/改名，限根白名单，写前自动 `*.bak.<RFC3339>` 备份（Agent 侧 S5.1 已落地，Hub 侧路由随 S5.5） |
 | `GET /audit` `GET /audit/export` | `read:audit` | 审计查询与导出 |
 | `GET /ws` | 会话 | WebSocket：`log`、`stats` 推送 |
 | `GET /api/openapi.json` | 公开 | spec 本体 |
@@ -180,6 +180,44 @@ Compose **没有 daemon API**：与容器/镜像走 Engine socket HTTP 不同，
   - diff 由 `internal/diff.Unified` 自实现（LCS + 上下文窗口分块，`@@` 头与 `diff -u` 同语义：纯新增旧区间 `-0,0`、纯删除新区间 `+0,0`），**零新增依赖**；相同文本（含尾部换行归一）返回空串。预览与写入分两个端点，前端可「先看 diff → 再确认写」。
   - 文件操作直接吃 `ResolveProject` 给出的白名单路径（穿越拦截仍是白名单这一关，不另行校验路径）；三个端点均**先解析项目再解 body**：未知项目一律 404（不读、不写、也不解 body），已知项目 body 非法（`httpx.DecodeJSON` 的 `DisallowUnknownFields`）400。
   - 路由：`file` / `diff` 是字面量段，比 `POST .../{project}/{action}` 的通配更具体，Go mux 按最具体优先匹配，不与 action 路由冲突（"diff" 本身也不是合法动作）。
+
+#### 文件管理契约（S5.1–S5.4/S5.6，Agent 侧已落地；Hub 侧转发与 scope 随 S5.5）
+
+文件管理是这个项目里唯一的通用写能力，边界因此收得比别处紧：**未配 `--fs-root` 时 Agent 一条路由都不注册**，
+功能在网络层就不存在；配了根目录而根不可用时**启动直接失败**，不静默降级成「模块关闭」
+（用户以为开着、实际是关的，这种误解比启动失败危险）。
+
+Agent 路由（Hub 侧同构路径 `/api/v1/servers/{id}/files*` 随 S5.5）：
+
+| Agent 路由 | 语义 | scope（S5.5 启用） |
+| --- | --- | --- |
+| `GET /api/v1/files?root=&path=&depth=` | 目录列表 `FilesList{path,entries,truncated}`；空清单 `[]` 非 `null` | `read:files` |
+| `GET /api/v1/files/stat?path=` | `FileMeta`（大小/类型/修改时间/是否超限） | `read:files` |
+| `GET /api/v1/files/content?path=` | 流式正文；元信息走 `X-DD-File-*` 响应头，被截断时 `X-DD-Truncated: 1` | `read:files` |
+| `PUT /api/v1/files/content?path=` | 流式上传（请求体即内容）；返回 `FileWritten{path,backup_file,size,created}` | `write:files` |
+| `POST /api/v1/files/{action}` | `mkdir` / `delete`（仅空目录）/ `rename`（`dest` 同守白名单）；返回 `FileActionDone` | `write:files` |
+
+- **路径一律相对白名单根**，对外不回宿主机绝对路径（`protocol.FileEntry` 的既有口径）；多根用 `root=<索引>` 寻址，缺省 0。
+- **校验顺序固定，且全在任何 IO 之前**：词法检查（绝对路径 / `..` 段 / 控制字符 / 超长 / 过深）→ 白名单词法前缀 →
+  `EvalSymlinks` realpath → 再前缀（挡软链逃逸）→ 黑名单（请求路径与真实路径各查一遍）。前缀比对带分隔符边界，
+  防 `/data-evil` 冒充 `/data`；`..` 是**显式拒绝**而不是交给 `Clean` 静默吃掉（`Clean("/"+"../x")` 会把越界输入洗成合法请求）。
+- **动作名有两个来源**（路径段与请求体）**必须一致**，不一致 400——不猜调用方想干什么。
+- **列表只列可操作项**：每一项都过一遍关卡，逃逸软链、命中黑名单、悬空软链不出现（看得见就点得动，点了不会 403）；
+  软链按**真实落点**展示（`Name` 是链接名、`Path` 是解引用后的相对路径），同一目标经不同链接出现两次是预期的。
+- **写前备份优先于变更**：覆盖写先落 `<file>.bak.<RFC3339>`，**备份落盘成功才 rename 覆盖**；同秒撞名追加 `.1`/`.2`；
+  写入固定 `0644`（**不带可执行位**，红线「上传物不可被执行」）；新建文件无备份、`created=true`。
+- **目标末段是软链一律拒**（写 / 删 / 改名）：否则 `delete inlink` 删掉的是真目录 `sub`，写 `cert.txt`（白名单内软链）
+  会把别处的文件内容搬进白名单里——两者都不是用户按下去时以为会发生的事。读操作仍可穿软链（`Resolve` 已保证落点在白名单内）。
+- **上限**：单文件 `--fs-max-file`（默认 16 MiB）、目录深度 `--fs-max-depth`（默认 8）、单次列表 `--fs-max-entries`（默认 2000）。
+  读超限→截断并标记；写超限→413 且**原文件一个字节都没动**（先写同目录临时文件、上限检查通过后才动原文件）。
+- **上传上限与鉴权签名体是同一个数**：Agent 验签必须先读完整个 body，故新增 `agenthttp.AuthN`，
+  文件路由的签名体上限 = `max(1 MiB, --fs-max-file)`；两侧共享硬顶为 `protocol.MaxFileUploadBytes = 16 MiB`，
+  `--fs-max-file` 超过它 Agent 启动即报错。**因此上传不是端到端流式**（Hub 与 Agent 都要把 body 读进内存验签，
+  且 Hub 侧读 body 上限必须用同一常量，否则出现「Hub 放行、Agent 413」的错位）；落盘侧仍是流式 + 原子改名。
+  要支持更大的文件，需改该常量并两侧同步发版——这是刻意的取舍：无上限等于给 Agent 装个内存放大器。
+- **黑名单**：内置默认列表（`id_rsa`/`*.pem`/`*.key`/`.env`/`shadow`/`master.key`/`.ssh` 等）+ 配置 `--fs-deny`
+  **只能追加，删不掉默认**；pattern 用 `path.Match`，逐段与整条相对路径各匹配一遍，宁严不宽；
+  pattern 在构造期即校验合法性——留到请求期再「忽略 Match 错误」等于把保护静默关掉。
 
 ## 主机指标采集
 

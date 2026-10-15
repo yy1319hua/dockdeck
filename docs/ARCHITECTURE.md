@@ -302,6 +302,8 @@ Vue 3 + Vite + TS，`vue-router` + `pinia`，图表 uPlot，无重型 UI 框架�
 | 请求层 | **零依赖 `fetch`**（`src/api/client.ts`），不引 axios：需求只到「同源 JSON + 会话 cookie」。**不得带 Bearer 头、不得改 credentials**——ARCHITECTURE 既定：会话不识别 Bearer，且 API Token 不能访问 UI 专属端点；同源由部署保证（生产 Hub 同源，开发期 vite 反代） |
 | 错误语义 | 失败一律 `{"error":{code,message}}`，前端归一为 `ApiError{status,code,message}`；**按 code（`protocol.Code*`）而非 HTTP 状态码判定处置**——`unauthorized`(401) 才引导重新登录，`forbidden`(403) 是权限问题不该踢人，`rate_limited`(429) 只需重试 |
 | 鉴权闭环 | `GET /auth/me` 是唯一事实来源（未登录也 200，靠 `setup_required` 区分该建号还是该登录）；会话由 Hub cookie 持有，前端**不落 localStorage**。守卫顺序：先探测 → 建号优先 → 登录兜底；**探测失败只报错不重定向**；`/login`、`/setup` 必须公开，否则自重定向成环 |
+| 布局 | 主界面由 `AppShell` / `AppSidebar` / `AppTopbar` 三件套承载。**套壳与否取决于路由层级，不是 CSS 开关**：`/` 及其子路由的父组件是 AppShell，`/login`·`/setup` 是顶层裸路由（居中单卡）——改布局时改路由结构，不要在 `App.vue` 里堆 if。响应式**先定手机**：`<1024px` 侧栏为 fixed 抽屉 + 遮罩（点遮罩 / Esc / 路由切换即关），`≥1024px` 才常驻成网格列并可折叠成图标条。`sidebarOpen`（抽屉）与 `sidebarCollapsed`（折叠）是两个独立状态：前者随路由关闭，后者是长期偏好，**路由切换不得重置** |
+| 导航与图标 | 侧栏菜单单一数据源 `src/config/nav.ts`：无 `to` 的项渲染为置灰不可点并带「待实现」，让布局先于功能页定型，S7 只需往里填页面。图标一律走 `AppIcon`（自制 24×24 描边 path，**不引图标库**），与「无重型 UI 框架」同一原则 |
 
 ## 构建与交付
 

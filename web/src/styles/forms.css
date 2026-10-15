@@ -105,3 +105,19 @@
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-md);
 }
+
+/* 破坏性动作的确认按钮（S7.3 起：删容器等）。字色用 --fg-on-accent——
+   它是 tokens 里唯一的「压在强调色上的前景」令牌（白），danger 底上同理；
+   不为它新造令牌，也不写死字面色值。 */
+.btn--danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: var(--fg-on-accent);
+  font-weight: var(--weight-medium);
+}
+
+.btn--danger:hover:not(:disabled) {
+  background: var(--danger);
+  border-color: var(--danger);
+  filter: brightness(1.1);
+}

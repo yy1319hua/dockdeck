@@ -21,6 +21,9 @@ export const useUiStore = defineStore('ui', () => {
   const ready = ref(false)
   const loading = ref(0)
   const error = ref<ErrorInfo | null>(null)
+  /** 操作成功的轻提示（S7.3 起：容器操作的结果反馈）。与 error 分开——失败是 alert，成功是 status。 */
+  const notice = ref<string | null>(null)
+  let noticeTimer: ReturnType<typeof setTimeout> | undefined
   const sidebarOpen = ref(false)
   const sidebarCollapsed = ref(false)
 
@@ -44,6 +47,26 @@ export const useUiStore = defineStore('ui', () => {
 
   function clearError() {
     error.value = null
+  }
+
+  /** 成功提示数秒后自熄；连续成功时重置计时，不堆积。 */
+  function notifyNotice(message: string) {
+    notice.value = message
+    if (noticeTimer !== undefined) {
+      clearTimeout(noticeTimer)
+    }
+    noticeTimer = setTimeout(() => {
+      notice.value = null
+      noticeTimer = undefined
+    }, 4000)
+  }
+
+  function clearNotice() {
+    notice.value = null
+    if (noticeTimer !== undefined) {
+      clearTimeout(noticeTimer)
+      noticeTimer = undefined
+    }
   }
 
   function openSidebar() {
@@ -72,6 +95,9 @@ export const useUiStore = defineStore('ui', () => {
     error,
     notifyError,
     clearError,
+    notice,
+    notifyNotice,
+    clearNotice,
     sidebarOpen,
     sidebarCollapsed,
     openSidebar,

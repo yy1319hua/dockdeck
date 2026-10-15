@@ -42,4 +42,9 @@ export function installGuard(router: Router): void {
 
     return true
   })
+
+  // 标题统一由 meta.title 提供，避免每个页面各自改写 document.title。
+  router.afterEach((to) => {
+    document.title = to.meta.title ?? 'DockDeck'
+  })
 }

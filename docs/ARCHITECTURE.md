@@ -307,6 +307,8 @@ Vue 3 + Vite + TS，`vue-router` + `pinia`，图表 uPlot，无重型 UI 框架�
 | 表单控件 | `src/styles/forms.css` 提供 `.field` / `.field__input` / `.btn` / `.btn--primary` / `.card` 等基础块，**任何页面写表单都用它们**，不得各写各的输入框——S7 设置页（改密、保护名单、API Token）全是表单，不统一迟早长出几种不一样的输入框 |
 | 认证错误语义 | 登录失败后端**统一回 `invalid_credentials`**（「用户不存在」与「口令错」刻意不区分，避免泄漏用户名是否存在），前端**不得**自作主张提示「用户名不存在」；`account_locked`(429)、`account_disabled`(403)、`already_initialized`(409) 的语义由后端 message 直接呈现。建号唯一硬规则是口令 ≥ 8 位（后端 `weak_password`），前端先拦一次省往返，后端仍复查 |
 | 跳转安全 | 登录后 `redirect` 参数**只接受站内路径**：必须以单个 `/` 开头且不以 `//` 开头——后者是协议相对地址，会把用户送到外站（开放重定向） |
+| 产物内嵌（go:embed） | 前端产物经 `go:embed` 进 Hub 二进制，交付物仍是单个可执行文件。**embed 声明在 `web/assets.go`（`package assets`，`//go:embed all:dist`），不在 `internal/assets`**——`go:embed` 的 pattern 只能引用当前包目录树内的路径（不许 `..`、不许跨包），在 assets 包里写 `all:web/dist` 编译不过。`internal/assets` 以别名 import `github.com/yy1319hua/dockdeck/web` 取用 |
+| 构建顺序与降级 | 打包前必须**先 `npm run build` 再 `go build`**，否则嵌进去的只是占位目录。`internal/assets` 取资源分两级：dist 内有 `index.html` → 用真产物；否则 → 回退 S1 占位页，**保证 fresh clone 只跑 `go build` 也能起 Hub 且不白屏**。该降级依赖 GAP-8（`web/dist` 目录随仓库存在，含入库的 `.gitkeep`）——目录没了，embed 会直接编译失败 |
 
 ## 构建与交付
 

@@ -6,6 +6,8 @@
      所以这里显示总数并注明「明细待后端立项」，不画一张假的进程表。
    * 网络曲线画的是**速率**（相邻点差分），首点无前值可比较，留空断线而非画成 0。
    * 容器表只显示占用最高的 10 个，其余用「还有 N 个」交代，避免长列表淹没重点。
+   * 实时快照与曲线每 30s 静默轮询（REFRESH_MS 与总览页、后端采集周期对齐），
+     轮询失败保留上次成功的数据、只把原因记进 error——不清空页面。
 -->
 <template>
   <div class="host">
@@ -16,6 +18,7 @@
         <h1 class="host__name">{{ h.server?.name ?? `主机 #${id}` }}</h1>
       </div>
       <span class="host__seen">{{ seenText }}</span>
+      <span v-if="h.refreshing" class="host__poll">刷新中…</span>
     </header>
 
     <p v-if="h.error" class="host__err">{{ h.error }}</p>
@@ -106,7 +109,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, watch } from 'vue'
+import { computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import MetricChart from '@/components/MetricChart.vue'
 import { RANGES } from '@/api/metrics'
@@ -124,15 +127,18 @@ const id = computed(() => {
 
 onMounted(() => {
   if (id.value > 0) {
-    void h.load(id.value)
+    h.start(id.value)
   }
 })
 
+onUnmounted(() => h.stop())
+
 // 同一路由组件在主机间切换（/servers/1 → /servers/2）不会重新挂载，必须 watch。
 watch(id, (v) => {
+  h.stop()
   h.reset()
   if (v > 0) {
-    void h.load(v)
+    h.start(v)
   }
 })
 
@@ -233,6 +239,12 @@ const procText = computed(() => {
 
 .host__seen {
   margin-left: auto;
+  flex: none;
+  color: var(--fg-subtle);
+  font-size: var(--text-xs);
+}
+
+.host__poll {
   flex: none;
   color: var(--fg-subtle);
   font-size: var(--text-xs);

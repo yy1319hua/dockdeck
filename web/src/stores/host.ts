@@ -1,6 +1,7 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { fetchServers, isOnline, type Server } from '@/api/servers'
+import { REFRESH_MS } from './overview'
 import {
   fetchLatest,
   fetchOverview,
@@ -21,7 +22,10 @@ export const useHostStore = defineStore('host', () => {
   const points = ref<HostPointWire[]>([])
   const range = ref<RangeKey>('1h')
   const loading = ref(false)
+  /** 后台轮询中（与 loading 分开：轮询不该让区间按钮反复失效）。 */
+  const refreshing = ref(false)
   const error = ref<string | null>(null)
+  let timer: ReturnType<typeof setInterval> | undefined
 
   const online = computed(() => (server.value ? isOnline(server.value) : false))
   /** 按 CPU 占用降序：运维看详情页，第一个问题总是「谁在吃资源」。 */
@@ -39,20 +43,42 @@ export const useHostStore = defineStore('host', () => {
     points.value = r.points ?? []
   }
 
+  /** 实时快照 + 当前区间曲线一把拉完（轮询与首载共用，口径不劈叉）。 */
+  async function pull(id: number): Promise<void> {
+    // 清单信息（名称/在线）与实时指标并行拉，互不依赖。
+    const [list, latest] = await Promise.all([fetchServers(), fetchLatest(id)])
+    server.value = list.find((s) => s.id === id) ?? null
+    metrics.value = latest.metrics
+    containers.value = latest.containers ?? []
+    await loadRange(id)
+  }
+
   async function load(id: number): Promise<void> {
     loading.value = true
     try {
-      // 清单信息（名称/在线）与实时指标并行拉，互不依赖。
-      const [list, latest] = await Promise.all([fetchServers(), fetchLatest(id)])
-      server.value = list.find((s) => s.id === id) ?? null
-      metrics.value = latest.metrics
-      containers.value = latest.containers ?? []
-      await loadRange(id)
+      await pull(id)
       error.value = null
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e)
     } finally {
       loading.value = false
+    }
+  }
+
+  /**
+   * 后台轮询：与首载同一条 pull，但不动 loading（区间按钮不跟着反复失效），
+   * 失败时保留上次成功的数据、只把原因记进 error——监控页被一次网络抖动
+   * 清空成空白比显示旧数据更糟。
+   */
+  async function poll(id: number): Promise<void> {
+    refreshing.value = true
+    try {
+      await pull(id)
+      error.value = null
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : String(e)
+    } finally {
+      refreshing.value = false
     }
   }
 
@@ -70,6 +96,20 @@ export const useHostStore = defineStore('host', () => {
       error.value = e instanceof Error ? e.message : String(e)
     } finally {
       loading.value = false
+    }
+  }
+
+  /** 进页面起表、离开停表；节奏 REFRESH_MS 与总览页、后端采集周期（30s）对齐。 */
+  function start(id: number): void {
+    void load(id)
+    stop()
+    timer = setInterval(() => void poll(id), REFRESH_MS)
+  }
+
+  function stop(): void {
+    if (timer !== undefined) {
+      clearInterval(timer)
+      timer = undefined
     }
   }
 
@@ -91,10 +131,13 @@ export const useHostStore = defineStore('host', () => {
     points,
     range,
     loading,
+    refreshing,
     error,
     online,
     load,
     setRange,
+    start,
+    stop,
     reset,
   }
 })

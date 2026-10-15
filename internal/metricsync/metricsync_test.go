@@ -5,6 +5,7 @@ package metricsync
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -173,5 +174,54 @@ func TestRunStopsOnContextCancel(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("ctx 取消后 Run 仍未退出")
+	}
+}
+
+// 在线状态以 servers.last_seen 为准，前端据此算在线率——
+// 这两个用例守的是「字段真的被写」，而不是「代码看起来会写」。
+func serverState(t *testing.T, st *store.Store, id int64) (seen string, lastErr string) {
+	t.Helper()
+	var s, e sql.NullString
+	if err := st.DB.QueryRowContext(context.Background(),
+		`SELECT last_seen, last_error FROM servers WHERE id=?`, id).Scan(&s, &e); err != nil {
+		t.Fatalf("读服务器状态: %v", err)
+	}
+	return s.String, e.String
+}
+
+func TestPollRecordsLastSeenOnSuccess(t *testing.T) {
+	st := newStore(t)
+	id, fa := seedServer(t, st, "node1", true)
+	fa.SetMetrics(sampleMetrics())
+
+	p := New(st, time.Second, 24*time.Hour, t.Logf)
+	p.PollOnce(context.Background())
+
+	seen, lastErr := serverState(t, st, id)
+	if seen == "" {
+		t.Fatal("采集成功后 last_seen 必须有值——否则前端会把它判成离线")
+	}
+	if lastErr != "" {
+		t.Fatalf("采集成功后 last_error 应被清空，实际: %q", lastErr)
+	}
+}
+
+func TestPollRecordsLastErrorOnFailure(t *testing.T) {
+	st := newStore(t)
+	id, _ := seedServer(t, st, "bad", true)
+	if _, err := st.DB.ExecContext(context.Background(),
+		`UPDATE servers SET base_url=? WHERE id=?`, "https://127.0.0.1:1", id); err != nil {
+		t.Fatalf("改坏地址: %v", err)
+	}
+
+	p := New(st, 50*time.Millisecond, 24*time.Hour, t.Logf)
+	p.PollOnce(context.Background())
+
+	seen, lastErr := serverState(t, st, id)
+	if seen == "" {
+		t.Fatal("失败也要更新 last_seen：在线判定看的是最后一次通讯，不是最后一次成功")
+	}
+	if lastErr == "" {
+		t.Fatal("采集失败应把原因写进 last_error，否则排障无从下手")
 	}
 }

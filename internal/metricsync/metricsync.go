@@ -110,8 +110,26 @@ func (p *Poller) round(ctx context.Context) {
 	p.lastPrune = time.Now()
 }
 
-// pollServer 采集单台：拉主机指标 + 容器指标，写入实时快照与历史点。
+// pollServer 采集单台并记下通讯结果。
+//
+// 成败都要落到 servers.last_seen / last_error：在线状态以 last_seen 为准，
+// 只在成功时更新的话，机器掉线后 last_seen 会停在最后一次成功，界面就永远显示在线。
 func (p *Poller) pollServer(ctx context.Context, id int64, name string) error {
+	err := p.collect(ctx, id, name)
+
+	errText := ""
+	if err != nil {
+		errText = err.Error()
+	}
+	if terr := p.st.TouchServer(ctx, id, time.Now().UTC(), errText); terr != nil {
+		// 记状态失败不掩盖采集本身的结论，但要留痕。
+		p.logf("metricsync: 服务器 %d(%s) 通讯状态写入失败: %v", id, name, terr)
+	}
+	return err
+}
+
+// collect 拉主机指标 + 容器指标，写入实时快照与历史点。
+func (p *Poller) collect(ctx context.Context, id int64, name string) error {
 	conn, err := p.st.ServerConn(ctx, id)
 	if err != nil {
 		// 含 ErrServerDisabled（已禁用）与令牌解密失败，两者都不该静默跳过后续处理，

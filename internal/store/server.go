@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/yy1319hua/dockdeck/internal/crypto"
 )
@@ -106,4 +107,21 @@ func (s *Store) ListServers(ctx context.Context) ([]ServerSummary, error) {
 		out = append(out, ss)
 	}
 	return out, rows.Err()
+}
+
+// TouchServer 记录一次与 Agent 的通讯结果：最后通讯时间 + 最近一次错误。
+//
+// 在线状态以 last_seen 为准（见 GET /api/v1/servers 的说明），所以无论采集成败
+// 都要更新——只在成功时写的话，一台机器掉线后 last_seen 会永远停在最后一次成功，
+// 前端就永远把它显示成在线。errText 为空表示本次成功，此时清空 last_error。
+func (s *Store) TouchServer(ctx context.Context, id int64, ts time.Time, errText string) error {
+	// 无错误时写 NULL 而不是空串：空串会被前端当成「有一条空的错误信息」。
+	var lastErr any
+	if errText != "" {
+		lastErr = errText
+	}
+	_, err := s.DB.ExecContext(ctx,
+		`UPDATE servers SET last_seen=?, last_error=? WHERE id=?`,
+		ts.UTC().Format(time.RFC3339), lastErr, id)
+	return err
 }

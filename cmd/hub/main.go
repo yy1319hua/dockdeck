@@ -549,6 +549,103 @@ func (s *server) routes() http.Handler {
 		InternalRef: "cmd/hub/compose.go composeFilePut",
 	}, middleware.Audit(s.st, "compose.file.write", s.composeFilePut))
 
+	// ---- S5.5 文件管理转发（Agent 侧 S5.1–S5.4/S5.6 已落地，Hub 侧补齐转发+审计）----
+	// read:files 覆盖 list/stat/content（读）；write:files 覆盖 content 写与动作（写）。
+	tbl.Add(route.Entry{
+		Method: "GET", Path: "/api/v1/servers/{id}/files", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadFiles,
+		Summary: "文件清单", Tags: []string{"Files"},
+		Desc: "实时取自 Agent：在配置的根白名单内递归列举目录内容；空清单编码为 [] 而非 null。" +
+			"root 缺省 0（首个根），path 缺省根自身，depth 缺省 1（只列直接子项）。",
+		Params: []route.Param{
+			{Name: "id", Desc: "服务器 ID", Required: true, Example: "1", SchemaType: "integer", SchemaFmt: "int64"},
+			{Name: "root", Desc: "根白名单序号（缺省 0）", Required: false, Example: "0", SchemaType: "integer", SchemaFmt: "int64"},
+			{Name: "path", Desc: "相对根的路径（可空，表示根自身）", Required: false, Example: "app/config"},
+			{Name: "depth", Desc: "递归深度（缺省 1）", Required: false, Example: "1", SchemaType: "integer", SchemaFmt: "int64"},
+		},
+		Responses: []route.Response{
+			{Status: 403, Desc: "服务器已禁用"},
+			{Status: 502, Desc: "Agent 不可达或返回异常"},
+		},
+		InternalRef: "cmd/hub/files.go fileList",
+	}, middleware.Audit(s.st, "file.list", s.fileList))
+
+	tbl.Add(route.Entry{
+		Method: "GET", Path: "/api/v1/servers/{id}/files/stat", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadFiles,
+		Summary: "文件元信息", Tags: []string{"Files"},
+		Desc: "取文件或目录的元信息（大小、类型、修改时间、是否被截断）。不返回正文——正文走 content 流式下载。",
+		Params: []route.Param{
+			{Name: "id", Desc: "服务器 ID", Required: true, Example: "1", SchemaType: "integer", SchemaFmt: "int64"},
+			{Name: "root", Desc: "根白名单序号（缺省 0）", Required: false, Example: "0", SchemaType: "integer", SchemaFmt: "int64"},
+			{Name: "path", Desc: "相对根的路径", Required: false, Example: "app/config.yaml"},
+		},
+		Responses: []route.Response{
+			{Status: 403, Desc: "服务器已禁用"},
+			{Status: 404, Desc: "路径不存在"},
+			{Status: 502, Desc: "Agent 不可达或返回异常"},
+		},
+		InternalRef: "cmd/hub/files.go fileStat",
+	}, middleware.Audit(s.st, "file.stat", s.fileStat))
+
+	tbl.Add(route.Entry{
+		Method: "GET", Path: "/api/v1/servers/{id}/files/content", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadFiles,
+		Summary: "文件正文下载", Tags: []string{"Files"}, NoEnvelope: true, ContentType: "application/octet-stream",
+		Desc: "裸流透传，无信封：正文可能是任意二进制。元信息走响应头（X-DD-File-Path / X-DD-File-Size /" +
+			" X-DD-Truncated，截断标记用于提示客户端「文件比这更长」）。可按单文件上限截断。",
+		Params: []route.Param{
+			{Name: "id", Desc: "服务器 ID", Required: true, Example: "1", SchemaType: "integer", SchemaFmt: "int64"},
+			{Name: "root", Desc: "根白名单序号（缺省 0）", Required: false, Example: "0", SchemaType: "integer", SchemaFmt: "int64"},
+			{Name: "path", Desc: "相对根的路径", Required: false, Example: "app/config.yaml"},
+		},
+		Responses: []route.Response{
+			{Status: 403, Desc: "服务器已禁用"},
+			{Status: 404, Desc: "路径不存在"},
+			{Status: 502, Desc: "Agent 不可达或打开流失败"},
+		},
+		InternalRef: "cmd/hub/files.go fileContent",
+	}, middleware.Audit(s.st, "file.content", s.fileContent))
+
+	tbl.Add(route.Entry{
+		Method: "PUT", Path: "/api/v1/servers/{id}/files/content", AuthMode: route.AuthScope, Scope: apitoken.ScopeWriteFiles,
+		Summary: "写入文件内容", Tags: []string{"Files"},
+		Desc: "请求体即文件内容（不经信封）。Agent 侧写前先把当前内容备份为 <file>.bak.<RFC3339>，" +
+			"备份落盘成功才覆盖写，响应回传备份路径供回滚。上传上限由共享常量 MaxFileUploadBytes（16 MiB）" +
+			"约束：Hub 与 Agent 同源，避免「Hub 放行、Agent 413」。",
+		Params: []route.Param{
+			{Name: "id", Desc: "服务器 ID", Required: true, Example: "1", SchemaType: "integer", SchemaFmt: "int64"},
+			{Name: "root", Desc: "根白名单序号（缺省 0）", Required: false, Example: "0", SchemaType: "integer", SchemaFmt: "int64"},
+			{Name: "path", Desc: "相对根的路径", Required: false, Example: "app/config.yaml"},
+		},
+		Responses: []route.Response{
+			{Status: 403, Desc: "服务器已禁用，或命中敏感黑名单/越界路径"},
+			{Status: 404, Desc: "路径不存在"},
+			{Status: 413, Desc: "上传内容超过单文件上限"},
+			{Status: 502, Desc: "Agent 不可达，或备份/写入失败"},
+		},
+		InternalRef: "cmd/hub/files.go fileContentPut",
+	}, middleware.Audit(s.st, "file.write", s.fileContentPut))
+
+	tbl.Add(route.Entry{
+		Method: "POST", Path: "/api/v1/servers/{id}/files/{action}", AuthMode: route.AuthScope, Scope: apitoken.ScopeWriteFiles,
+		Summary: "文件写动作", Tags: []string{"Files"},
+		Desc: "action ∈ mkdir | delete | rename；body {\"action\",\"path\",\"dest\"}（rename 需 dest）。" +
+			"动作名取 URL 段，与请求体必须一致。非法动作由 Hub 侧 agentcli 拦下（400，不出门）。" +
+			"写前备份、路径白名单与敏感黑名单均在 Agent 侧。",
+		Body: &route.Body{Type: "json"},
+		Params: []route.Param{
+			{Name: "id", Desc: "服务器 ID", Required: true, Example: "1", SchemaType: "integer", SchemaFmt: "int64"},
+			{Name: "action", Desc: "mkdir | delete | rename", Required: true, Example: "mkdir"},
+			{Name: "root", Desc: "根白名单序号（缺省 0）", Required: false, Example: "0", SchemaType: "integer", SchemaFmt: "int64"},
+		},
+		Responses: []route.Response{
+			{Status: 400, Desc: "动作不在白名单，或动作名与请求体不一致（本地拦截，不出门）"},
+			{Status: 403, Desc: "服务器已禁用，或命中敏感黑名单/越界路径"},
+			{Status: 404, Desc: "路径不存在"},
+			{Status: 409, Desc: "目标已存在或目录非空"},
+			{Status: 502, Desc: "Agent 不可达或执行失败"},
+		},
+		InternalRef: "cmd/hub/files.go fileAction",
+	}, middleware.Audit(s.st, "file.action", s.fileAction))
+
 	// ---- 占位：S2 起逐步替换为真实实现 ----
 	tbl.Add(route.Entry{
 		Method: "GET", Path: "/api/v1/servers", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadMetrics,

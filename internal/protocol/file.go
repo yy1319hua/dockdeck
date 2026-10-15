@@ -55,6 +55,26 @@ type FileAction struct {
 	Dest string `json:"dest,omitempty"`
 }
 
+// FileWritten 是写入文件内容的结果。
+//
+// BackupFile 是写前备份的相对路径（新文件没有备份时为空）——备份也落在白名单内，
+// 所以同样只给相对路径。Created 表示目标原本不存在，此时没有可回滚的备份。
+type FileWritten struct {
+	Path       string `json:"path"`
+	BackupFile string `json:"backup_file,omitempty"`
+	Size       int64  `json:"size"`
+	Created    bool   `json:"created"`
+}
+
+// FileActionDone 是 mkdir / delete / rename 的结果。
+//
+// Dest 仅 rename 使用：改名后的相对路径（源在 Path）。
+type FileActionDone struct {
+	Action string `json:"action"`
+	Path   string `json:"path"`
+	Dest   string `json:"dest,omitempty"`
+}
+
 // ValidFileAction 判断动作取值是否合法。
 //
 // 写操作入口必须先过它：未知动作一律拒绝，避免出现「动作名拼错却执行了默认分支」的情况。

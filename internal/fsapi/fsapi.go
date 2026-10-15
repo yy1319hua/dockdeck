@@ -42,6 +42,9 @@ var (
 	// ErrIsDir / ErrNotDir 是类型不匹配，供调用方决定 400 还是 409。
 	ErrIsDir  = errors.New("fsapi: 目标是目录")
 	ErrNotDir = errors.New("fsapi: 目标不是目录")
+	// ErrExists / ErrNotEmpty 是冲突类：目标已存在、目录非空（对 409）。
+	ErrExists   = errors.New("fsapi: 目标已存在")
+	ErrNotEmpty = errors.New("fsapi: 目录非空")
 	// 上限类错误。ErrTooLarge 对 413，另两个对 400。
 	ErrTooLarge       = errors.New("fsapi: 超过单文件上限")
 	ErrTooDeep        = errors.New("fsapi: 超过目录深度上限")
@@ -140,6 +143,28 @@ func (g *Guard) MaxDepth() int { return g.maxDepth }
 // MaxEntries 返回单次目录列表的条目上限。
 func (g *Guard) MaxEntries() int { return g.maxEntries }
 
+// ensureNotSymlink 拒绝「最后一段是符号链接」的目标——写、删、改名都要先过它。
+//
+// 理由：这些操作作用在解引用后的真实路径上，而用户看到的是链接名。
+// 若放行，`delete inlink`（链接）会删掉 `sub`（真目录），
+// 写 `cert.txt`（链接到受保护文件）会把别处的文件内容搬进白名单里的新文件。
+// 两种都不是用户按下去时以为会发生的事，所以一律拒绝，让用户直接指名真实路径。
+//
+// 读操作不设这道门：读穿软链是明确的意图，且 Resolve 已保证落点在白名单内。
+func (g *Guard) ensureNotSymlink(res Resolved) error {
+	st, err := os.Lstat(res.Lexical)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	if st.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("%w: %s 是符号链接", ErrPathDenied, res.Rel)
+	}
+	return nil
+}
+
 // Resolved 是一次成功的路径解析结果。
 type Resolved struct {
 	// RootIndex 是命中的根序号。
@@ -147,6 +172,12 @@ type Resolved struct {
 	// Abs 是通过全部校验的绝对路径（已 realpath 解引用）。
 	// 它是内部细节：不要把它写进任何对外响应。
 	Abs string
+	// Lexical 是 realpath 之前的白名单内绝对路径。
+	//
+	// 写/删/改名要靠它判「最后一段是不是符号链接」：os.Lstat(Lexical) 会穿过
+	// 父级软链但不跟最后一段，正好是我们要的语义。少了它就只能拿解引用后的
+	// Abs 去判断，而那时链接信息已经丢了。
+	Lexical string
 	// Rel 是相对根的规范路径（"/" 分隔，根自身为空串）。
 	// 解引用过符号链接后它可能与请求路径不同——这是刻意的：调用方拿到的是
 	// 「真实落在哪里」，后面所有操作都基于它。
@@ -225,7 +256,7 @@ func (g *Guard) resolve(rootIndex int, rel string, mustExist bool) (Resolved, er
 		}
 	}
 
-	return Resolved{RootIndex: rootIndex, Abs: real, Rel: realRel}, nil
+	return Resolved{RootIndex: rootIndex, Abs: real, Lexical: lexical, Rel: realRel}, nil
 }
 
 // checkRel 做词法检查并返回规范相对路径。

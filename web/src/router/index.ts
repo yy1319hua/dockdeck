@@ -2,8 +2,8 @@ import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import AppShell from '@/components/layout/AppShell.vue'
 import HomePlaceholder from '@/pages/HomePlaceholder.vue'
 import DesignTokens from '@/pages/DesignTokens.vue'
-import LoginPlaceholder from '@/pages/LoginPlaceholder.vue'
-import SetupPlaceholder from '@/pages/SetupPlaceholder.vue'
+import Login from '@/pages/Login.vue'
+import Setup from '@/pages/Setup.vue'
 
 declare module 'vue-router' {
   interface RouteMeta {
@@ -31,7 +31,7 @@ const routes: RouteRecordRaw[] = [
         path: '',
         name: 'home',
         component: HomePlaceholder,
-        // S6.4 已定：状态与数据须登录才显示。本轮先由守卫把未登录挡到 /login。
+        // S6.4 已定：状态与数据须登录才显示。未登录由守卫挡到 /login。
         meta: { title: '总览 · DockDeck', requiresAuth: true },
       },
       {
@@ -46,14 +46,14 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/login',
     name: 'login',
-    component: LoginPlaceholder,
+    component: Login,
     meta: { title: '登录 · DockDeck' },
   },
   {
     path: '/setup',
     name: 'setup',
-    component: SetupPlaceholder,
-    meta: { title: '初始化 · DockDeck' },
+    component: Setup,
+    meta: { title: '创建首个账户 · DockDeck' },
   },
 ]
 

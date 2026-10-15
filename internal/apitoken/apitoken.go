@@ -27,6 +27,7 @@ const (
 	ScopeReadMetrics     = "read:metrics"
 	ScopeReadContainers  = "read:containers"
 	ScopeWriteContainers = "write:containers"
+	ScopeReadFiles       = "read:files"
 	ScopeWriteFiles      = "write:files"
 	ScopeReadAudit       = "read:audit"
 )
@@ -36,6 +37,7 @@ var AllScopes = []string{
 	ScopeReadMetrics,
 	ScopeReadContainers,
 	ScopeWriteContainers,
+	ScopeReadFiles,
 	ScopeWriteFiles,
 	ScopeReadAudit,
 }
@@ -46,6 +48,7 @@ var ScopeDesc = map[string]string{
 	ScopeReadMetrics:     "读取主机指标与监控历史",
 	ScopeReadContainers:  "读取容器/镜像/Compose 清单与日志",
 	ScopeWriteContainers: "启停容器、执行 Compose 操作",
+	ScopeReadFiles:       "读取白名单根目录内的文件列表与内容",
 	ScopeWriteFiles:      "在白名单根目录内读写文件",
 	ScopeReadAudit:       "读取审计日志",
 }

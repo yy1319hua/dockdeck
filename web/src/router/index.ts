@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
+import AppShell from '@/components/layout/AppShell.vue'
 import HomePlaceholder from '@/pages/HomePlaceholder.vue'
 import DesignTokens from '@/pages/DesignTokens.vue'
 import LoginPlaceholder from '@/pages/LoginPlaceholder.vue'
@@ -15,13 +16,32 @@ declare module 'vue-router' {
   }
 }
 
+/*
+ * 谁套外壳由路由层级决定，不在 App.vue 里做条件判断：
+ *   / 及其子路由  → 父组件是 AppShell（侧栏 + 顶栏 + 内容）
+ *   /login /setup → 顶层路由，天然不套壳，保持居中单卡
+ * children 的 path 一律不带前导斜杠，否则会脱离父级、退回绝对路径。
+ */
 const routes: RouteRecordRaw[] = [
   {
     path: '/',
-    name: 'home',
-    component: HomePlaceholder,
-    // S6.4 已定：状态与数据须登录才显示。本轮先由守卫把未登录挡到 /login。
-    meta: { title: 'DockDeck', requiresAuth: true },
+    component: AppShell,
+    children: [
+      {
+        path: '',
+        name: 'home',
+        component: HomePlaceholder,
+        // S6.4 已定：状态与数据须登录才显示。本轮先由守卫把未登录挡到 /login。
+        meta: { title: '总览 · DockDeck', requiresAuth: true },
+      },
+      {
+        // 设计令牌色卡页：开发期自检用，S6.3 之后可从生产路由表摘除。
+        path: 'dev/tokens',
+        name: 'design-tokens',
+        component: DesignTokens,
+        meta: { title: 'Design Tokens · DockDeck' },
+      },
+    ],
   },
   {
     path: '/login',
@@ -34,13 +54,6 @@ const routes: RouteRecordRaw[] = [
     name: 'setup',
     component: SetupPlaceholder,
     meta: { title: '初始化 · DockDeck' },
-  },
-  {
-    // 设计令牌色卡页：开发期自检用，S6.3 之后可从生产路由表摘除。
-    path: '/dev/tokens',
-    name: 'design-tokens',
-    component: DesignTokens,
-    meta: { title: 'Design Tokens · DockDeck' },
   },
 ]
 

@@ -1,9 +1,11 @@
-<!-- S6.1 占位首页：仅证明根路由可达。真实总览页在 S7.1。 -->
+<!-- S6.1 占位首页（S3 起被 AppShell 包裹）。真实总览页在 S7.1。 -->
 <template>
   <div class="boot">
     <h1 class="boot__title">DockDeck</h1>
-    <p class="boot__hint">前端骨架已就位（S6.1）· 路由与状态已接线</p>
-    <p class="boot__link"><a href="/dev/tokens">设计令牌色卡 →</a></p>
+    <p class="boot__hint">布局已就位（S6.3）· 手机优先，桌面可折叠侧栏</p>
+    <p class="boot__link">
+      <RouterLink to="/dev/tokens">设计令牌色卡 →</RouterLink>
+    </p>
   </div>
 </template>
 
@@ -18,8 +20,8 @@
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
-  min-height: 100vh;
-  padding: var(--space-5);
+  /* 不再自撑 100vh：外壳已是满高，这里只在内容区内居中。 */
+  padding: var(--space-6) 0;
   text-align: center;
 }
 

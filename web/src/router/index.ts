@@ -1,6 +1,6 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import AppShell from '@/components/layout/AppShell.vue'
-import HomePlaceholder from '@/pages/HomePlaceholder.vue'
+import Overview from '@/pages/Overview.vue'
 import DesignTokens from '@/pages/DesignTokens.vue'
 import Login from '@/pages/Login.vue'
 import Setup from '@/pages/Setup.vue'
@@ -30,12 +30,12 @@ const routes: RouteRecordRaw[] = [
       {
         path: '',
         name: 'home',
-        component: HomePlaceholder,
+        component: Overview,
         // S6.4 已定：状态与数据须登录才显示。未登录由守卫挡到 /login。
         meta: { title: '总览 · DockDeck', requiresAuth: true },
       },
       {
-        // 设计令牌色卡页：开发期自检用，S6.3 之后可从生产路由表摘除。
+        // 设计令牌色卡页：开发期自检用。
         path: 'dev/tokens',
         name: 'design-tokens',
         component: DesignTokens,

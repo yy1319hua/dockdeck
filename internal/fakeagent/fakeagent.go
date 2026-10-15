@@ -59,6 +59,15 @@ type Fake struct {
 	composeFile        protocol.ComposeFile
 	composeFileDiff    protocol.ComposeFileDiff
 	composeFileWritten protocol.ComposeFileWritten
+	// fileList / fileMeta / fileContent* / fileWritten / fileActionDone 是文件端点
+	// （S5.5）的配置响应。content 走裸流（与真实 Agent 一致）：GET 返回正文与
+	// X-DD-File-* 头，PUT 接收正文并记录，POST {action} 接收 FileAction 体。
+	fileList        protocol.FilesList
+	fileMeta        protocol.FileMeta
+	fileContentBody string
+	fileContentCT   string
+	fileWritten     protocol.FileWritten
+	fileActionDone  protocol.FileActionDone
 	// calls 记录每次进入业务端点的请求路径（已过鉴权），供断言「实际打到了哪」。
 	calls []string
 	// bodies 记录写端点的请求体（成功路径），供 e2e 断言 stop/kill/remove
@@ -156,6 +165,35 @@ func (f *Fake) SetComposeFileWritten(v protocol.ComposeFileWritten) {
 	f.mu.Unlock()
 }
 
+// SetFileList / SetFileMeta / SetFileContent / SetFileWritten / SetFileActionDone
+// 配置文件端点（S5.5）响应。
+func (f *Fake) SetFileList(v protocol.FilesList) {
+	f.mu.Lock()
+	f.fileList = v
+	f.mu.Unlock()
+}
+func (f *Fake) SetFileMeta(v protocol.FileMeta) {
+	f.mu.Lock()
+	f.fileMeta = v
+	f.mu.Unlock()
+}
+func (f *Fake) SetFileContent(body, ct string) {
+	f.mu.Lock()
+	f.fileContentBody = body
+	f.fileContentCT = ct
+	f.mu.Unlock()
+}
+func (f *Fake) SetFileWritten(v protocol.FileWritten) {
+	f.mu.Lock()
+	f.fileWritten = v
+	f.mu.Unlock()
+}
+func (f *Fake) SetFileActionDone(v protocol.FileActionDone) {
+	f.mu.Lock()
+	f.fileActionDone = v
+	f.mu.Unlock()
+}
+
 // isSelf 与真 Agent 的 containersAPI.isSelf 同口径：大小写不敏感的前缀匹配
 // （容器 ID 的 12 位短形式与 64 位全形式、名字都覆盖到）。
 func (f *Fake) isSelf(target string) bool {
@@ -239,6 +277,13 @@ func (f *Fake) Handler() http.Handler {
 	mux.Handle("GET /api/v1/compose/{project}/file", authed(f.serveComposeFileGet))
 	mux.Handle("POST /api/v1/compose/{project}/diff", authed(f.serveComposeFileDiff))
 	mux.Handle("PUT /api/v1/compose/{project}/file", authed(f.serveComposeFilePut))
+	// ---- 文件端点（S5.5）：list/stat/content（读）与 content 写、{action} 写动作。
+	// 与真实 Agent 路由同款方法限定；content 走裸流（不经信封）。----
+	mux.Handle("GET /api/v1/files", authed(f.serveFileList))
+	mux.Handle("GET /api/v1/files/stat", authed(f.serveFileStat))
+	mux.Handle("GET /api/v1/files/content", authed(f.serveFileContent))
+	mux.Handle("PUT /api/v1/files/content", authed(f.serveFileContentPut))
+	mux.Handle("POST /api/v1/files/{action}", authed(f.serveFileAction))
 	return mux
 }
 
@@ -646,4 +691,81 @@ func (f *Fake) SetPruneResult(res protocol.PruneResult) {
 	f.mu.Lock()
 	f.pruneResult = res
 	f.mu.Unlock()
+}
+
+// ---- 文件端点（S5.5）----
+
+// serveFileList 实现 GET /api/v1/files?root=&path=&depth=。
+func (f *Fake) serveFileList(w http.ResponseWriter, r *http.Request) {
+	if done, status := f.maybeFail(r); done {
+		w.WriteHeader(status)
+		return
+	}
+	f.mu.Lock()
+	v := f.fileList
+	f.mu.Unlock()
+	httpx.WriteJSON(w, http.StatusOK, v)
+}
+
+// serveFileStat 实现 GET /api/v1/files/stat?root=&path=。
+func (f *Fake) serveFileStat(w http.ResponseWriter, r *http.Request) {
+	if done, status := f.maybeFail(r); done {
+		w.WriteHeader(status)
+		return
+	}
+	f.mu.Lock()
+	v := f.fileMeta
+	f.mu.Unlock()
+	httpx.WriteJSON(w, http.StatusOK, v)
+}
+
+// serveFileContent 实现 GET /api/v1/files/content?root=&path=。
+// 裸流不走信封（与真实 Agent 一致）：正文任意二进制，元信息走 X-DD-File-* 头。
+func (f *Fake) serveFileContent(w http.ResponseWriter, r *http.Request) {
+	if done, status := f.maybeFail(r); done {
+		w.WriteHeader(status)
+		return
+	}
+	f.mu.Lock()
+	body, ct := f.fileContentBody, f.fileContentCT
+	f.mu.Unlock()
+	if ct == "" {
+		ct = "application/octet-stream"
+	}
+	h := w.Header()
+	h.Set("Content-Type", ct)
+	h.Set("X-DD-File-Path", "app/config.yaml")
+	h.Set("X-DD-File-Size", strconv.Itoa(len(body)))
+	w.WriteHeader(http.StatusOK)
+	io.WriteString(w, body)
+}
+
+// serveFileContentPut 实现 PUT /api/v1/files/content?root=&path=。
+// 请求体即文件内容本身：记录后回传备份信息（与真实 Agent 同款）。
+func (f *Fake) serveFileContentPut(w http.ResponseWriter, r *http.Request) {
+	if done, status := f.maybeFail(r); done {
+		w.WriteHeader(status)
+		return
+	}
+	raw, _ := io.ReadAll(io.LimitReader(r.Body, protocol.MaxFileUploadBytes+1))
+	f.recordBody(raw)
+	f.mu.Lock()
+	v := f.fileWritten
+	f.mu.Unlock()
+	httpx.WriteJSON(w, http.StatusOK, v)
+}
+
+// serveFileAction 实现 POST /api/v1/files/{action}?root=。
+// 记录 FileAction 请求体后回传动作结果（与真实 Agent 同款）。
+func (f *Fake) serveFileAction(w http.ResponseWriter, r *http.Request) {
+	if done, status := f.maybeFail(r); done {
+		w.WriteHeader(status)
+		return
+	}
+	raw, _ := io.ReadAll(io.LimitReader(r.Body, 4<<10))
+	f.recordBody(raw)
+	f.mu.Lock()
+	v := f.fileActionDone
+	f.mu.Unlock()
+	httpx.WriteJSON(w, http.StatusOK, v)
 }

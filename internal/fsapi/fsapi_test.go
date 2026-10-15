@@ -68,14 +68,22 @@ func testTree(t *testing.T) string {
 	return root
 }
 
-func newGuard(t *testing.T, roots []string, maxDepth int) *Guard {
+// defaultTestDeny 是测试用的黑名单，覆盖三种 pattern 形态：
+// 段名（.env / shadow）、通配（*.pem / *.key）、整条相对路径（keys/server.conf）。
+var defaultTestDeny = []string{"id_rsa", "*.pem", "*.key", ".env", "shadow", "keys/server.conf"}
+
+func newGuardLimits(t *testing.T, roots, deny []string, maxFile int64, maxDepth, maxEntries int) *Guard {
 	t.Helper()
-	deny := []string{"id_rsa", "*.pem", "*.key", ".env", "shadow", "keys/server.conf"}
-	g, err := NewGuard(roots, deny, 1<<20, maxDepth, 100)
+	g, err := NewGuard(roots, deny, maxFile, maxDepth, maxEntries)
 	if err != nil {
 		t.Fatalf("NewGuard: %v", err)
 	}
 	return g
+}
+
+func newGuard(t *testing.T, roots []string, maxDepth int) *Guard {
+	t.Helper()
+	return newGuardLimits(t, roots, defaultTestDeny, 1<<20, maxDepth, 100)
 }
 
 func TestGuard_ResolveRejectsEscapes(t *testing.T) {

@@ -36,9 +36,17 @@ func run(args []string) error {
 		log.Printf("agent: ⚠️ 已启用 --allow-insecure-bind，%q 未经网卡白名单校验，请确认该地址不对外暴露", cfg.ListenAddr)
 	}
 
+	// 文件管理可能未启用（未配 --fs-root 时返回 nil）；配了而根目录不可用则启动失败。
+	fapi, err := newFilesAPI(cfg)
+	if err != nil {
+		return err
+	}
+
 	srv := &http.Server{
-		Addr:              cfg.ListenAddr,
-		Handler:           buildHandler(cfg.Token, collector.New(cfg.DiskMounts), collector.NilStatsSource{}, newContainersAPI(cfg.DockerSocket, cfg.SelfContainer), newImagesAPI(cfg.DockerSocket), newComposeAPI(cfg.ComposeDirs)),
+		Addr: cfg.ListenAddr,
+		Handler: buildHandler(cfg.Token, collector.New(cfg.DiskMounts), collector.NilStatsSource{},
+			newContainersAPI(cfg.DockerSocket, cfg.SelfContainer), newImagesAPI(cfg.DockerSocket),
+			newComposeAPI(cfg.ComposeDirs), fapi),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -76,7 +84,9 @@ func run(args []string) error {
 // 传 nil 时同样落到 NilSource，调用方不必判空。
 // iapi 是镜像端点（S4.1）：与容器共享同一把 docker socket，无自身守卫。
 // compapi 是 Compose 端点（S4.2）：白名单目录来自配置，exec 走宿主 docker compose。
-func buildHandler(token string, col *collector.Collector, src collector.ContainerStatsSource, capi *containersAPI, iapi *imagesAPI, compapi *composeAPI) http.Handler {
+// fapi 是文件管理端点（S5.1）：**传 nil 时一条路由都不注册**——红线第 3 条
+// 「未配 --fs-root 时该模块不注册路由」的落点就在这个 if 上。
+func buildHandler(token string, col *collector.Collector, src collector.ContainerStatsSource, capi *containersAPI, iapi *imagesAPI, compapi *composeAPI, fapi *filesAPI) http.Handler {
 	mux := http.NewServeMux()
 	// Agent 侧同样使用 /api/v1 前缀，与 Hub 侧路由一一对应。
 	mux.Handle("/api/v1/info", agenthttp.Auth(token, nil)(agenthttp.Info()))
@@ -107,6 +117,17 @@ func buildHandler(token string, col *collector.Collector, src collector.Containe
 	mux.Handle("GET /api/v1/compose/{project}/file", agenthttp.Auth(token, nil)(http.HandlerFunc(compapi.fileGet)))
 	mux.Handle("POST /api/v1/compose/{project}/diff", agenthttp.Auth(token, nil)(http.HandlerFunc(compapi.fileDiff)))
 	mux.Handle("PUT /api/v1/compose/{project}/file", agenthttp.Auth(token, nil)(http.HandlerFunc(compapi.filePut)))
+	// ---- 文件管理（S5.1）：未配 --fs-root 时 fapi 为 nil，这里一条都不注册。
+	// 上传路由用 AuthN 抬高签名体上限（验签要读完整 body），其余端点仍用默认上限。
+	// stat/content 是字面量段，与 POST 的 {action} 通配不冲突（方法也不同）。----
+	if fapi != nil {
+		fsAuth := agenthttp.AuthN(token, nil, fapi.maxBody)
+		mux.Handle("GET /api/v1/files", fsAuth(http.HandlerFunc(fapi.list)))
+		mux.Handle("GET /api/v1/files/stat", fsAuth(http.HandlerFunc(fapi.stat)))
+		mux.Handle("GET /api/v1/files/content", fsAuth(http.HandlerFunc(fapi.content)))
+		mux.Handle("PUT /api/v1/files/content", fsAuth(http.HandlerFunc(fapi.contentPut)))
+		mux.Handle("POST /api/v1/files/{action}", fsAuth(http.HandlerFunc(fapi.action)))
+	}
 	return mux
 }
 

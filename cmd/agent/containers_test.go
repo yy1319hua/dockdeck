@@ -144,7 +144,7 @@ func agentWith(t *testing.T, socket, self string) (*httptest.Server, *fakeDocker
 	if socket == "" {
 		socket = f.sock
 	}
-	srv := httptest.NewServer(buildHandler(smokeToken, smokeCollector(t), nil, newContainersAPI(socket, self), newImagesAPI(socket), newComposeAPI(nil)))
+	srv := httptest.NewServer(buildHandler(smokeToken, smokeCollector(t), nil, newContainersAPI(socket, self), newImagesAPI(socket), newComposeAPI(nil), nil))
 	t.Cleanup(srv.Close)
 	return srv, f
 }

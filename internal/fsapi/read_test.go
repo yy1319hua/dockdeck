@@ -89,6 +89,30 @@ func TestGuard_ListDepth(t *testing.T) {
 	}
 }
 
+// 空目录必须返回「空切片」而不是 nil：HTTP 层直接把 Entries 序列化出去，
+// nil 会变成 "entries":null，与容器/镜像清单的 [] 口径不一致。
+func TestGuard_ListEmptyIsNeverNil(t *testing.T) {
+	root := testTree(t)
+	if err := os.MkdirAll(filepath.Join(root, "emptydir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	g := newGuard(t, []string{root}, 3)
+
+	entries, truncated, err := g.List(0, "emptydir", 1)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if truncated {
+		t.Error("空目录不该标截断")
+	}
+	if entries == nil {
+		t.Fatal("空目录应返回空切片而非 nil（否则对外会序列化成 null）")
+	}
+	if len(entries) != 0 {
+		t.Errorf("len(entries) = %d，want 0", len(entries))
+	}
+}
+
 func TestGuard_ListTruncatesAtMaxEntries(t *testing.T) {
 	root := testTree(t)
 	for _, name := range []string{"e1.txt", "e2.txt", "e3.txt", "e4.txt", "e5.txt"} {

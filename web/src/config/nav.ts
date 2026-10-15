@@ -1,0 +1,25 @@
+/*
+ * 侧栏导航的单一数据源：任何地方要改菜单项都只动这里。
+ *
+ * to 为空 = 功能页尚未接入（属 S7），渲染为置灰不可点并带「待实现」标记；
+ * 这样布局在 S6 阶段就能定型，不必等 S7 逐个页面做完再回头改布局文件。
+ */
+import type { IconName } from './icons'
+
+export interface NavItem {
+  label: string
+  icon: IconName
+  /** 有路由名即可跳转；为空表示该页未接入。 */
+  to?: string
+}
+
+export const navItems: NavItem[] = [
+  { label: '总览', icon: 'overview', to: 'home' },
+  { label: '主机详情', icon: 'host' },
+  { label: '容器', icon: 'container' },
+  { label: '镜像', icon: 'image' },
+  { label: 'Compose', icon: 'compose' },
+  { label: '文件', icon: 'files' },
+  { label: '审计', icon: 'audit' },
+  { label: '设置', icon: 'settings' },
+]

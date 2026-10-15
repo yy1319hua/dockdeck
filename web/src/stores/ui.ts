@@ -2,16 +2,27 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { toErrorInfo } from '@/api/errors'
 
+interface ErrorInfo {
+  code: string
+  message: string
+}
+
 /*
- * 全局 UI 态：请求计数式加载态 + 最近一次错误。
+ * 全局 UI 态：请求计数式加载态 + 最近一次错误 + 侧栏两态。
  *
  * 加载态用「计数」而不是布尔：并发请求时任一未结束都应显示加载，
  * 若用布尔会被先返回的那个请求提前关掉。
+ *
+ * 侧栏分两个独立状态，不要合并：
+ *   sidebarOpen     —— 移动端的抽屉（覆盖层），路由切换后自动关。
+ *   sidebarCollapsed—— 桌面端的折叠（图标条），是用户长期偏好，不该被路由切换重置。
  */
 export const useUiStore = defineStore('ui', () => {
   const ready = ref(false)
   const loading = ref(0)
-  const error = ref<{ code: string; message: string } | null>(null)
+  const error = ref<ErrorInfo | null>(null)
+  const sidebarOpen = ref(false)
+  const sidebarCollapsed = ref(false)
 
   const isLoading = computed(() => loading.value > 0)
 
@@ -35,6 +46,22 @@ export const useUiStore = defineStore('ui', () => {
     error.value = null
   }
 
+  function openSidebar() {
+    sidebarOpen.value = true
+  }
+
+  function closeSidebar() {
+    sidebarOpen.value = false
+  }
+
+  function toggleSidebar() {
+    sidebarOpen.value = !sidebarOpen.value
+  }
+
+  function toggleCollapsed() {
+    sidebarCollapsed.value = !sidebarCollapsed.value
+  }
+
   return {
     ready,
     markReady,
@@ -45,5 +72,11 @@ export const useUiStore = defineStore('ui', () => {
     error,
     notifyError,
     clearError,
+    sidebarOpen,
+    sidebarCollapsed,
+    openSidebar,
+    closeSidebar,
+    toggleSidebar,
+    toggleCollapsed,
   }
 })

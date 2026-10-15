@@ -285,6 +285,21 @@ Vue 3 + Vite + TS，`vue-router` + `pinia`，图表 uPlot，无重型 UI 框架�
 审计 / API Token 与设置。状态与数据须登录才显示，无免登录公开页。
 危险操作二次确认，输入目标名才可提交。
 
+### 前端工程约定（S6.1 起）
+
+| 项 | 约定 |
+| --- | --- |
+| 目录 | `web/`（`.gitignore` 早已预置 `web/node_modules/`、`web/dist/`、`web/.vite/`、`web/coverage/`） |
+| 包管理器 | **npm**。理由：本文与 S6.5 措辞即为 `npm run build`；不引 pnpm/yarn 以免多一套锁文件与工具链 |
+| Node | **`>=22.12.0`**。Vite 8 系 engines 为 `^20.19.0 \|\| >=22.12.0`；Node 20.20.2 虽恰好擦线可用，但余量太小，故 sanbox 已升 22.23.3 LTS |
+| 脚本 | `npm run dev`（开发期 dev server）/ `npm run build`（产出 `web/dist`）/ `npm run preview` / `npm run typecheck`（`vue-tsc --noEmit`） |
+| 类型检查 | **TypeScript 钉 `^5.9.3`，勿升 7.x**：TS 7.0 移除了 `./lib/tsc` 子路径导出，而 `vue-tsc` 至 3.3.13（当前 latest）仍以此路径挂载 tsc，升级后 `npm run typecheck` 直接以 `ERR_PACKAGE_PATH_NOT_EXPORTED` 失败——已实测，非推测。待 vue-tsc 发支持 TS 7 的版本再动 |
+| 唯一色源 | `web/src/styles/tokens.css` 定义全部深色令牌；**组件样式只准引用变量，不得写字面色值**；语义色按用途命名（`--danger` 而非 `--red`）；`--chart-1..6` 预留 S7.1 的 uPlot，S6 阶段不引用 |
+| 自检页 | `/dev/tokens` 把全套令牌可视化（类别：背景层级/前景/边框/强调/语义实色/语义浅底/图表色板/圆角/间距/字号） |
+| 开发期联调 | dev server 把 `/api` 反代到本机 Hub（`secure:false` 接受自签 TLS）；**该开关只存在于开发配置**，生产由 Hub 同源提供 SPA 与 `/api`，不经代理 |
+| 产物入库 | `web/dist` **不入库**（构建产物），`package-lock.json` **必须入库**（锁版本，防依赖漂移）。fresh clone 无 `web/dist` 目录，见 `docs/ARCHITECTURE.md`「构建与交付」——S6.5 接线前须先处置 |
+| Hub 侧接入 | `cmd/hub/main.go` 的 `/` catch-all 已是「非 `/api/` 前缀交静态资源、未命中回落 `index.html`」的 SPA 兜底，前端接入时 Go 侧**零改动** |
+
 ## 构建与交付
 
 `make build` 产出 `linux/arm64` 与 `linux/amd64` 各一套 hub+agent，加 `docker/Dockerfile.hub`、

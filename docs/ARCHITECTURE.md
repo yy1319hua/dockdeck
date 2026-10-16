@@ -88,7 +88,12 @@ Agent 启动时校验绑定地址属于 tailscale0，否则拒绝启动（`--all
   含 `/` `#`）一律加引号，保证 YAML 解析回来与 JSON 深等值。
 - **参数刻画**：`route.Param.Enum` 声明取值白名单（三个 `{action}` 端点：容器动作 / Compose 动作 / 文件动作），
   **只进文档、不参与运行时校验**——动词白名单仍由各 handler 把关；`{ref...}` 的取值说明含「可带 `/` 与 `:`」。
-- **spec 与路由一致性有测试保证**：注册表与 spec 逐条比对，路由缺注解即测试红（S8.2）。
+- **一致性红测（S8.2）**：登记表 ↔ spec 的路径键双向比对（两侧先过 `openapi.SpecPath`）、每条端点的
+  summary / 分组 / 说明与每条参数、响应的说明必须非空、spec 里每个 tag 必须有说明，
+  `docs/openapi.json` 与 `docs/openapi.yaml` 必须与现生成逐字节一致（手改产物即红）；
+  另有「不得绕过登记表直接注册 mux」的源码审查。
+- **路径模板口径**：Go mux 的尾通配符 `{ref...}` 在文档里写作 `{ref}`（`openapi.SpecPath`），
+  模板变量名与声明的 path 参数名必须一致——路由侧仍是 `{ref...}`（要容纳含 `/` 的引用）。
 - 版本：`openapi: 3.0.3`（App 侧工具链兼容性最稳）。
 - 鉴权声明：`securitySchemes` 提供 `cookieAuth` 与 `bearerAuth` 两种。
 - UI 与 App 共用端点集，不为 App 另开一套路径。

@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
-# pre-push —— 强制「push 需用户批准」。
+# pre-push —— 强制「白名单内自动推、白名单外须批准」（2026-10-16 用户改规）。
 #
-# 令牌由 scripts/approve-push.sh 签发，两种：
-#   batch  一次推送，过期即失效，通过后消费（一次性）。
+# 令牌由 <工作区>/tools/approve-push.sh 签发，三种：
+#   batch  一次推送，过期即失效，通过后消费（一次性）。用户逐次批准用。
 #   plan   方案级：方案期内可多次推送，但**每次都校验改动文件是否在令牌
 #          记录的 SCOPE_PATHS 范围内**，越界即拒；通过后不消费。
+#   auto   自动推：AI 自行签发，范围锁死在工作区白名单（auto-push-paths.txt，
+#          脚本默认集 web/ docs/ README.md）；范围校验同 plan，
+#          通过后消费（一次性）。
 #
 # 为什么把关的维度用「范围」而不是「时间」：
 #   令牌若说不清「批准了什么」，就只能靠缩短有效期来限制风险——那正是
 #   「每推一次都要停下来请示」的成因。把范围写进令牌，实现阶段就不必
-#   反复打断，而越界仍由本钩子机械拦截（不是靠文档承诺）。
+#   反复打断，而越界仍由本钩子机械拦截（不是靠文档承诺）。自动推时代
+#   同理：auto 令牌的范围来自白名单文件而非调用方，AI 无法自行放大。
 #
-# 以下两类一律回退到 batch（即仍需逐次批准）：
+# 以下两类一律回退到 batch（即仍需用户逐次批准，auto 也不适用）：
 #   * refs/tags/*               打 tag
 #   * 新分支（远端无对应 ref，范围无从比对）
 #
@@ -49,11 +53,13 @@ reject() {
 if [ ! -f "$TOKEN" ]; then
     reject "未找到批准令牌。" \
         "" \
-        "   push 必须由用户批准并签发令牌（batch：逐次；plan：按方案范围）。" \
+        "   自动推模式（2026-10-16 起，用户改规）：AI 应在 push 前自行签发 auto 令牌——" \
+        "     bash <工作区>/tools/approve-push.sh --auto \"<本次改动说明>\"" \
         "" \
-        "   拿到批准后执行其一：" \
-        "     bash scripts/approve-push.sh \"<用户于何时批准哪一批改动>\"" \
-        "     bash scripts/approve-push.sh --plan \"<方案名>\" --paths \"<范围>\" \"<批准说明>\"" \
+        "   白名单外改动 / 打 tag / 新分支首次推送：auto 不适用，须用户批准后手动签——" \
+        "     bash <工作区>/tools/approve-push.sh \"<用户于何时批准哪一批改动>\"               # batch" \
+        "     bash <工作区>/tools/approve-push.sh --plan \"<方案名>\" --paths \"<范围>\" \"<说明>\"   # plan" \
+        "" \
         "   再重新 push。"
 fi
 
@@ -83,23 +89,23 @@ while read -r lref lsha rsha; do
     fi
     FILES="${FILES}${files}"$'\n'
 
-    # 打 tag：一律回退 batch（每次单独批准，批准不延续）
+    # 打 tag：一律回退 batch（每次单独批准，批准不延续；auto 同样不适用）
     case "$lref" in
         refs/tags/*)
             if [ "$mode" != batch ]; then
-                reject "打 tag 须逐次批准，plan 令牌不适用于 $lref" \
+                reject "打 tag 须逐次批准，plan/auto 令牌不适用于 $lref" \
                     "   → 请为本次打 tag 单独签发 batch 令牌：" \
-                    "     bash scripts/approve-push.sh \"<用户于何时批准打该 tag>\""
+                    "     bash <工作区>/tools/approve-push.sh \"<用户于何时批准打该 tag>\""
             fi
             ;;
     esac
 
-    if [ "$mode" = plan ]; then
-        # 新分支：远端无对应 ref，范围无从比对 → 回退 batch
+    if [ "$mode" = plan ] || [ "$mode" = auto ]; then
+        # 新分支：远端无对应 ref，范围无从比对 → 回退 batch（auto 也不适用）
         if [ "$rsha" = "$ZERO" ]; then
-            reject "新分支 $lref 的推送范围无法与已批准方案比对" \
+            reject "新分支 $lref 的推送范围无法与已批准范围比对" \
                 "   → 首次推送请用 batch 令牌逐次批准：" \
-                "     bash scripts/approve-push.sh \"<用户于何时批准推该新分支>\""
+                "     bash <工作区>/tools/approve-push.sh \"<用户于何时批准推该新分支>\""
         fi
         [ -z "$files" ] && continue   # 无改动文件，无需范围校验
 
@@ -117,20 +123,23 @@ while read -r lref lsha rsha; do
             <(printf '%s\n' "$in_scope" | sort -u))
 
         if [ -n "$outside" ]; then
-            reject "以下文件超出已批准方案「${plan:-（未命名）}」的范围" \
+            reject "以下文件超出已批准「${plan:-（未命名）}」的范围" \
                 "$(printf '%s\n' "$outside" | sed 's/^/     /')" \
                 "" \
                 "   → 越界改动不得随已授权的 push 一起推，须单独请示。" \
-                "     若确需扩大范围，请重新签发带新 --paths 的 plan 令牌。"
+                "     若确需扩大范围：白名单内改动请用户编辑 <工作区>/auto-push-paths.txt；" \
+                "     其余须用户批准后重新签发带新 --paths 的 plan/batch 令牌。"
         fi
     fi
 done <<< "$REFS"
 
 echo "✅ pre-push：令牌校验通过（模式：$mode）" >&2
 echo "   批准说明：$note" >&2
-if [ "$mode" = plan ]; then
+if [ "$mode" = plan ] || [ "$mode" = auto ]; then
     echo "   已批准方案：$(sed -n 's/^SCOPE_PLAN=//p' "$TOKEN")" >&2
     echo "   允许范围：$(sed -n 's/^SCOPE_PATHS=//p' "$TOKEN")" >&2
+fi
+if [ "$mode" = plan ]; then
     echo "   （plan 令牌不消费，方案期内可继续推送）" >&2
 else
     rm -f "$TOKEN"

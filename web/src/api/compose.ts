@@ -130,3 +130,68 @@ export async function putComposeFile(serverId: number, project: string, content:
   )
   return res.backup_file
 }
+
+/* ---------- 写前备份（S7.11） ---------- */
+
+/**
+ * 一条写前备份。**只含文件名/大小/时间**——后端不回宿主机绝对路径（与文件
+ * 管理模块同口径），前端也不需要路径：定位靠「项目名 + 文件名」。
+ */
+export interface ComposeBackup {
+  name: string
+  size: number
+  /** RFC3339 文本（UTC），仅用于展示；清单顺序由后端给出（最新在前）。 */
+  modTime: string
+}
+
+function toBackup(w: { name?: string; size?: number; mod_time?: string }): ComposeBackup {
+  return { name: w.name ?? '', size: w.size ?? 0, modTime: w.mod_time ?? '' }
+}
+
+/** 项目的写前备份清单（只读）。 */
+export async function fetchComposeBackups(serverId: number, project: string): Promise<ComposeBackup[]> {
+  const res = await request<{ backups?: { name?: string; size?: number; mod_time?: string }[] }>(
+    `/servers/${serverId}/compose/${encodeURIComponent(project)}/backups`,
+  )
+  return (res.backups ?? []).map(toBackup)
+}
+
+/**
+ * 读备份正文（预览与 diff 用）。
+ *
+ * 备份名含 RFC3339 的 `+` 与 `:`（如 `+08:00`），故**走查询串并转义**——
+ * 与上面「项目名 encodeURIComponent 进路径段」是两套处理，别混：
+ * 路径段的编码差异 S7.5 踩过一次，这里不再留第二次。
+ */
+export async function fetchComposeBackupContent(
+  serverId: number,
+  project: string,
+  name: string,
+): Promise<string> {
+  const res = await request<{ name?: string; content?: string }>(
+    `/servers/${serverId}/compose/${encodeURIComponent(project)}/backups/content?file=${encodeURIComponent(name)}`,
+  )
+  return res.content ?? ''
+}
+
+/**
+ * 用备份覆盖当前 compose 文件（恢复）。
+ *
+ * 恢复本身是一次覆盖写，后端会先把「恢复前的当前内容」备份成新的
+ * `.bak.<RFC3339>` 再覆盖——否则回滚是单向门：恢复到旧版本后就回不去了。
+ * 返回那份新备份的文件名（仅文件名，不含目录）。
+ *
+ * 注意：改 YAML 不会直接改动运行中的容器，需再执行 up 才生效——这条写进
+ * 页面的确认文案，别让人以为点上就生效了。
+ */
+export async function restoreComposeBackup(
+  serverId: number,
+  project: string,
+  name: string,
+): Promise<string> {
+  const res = await postJSON<{ backup?: string }>(
+    `/servers/${serverId}/compose/${encodeURIComponent(project)}/backups/restore`,
+    { file: name },
+  )
+  return res.backup ?? ''
+}

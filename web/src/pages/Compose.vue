@@ -94,6 +94,61 @@
               :class="diffLineClass(line)"
             >{{ line || ' ' }}</span></pre>
         </div>
+
+        <!-- 写前备份（S7.11）：只读分区，与编辑面板同页而不是新开一页（Q6-A）。
+             预览复用现有 diff 端点——拿备份正文去算「与当前文件的差」，
+             与写入的两段式完全同款；不提供删除，备份只增不减。 -->
+        <section class="cp__bk">
+          <div class="cp__bk-head">
+            <button type="button" class="link" :disabled="bkLoading" @click="onToggleBackups">
+              {{ backupsOpen ? '收起' : '展开' }}写前备份<template v-if="backups.length > 0">（{{ backups.length }}）</template>
+            </button>
+            <button v-if="backupsOpen" type="button" class="link" :disabled="bkLoading || bkBusy" @click="loadBackups">
+              刷新
+            </button>
+            <span class="cp__bk-hint">只读 · 不提供删除</span>
+          </div>
+
+          <template v-if="backupsOpen">
+            <p v-if="bkLoading" class="cp__bk-loading">正在读取备份清单…</p>
+            <table v-else-if="backups.length > 0" class="cp__bk-table">
+              <thead>
+                <tr>
+                  <th>备份文件</th>
+                  <th class="num">大小</th>
+                  <th>时间</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="b in backups" :key="b.name">
+                  <td class="cp__bk-name" :title="b.name">{{ b.name }}</td>
+                  <td class="num">{{ formatBytes(b.size) }}</td>
+                  <td>{{ formatRFC3339(b.modTime) }}</td>
+                  <td class="cp__bk-acts">
+                    <button type="button" class="link" :disabled="bkBusy" @click="onPreviewBackup(b.name)">预览</button>
+                    <button type="button" class="link link--danger" :disabled="bkBusy" @click="onAskRestore(b.name)">恢复</button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <p v-else class="cp__bk-empty">这个项目还没有写前备份——每次写入 compose 文件都会自动生成一份。</p>
+
+            <div v-if="bkPreviewName" class="cp__bk-prev">
+              <p class="cp__bk-prev-head">
+                与当前文件相比：{{ bkPreviewName }}
+                <span v-if="bkDiff.trim() !== ''" class="cp__tools-stat">+{{ bkStats.added }} / -{{ bkStats.removed }}</span>
+                <span v-else>（两者无差异）</span>
+              </p>
+              <pre v-if="bkDiff.trim() !== ''" class="cp__diff"><span
+                  v-for="(line, i) in bkDiffLines"
+                  :key="i"
+                  class="cp__diff-line"
+                  :class="diffLineClass(line)"
+                >{{ line || ' ' }}</span></pre>
+            </div>
+          </template>
+        </section>
       </template>
     </section>
 
@@ -165,6 +220,17 @@
       @cancel="writeAsk = false"
     />
 
+    <!-- 恢复备份：同样是覆盖写，故同样两段式——预览（上一步）看过差异再确认。
+         文案必须点明「改 YAML 不会直接改动容器，需再执行启动」。 -->
+    <AppConfirm
+      :open="restoreAsk"
+      title="恢复 compose 备份"
+      :message="restoreMessage"
+      confirm-label="恢复"
+      @confirm="onConfirmRestore"
+      @cancel="restoreAsk = false"
+    />
+
     <!-- 编辑中返回列表：有未保存修改，放弃确认 -->
     <AppConfirm
       :open="closeAsk"
@@ -190,13 +256,18 @@ import AppConfirm from '@/components/AppConfirm.vue'
 import {
   composeAction,
   diffComposeFile,
+  fetchComposeBackupContent,
+  fetchComposeBackups,
   fetchComposeFile,
   putComposeFile,
+  restoreComposeBackup,
   type ComposeActionName,
+  type ComposeBackup,
   type ComposeProject,
   type ComposeStatus,
 } from '@/api/compose'
 import { isOnline } from '@/api/servers'
+import { formatBytes, formatRFC3339 } from '@/utils/format'
 import { useComposeStore } from '@/stores/compose'
 import { useUiStore } from '@/stores/ui'
 
@@ -296,6 +367,136 @@ const closeAsk = ref(false)
 const dirty = computed(() => editing.value !== null && draft.value !== original.value)
 const canWrite = computed(() => dirty.value && previewing.value && diffText.value.trim() !== '' && !writing.value)
 
+/* ---------- 写前备份（S7.11，页面本地态，不进 store——同编辑态纪律） ---------- */
+
+const backupsOpen = ref(false)
+const backups = ref<ComposeBackup[]>([])
+const bkLoading = ref(false)
+/** 预览/恢复在飞：两种都要等网络，禁掉重复点击。 */
+const bkBusy = ref(false)
+const bkPreviewName = ref('')
+const bkDiff = ref('')
+const restoreAsk = ref(false)
+const restoreTarget = ref('')
+
+const bkDiffLines = computed(() => bkDiff.value.split('\n'))
+
+/** 与上方的 diffStats 同算法，但作用在备份 diff 上（不复用同一份状态：
+ *  写入流程的「有未保存修改」判定不能被备份预览搅乱）。 */
+const bkStats = computed(() => {
+  let added = 0
+  let removed = 0
+  for (const line of bkDiff.value.split('\n')) {
+    if (line.startsWith('+++') || line.startsWith('---')) {
+      continue
+    }
+    if (line.startsWith('+')) {
+      added += 1
+    } else if (line.startsWith('-')) {
+      removed += 1
+    }
+  }
+  return { added, removed }
+})
+
+const restoreMessage = computed(
+  () =>
+    `将用备份 ${restoreTarget.value} 覆盖 ${editing.value ? editing.value.name : ''} 当前的 compose 文件。` +
+    `恢复前会先把当前内容备份为新的 .bak.<时间戳>（所以回滚不是单向门）。` +
+    `注意：改 YAML 不会直接改动运行中的容器，需再执行「启动」才生效。`,
+)
+
+/** 换项目/退出面板时清空备份态——它绑定的是「某一个项目」，不能带过去。 */
+function resetBackups(): void {
+  backupsOpen.value = false
+  backups.value = []
+  bkPreviewName.value = ''
+  bkDiff.value = ''
+  restoreAsk.value = false
+  restoreTarget.value = ''
+}
+
+async function loadBackups(): Promise<void> {
+  const p = editing.value
+  if (p === null) {
+    return
+  }
+  bkLoading.value = true
+  try {
+    backups.value = await fetchComposeBackups(cp.selectedId, p.name)
+  } catch (e) {
+    ui.notifyError(e)
+  } finally {
+    bkLoading.value = false
+  }
+}
+
+/** 懒加载：展开时才拉清单（多数编辑会话根本不看备份，不必每次进面板都发请求）。 */
+async function onToggleBackups(): Promise<void> {
+  if (backupsOpen.value) {
+    backupsOpen.value = false
+    return
+  }
+  backupsOpen.value = true
+  if (backups.value.length === 0 && !bkLoading.value) {
+    await loadBackups()
+  }
+}
+
+/** 预览：拿备份正文去调现有 diff 端点算「与当前文件的差」——不新开预览端点（Q1-A）。 */
+async function onPreviewBackup(name: string): Promise<void> {
+  const p = editing.value
+  if (p === null || bkBusy.value) {
+    return
+  }
+  bkBusy.value = true
+  try {
+    const content = await fetchComposeBackupContent(cp.selectedId, p.name, name)
+    bkDiff.value = await diffComposeFile(cp.selectedId, p.name, content)
+    bkPreviewName.value = name
+  } catch (e) {
+    ui.notifyError(e)
+  } finally {
+    bkBusy.value = false
+  }
+}
+
+function onAskRestore(name: string): void {
+  restoreTarget.value = name
+  restoreAsk.value = true
+}
+
+async function onConfirmRestore(): Promise<void> {
+  const p = editing.value
+  const name = restoreTarget.value
+  restoreAsk.value = false
+  restoreTarget.value = ''
+  if (p === null || bkBusy.value) {
+    return
+  }
+  bkBusy.value = true
+  try {
+    const backup = await restoreComposeBackup(cp.selectedId, p.name, name)
+    ui.notifyNotice(`已用 ${name} 恢复 ${p.name}，恢复前的内容备份至 ${backup}`)
+    // 宿主机文件已被覆盖：草稿必须重新对齐，否则「有未保存修改」是假的、
+    // 再写入会把旧草稿盖回去（那就是一次无备份的破坏性写入）。
+    const f = await fetchComposeFile(cp.selectedId, p.name)
+    configFile.value = f.configFile
+    draft.value = f.content
+    original.value = f.content
+    diffText.value = ''
+    previewing.value = false
+    bkDiff.value = ''
+    bkPreviewName.value = ''
+    await loadBackups()
+    await cp.reload()
+  } catch (e) {
+    ui.notifyError(e)
+  } finally {
+    bkBusy.value = false
+  }
+}
+
 const diffLines = computed(() => diffText.value.split('\n'))
 
 const diffStats = computed(() => {
@@ -353,6 +554,7 @@ async function openEdit(p: ComposeProject): Promise<void> {
     return
   }
   editing.value = p
+  resetBackups()
   fileLoading.value = true
   configFile.value = ''
   original.value = ''
@@ -423,11 +625,13 @@ function onLeaveEdit(): void {
     return
   }
   editing.value = null
+  resetBackups()
 }
 
 function onConfirmClose(): void {
   closeAsk.value = false
   editing.value = null
+  resetBackups()
   configFile.value = ''
   original.value = ''
   draft.value = ''
@@ -777,5 +981,85 @@ function onSelectHost(e: Event): void {
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   white-space: pre-wrap;
+}
+
+/* ---- 写前备份分区（S7.11）：附在编辑面板内，不另开页 ---- */
+.cp__bk {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.cp__bk-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.cp__bk-hint {
+  font-size: var(--text-sm);
+  color: var(--fg-subtle);
+}
+
+.cp__bk-loading,
+.cp__bk-empty {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--fg-muted);
+}
+
+.cp__bk-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.cp__bk-table th,
+.cp__bk-table td {
+  padding: var(--space-1) var(--space-2);
+  text-align: left;
+  border-bottom: 1px solid var(--border-default);
+  color: var(--fg-default);
+}
+
+.cp__bk-table th {
+  color: var(--fg-muted);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.cp__bk-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.cp__bk-name {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cp__bk-acts {
+  display: flex;
+  gap: var(--space-2);
+  white-space: nowrap;
+}
+
+.cp__bk-prev {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.cp__bk-prev-head {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--fg-muted);
 }
 </style>

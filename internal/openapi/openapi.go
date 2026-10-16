@@ -204,13 +204,13 @@ func operation(e route.Entry) *Operation {
 		if i := indexOfParam(op.Params, p.Name, "path"); i >= 0 {
 			op.Params[i].Description = p.Desc
 			op.Params[i].Example = p.Example
-			op.Params[i].Schema = &Schema{Type: typ, Format: p.SchemaFmt}
+			op.Params[i].Schema = &Schema{Type: typ, Format: p.SchemaFmt, Enum: p.Enum}
 			continue
 		}
 		op.Params = append(op.Params, Param{
 			Name: p.Name, In: "query", Required: p.Required,
 			Description: p.Desc, Example: p.Example,
-			Schema: &Schema{Type: typ, Format: p.SchemaFmt},
+			Schema: &Schema{Type: typ, Format: p.SchemaFmt, Enum: p.Enum},
 		})
 	}
 

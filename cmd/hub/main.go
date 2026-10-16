@@ -44,6 +44,10 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
+	// 生成模式：复用同一份路由声明产出 spec，不建库、不监听、不碰线上目录。
+	if cfg.DumpOpenAPI != "" {
+		return dumpOpenAPI(cfg.DumpOpenAPI)
+	}
 	if err := cfg.EnsureDirs(); err != nil {
 		return err
 	}
@@ -187,6 +191,7 @@ func (s *server) routes() http.Handler {
 	tbl.Add(route.Entry{
 		Method: "GET", Path: "/api/v1/health", AuthMode: route.AuthNone,
 		Summary: "健康检查", Tags: []string{"Meta"},
+		Desc: "进程存活探针：恒返回 200，不校验身份、不查库。部署脚本与负载均衡用它判断 Hub 是否起来。",
 	}, func(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 	})
@@ -234,6 +239,7 @@ func (s *server) routes() http.Handler {
 	tbl.Add(route.Entry{
 		Method: "POST", Path: "/api/v1/auth/logout", AuthMode: route.AuthSession,
 		Summary: "登出", Tags: []string{"Auth"},
+		Desc: "删除当前会话并清 cookie；重复调用幂等（已登出再登出仍 200）。",
 	}, s.am.Logout)
 
 	tbl.Add(route.Entry{
@@ -259,6 +265,8 @@ func (s *server) routes() http.Handler {
 	tbl.Add(route.Entry{
 		Method: "DELETE", Path: "/api/v1/api-tokens/{id}", AuthMode: route.AuthSession,
 		Summary: "撤销 API Token", Tags: []string{"Tokens"},
+		Desc:   "按 ID 撤销（不是按名字）。撤销后该 Token 立即失效；目标不存在返回 404。",
+		Params: []route.Param{{Name: "id", Desc: "Token ID", Required: true, Example: "1", SchemaType: "integer", SchemaFmt: "int64"}},
 	}, middleware.Audit(s.st, "token.revoke", s.tokens.RevokeHandler))
 
 	// ---- S2.7 监控查询 ----
@@ -361,7 +369,8 @@ func (s *server) routes() http.Handler {
 		Params: []route.Param{
 			{Name: "id", Desc: "服务器 ID", Required: true, Example: "1", SchemaType: "integer", SchemaFmt: "int64"},
 			{Name: "cid", Desc: "容器 ID 或名字", Required: true, Example: "9f3a2b1c4d5e"},
-			{Name: "action", Desc: "start|stop|restart|pause|unpause|kill|resize", Required: true, Example: "restart"},
+			{Name: "action", Desc: "容器动作", Required: true, Example: "restart",
+				Enum: []string{"start", "stop", "restart", "pause", "unpause", "kill", "resize"}},
 			{Name: "h", Desc: "resize 行数（正整数）", Required: false, Example: "40", SchemaType: "integer", SchemaFmt: "int64"},
 			{Name: "w", Desc: "resize 列数（正整数）", Required: false, Example: "120", SchemaType: "integer", SchemaFmt: "int64"},
 		},
@@ -437,7 +446,7 @@ func (s *server) routes() http.Handler {
 			"被容器占用的镜像 Engine 回 409；强删（先处理容器）不在本端点，是调用方决策链。",
 		Params: []route.Param{
 			{Name: "id", Desc: "服务器 ID", Required: true, Example: "1", SchemaType: "integer", SchemaFmt: "int64"},
-			{Name: "ref", Desc: "镜像引用（name:tag 或 ID）", Required: true, Example: "alpine:3.20"},
+			{Name: "ref", Desc: "镜像引用：name:tag 或镜像 ID，可含 / 与 :（如 library/nginx:latest）。尾通配符容许斜杠，无需转义", Required: true, Example: "alpine:3.20"},
 		},
 		Responses: []route.Response{
 			{Status: 403, Desc: "服务器已禁用"},
@@ -521,7 +530,8 @@ func (s *server) routes() http.Handler {
 		Params: []route.Param{
 			{Name: "id", Desc: "服务器 ID", Required: true, Example: "1", SchemaType: "integer", SchemaFmt: "int64"},
 			{Name: "project", Desc: "项目名（白名单内目录名）", Required: true, Example: "watchtower"},
-			{Name: "action", Desc: "up | down | restart | pull", Required: true, Example: "up"},
+			{Name: "action", Desc: "Compose 动作", Required: true, Example: "up",
+				Enum: []string{"up", "down", "restart", "pull"}},
 		},
 		Responses: []route.Response{
 			{Status: 400, Desc: "动作不在白名单（本地拦截，不出门）"},
@@ -750,7 +760,8 @@ func (s *server) routes() http.Handler {
 		Body: &route.Body{Type: "json"},
 		Params: []route.Param{
 			{Name: "id", Desc: "服务器 ID", Required: true, Example: "1", SchemaType: "integer", SchemaFmt: "int64"},
-			{Name: "action", Desc: "mkdir | delete | rename", Required: true, Example: "mkdir"},
+			{Name: "action", Desc: "文件动作", Required: true, Example: "mkdir",
+				Enum: []string{"mkdir", "delete", "rename"}},
 			{Name: "root", Desc: "根白名单序号（缺省 0）", Required: false, Example: "0", SchemaType: "integer", SchemaFmt: "int64"},
 		},
 		Responses: []route.Response{
@@ -913,7 +924,7 @@ func (s *server) spec() *openapi.Doc {
 		Title:   "DockDeck Hub API",
 		Version: "0.1.0",
 		Description: "自研多主机监控与 Docker 管理面板的服务端接口。\n\n" +
-			"**访问方式**：服务只绑定 Tailscale 网卡地址，不在公网监听；" +
+			"**访问方式**：服务绑定 tailnet / 内网的具体 IP（不绑 0.0.0.0），不在公网监听；" +
 			"浏览器用 cookie 会话，App / 脚本用 `Authorization: Bearer ddk_...`。\n\n" +
 			"**两套身份互不信任**：带 Bearer 时只看 Token（即便同时带了 cookie），" +
 			"Token 权限由签发时勾选的 scope 决定，scope 不足返回 403；" +

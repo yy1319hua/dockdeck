@@ -25,6 +25,9 @@ type Param struct {
 	Example    string
 	SchemaType string // string | integer | boolean
 	SchemaFmt  string // int64 | date-time | ...
+	// Enum 非空时在 spec 的 schema 里声明取值枚举（如 {action} 的动词白名单）。
+	// 只影响文档刻画，不参与运行时校验——动作白名单仍由各 handler 自行把关。
+	Enum []string
 }
 
 // Body 声明请求体内容类型，默认 application/json。

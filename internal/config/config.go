@@ -29,6 +29,8 @@ type Config struct {
 	MetricsIntervalSec int
 	// MetricsRetentionDays 是指标历史（metrics_snapshots）的保留天数。
 	MetricsRetentionDays int
+	// DumpOpenAPI 非空时，Hub 只把 OpenAPI 文档生成到该目录后退出，不启动服务。
+	DumpOpenAPI string
 }
 
 // 安全默认值：绑定回环，绝不误绑公网 0.0.0.0。
@@ -83,6 +85,7 @@ func Load(args []string) (Config, error) {
 	fs.StringVar(&tlsMode, "tls", string(c.TLSMode), "TLS 模式：self|none")
 	fs.IntVar(&c.MetricsIntervalSec, "metrics-interval-sec", c.MetricsIntervalSec, "指标采集周期（秒）")
 	fs.IntVar(&c.MetricsRetentionDays, "metrics-retention-days", c.MetricsRetentionDays, "指标历史保留天数")
+	fs.StringVar(&c.DumpOpenAPI, "dump-openapi", c.DumpOpenAPI, "生成 OpenAPI 文档（openapi.json / openapi.yaml）到指定目录后退出，不启动服务")
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
 	}

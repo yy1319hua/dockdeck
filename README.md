@@ -35,11 +35,11 @@ curl -H "Authorization: Bearer <token>" \
 
 ## 快速开始（部署）
 
-Hub 与 Agent 都跑在宿主机自己的 tailscale IP 上：
+Hub 与 Agent 都跑在宿主机上（默认 tailscale IP，也支持内网 IP + 反代）：
 
 ```
 # Hub（在你想当管理机的那台上）
-deploy/install-hub.sh                      # 取 tailnet IP → 生成密钥 → 建卷 → compose up
+deploy/install-hub.sh                      # 取 tailnet / 内网 IP → 生成密钥 → 建卷 → compose up
 
 # Agent（在每台被管理的机器上，由 Hub 侧推送或手动执行）
 deploy/install-agent.sh --name <节点名> --hub https://<hub-tailnet-ip>:8443

@@ -33,10 +33,10 @@ Hub 与 Agent 是两个独立二进制，同一 module、共享 `internal/protoc
 ## 网络与暴露（核心约束）
 
 宿主机有公网/局域网接口，**不能绑 0.0.0.0，不能改防火墙**。做法：容器发布端口时绑定到
-tailscale 网卡的具体 IP，`docker-proxy` 只在该地址监听，其它接口上根本没有监听。
+具体 IP（tailscale 网卡或内网网卡），`docker-proxy` 只在该地址监听，其它接口上根本没有监听。
 
 ```
--p <TAILNET_IP>:8443:8443     # Hub
+-p <BIND_IP>（tailscale 网卡 IP 或内网 IP）:8443:8443     # Hub
 -p <TAILNET_IP>:9527:9527     # Agent
 ```
 

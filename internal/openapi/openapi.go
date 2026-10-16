@@ -35,7 +35,7 @@ type License struct {
 	URL  string `json:"url,omitempty"`
 }
 
-// Server 不写死主机：面板只绑 tailnet IP，把具体地址写进 spec 等于分发私密信息。
+// Server 不写死主机：面板只绑 tailnet / 内网的具体 IP，把具体地址写进 spec 等于分发私密信息。
 type Server struct {
 	URL         string `json:"url"`
 	Description string `json:"description,omitempty"`

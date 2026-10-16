@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: "DockDeck Hub API"
-  version: "0.1.0"
+  version: "dev"
   description: |-
     自研多主机监控与 Docker 管理面板的服务端接口。
 
@@ -1657,6 +1657,14 @@ paths:
           example: "1"
           schema:
             type: "boolean"
+        -
+          name: "confirm"
+          in: "query"
+          required: true
+          description: "破坏性确认：回传目标容器 ID 或名字以确认，与 cid 完全一致才放行（query 与 body 取并集，空值 400）"
+          example: "9f3a2b1c4d5e"
+          schema:
+            type: "string"
       responses:
         "200":
           description: "成功"

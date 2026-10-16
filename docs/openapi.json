@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "DockDeck Hub API",
-    "version": "0.1.0",
+    "version": "dev",
     "description": "自研多主机监控与 Docker 管理面板的服务端接口。\n\n**访问方式**：服务绑定 tailnet / 内网的具体 IP（不绑 0.0.0.0），不在公网监听；浏览器用 cookie 会话，App / 脚本用 `Authorization: Bearer ddk_...`。\n\n**两套身份互不信任**：带 Bearer 时只看 Token（即便同时带了 cookie），Token 权限由签发时勾选的 scope 决定，scope 不足返回 403；登录、改密、Token 管理等端点仅会话可用，Token 调用一律 401。\n\n**响应信封**：成功 `{\"data\":…}`，失败 `{\"error\":{\"code\",\"message\"}}`。客户端请判 `code` 而非中文文案。\n\n**幂等键 `X-DD-Request-Id`**：所有端点接受可选请求头 `X-DD-Request-Id`（1-64 字符，限字母数字与 `._-`，非法值 400）。缺省时 Hub 现场生成，响应头原样回显。写操作将该键落入审计并转发给 Agent——它用于审计关联与排查对账，不做执行级去重（Agent 无状态、写操作不重试）。",
     "license": {
       "name": "PolyForm Noncommercial License 1.0.0",
@@ -2491,6 +2491,16 @@
             "example": "1",
             "schema": {
               "type": "boolean"
+            }
+          },
+          {
+            "name": "confirm",
+            "in": "query",
+            "required": true,
+            "description": "破坏性确认：回传目标容器 ID 或名字以确认，与 cid 完全一致才放行（query 与 body 取并集，空值 400）",
+            "example": "9f3a2b1c4d5e",
+            "schema": {
+              "type": "string"
             }
           }
         ],

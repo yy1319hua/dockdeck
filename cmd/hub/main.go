@@ -30,6 +30,7 @@ import (
 	"github.com/yy1319hua/dockdeck/internal/route"
 	"github.com/yy1319hua/dockdeck/internal/store"
 	"github.com/yy1319hua/dockdeck/internal/tlsx"
+	"github.com/yy1319hua/dockdeck/internal/version"
 )
 
 func main() {
@@ -395,6 +396,7 @@ func (s *server) routes() http.Handler {
 			{Name: "cid", Desc: "容器 ID 或名字", Required: true, Example: "9f3a2b1c4d5e"},
 			{Name: "force", Desc: "强删运行中的容器（仅认 1）", Required: false, Example: "1", SchemaType: "boolean"},
 			{Name: "v", Desc: "连同匿名卷删除（仅认 1）", Required: false, Example: "1", SchemaType: "boolean"},
+			{Name: "confirm", Desc: "破坏性确认：回传目标容器 ID 或名字以确认，与 cid 完全一致才放行（query 与 body 取并集，空值 400）", Required: true, Example: "9f3a2b1c4d5e", SchemaType: "string"},
 		},
 		Responses: []route.Response{
 			{Status: 403, Desc: "服务器已禁用，或命中 Agent 自身容器（不碰自身红线）"},
@@ -918,11 +920,12 @@ func (s *server) routes() http.Handler {
 	return mux
 }
 
-// spec 生成 OpenAPI 文档。Info.version 暂为手工常量；S8 接入真实构建版本后由 ldflags 注入。
+// spec 生成 OpenAPI 文档。Info.version 由 internal/version 承载、经 Makefile -ldflags 注入；
+// 本地未注入构建时回退到 "dev"（见 internal/version）。S9 起制品不再写死 "0.1.0"。
 func (s *server) spec() *openapi.Doc {
 	return openapi.Generate(openapi.Info{
 		Title:   "DockDeck Hub API",
-		Version: "0.1.0",
+		Version: version.Version,
 		Description: "自研多主机监控与 Docker 管理面板的服务端接口。\n\n" +
 			"**访问方式**：服务绑定 tailnet / 内网的具体 IP（不绑 0.0.0.0），不在公网监听；" +
 			"浏览器用 cookie 会话，App / 脚本用 `Authorization: Bearer ddk_...`。\n\n" +

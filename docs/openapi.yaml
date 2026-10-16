@@ -1,0 +1,3104 @@
+openapi: "3.0.3"
+info:
+  title: "DockDeck Hub API"
+  version: "0.1.0"
+  description: |-
+    自研多主机监控与 Docker 管理面板的服务端接口。
+
+    **访问方式**：服务绑定 tailnet / 内网的具体 IP（不绑 0.0.0.0），不在公网监听；浏览器用 cookie 会话，App / 脚本用 `Authorization: Bearer ddk_...`。
+
+    **两套身份互不信任**：带 Bearer 时只看 Token（即便同时带了 cookie），Token 权限由签发时勾选的 scope 决定，scope 不足返回 403；登录、改密、Token 管理等端点仅会话可用，Token 调用一律 401。
+
+    **响应信封**：成功 `{"data":…}`，失败 `{"error":{"code","message"}}`。客户端请判 `code` 而非中文文案。
+
+    **幂等键 `X-DD-Request-Id`**：所有端点接受可选请求头 `X-DD-Request-Id`（1-64 字符，限字母数字与 `._-`，非法值 400）。缺省时 Hub 现场生成，响应头原样回显。写操作将该键落入审计并转发给 Agent——它用于审计关联与排查对账，不做执行级去重（Agent 无状态、写操作不重试）。
+  license:
+    name: "PolyForm Noncommercial License 1.0.0"
+    url: "https://polyformproject.org/licenses/noncommercial/1.0.0"
+servers:
+  -
+    url: "/"
+    description: "同域：本 spec 由运行中的 Hub 自身提供"
+paths:
+  "/api/openapi.json":
+    get:
+      operationId: "getApiOpenapijson"
+      summary: "本服务的 OpenAPI 3.0.3 文档"
+      description: "由路由登记表实时生成，与实装同源。"
+      tags:
+        - "Meta"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                type: "object"
+        "400":
+          description: "请求体或参数不合法"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "公开端点，不使用"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "身份成立但无权执行"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "目标不存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        - {}
+  "/api/v1/admin/backup":
+    get:
+      operationId: "getApiV1AdminBackup"
+      summary: "下载整库快照"
+      description: "VACUUM INTO 生成一致快照后流式下载（临时文件中转，用完即删）。文件含全部表——用户、会话、审计、受管主机与各服务器加密令牌；一份快照等于一份需要同等保护的数据库副本，仅会话可调正是为此。"
+      tags:
+        - "Settings"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/vnd.sqlite3":
+              schema:
+                type: "object"
+        "400":
+          description: "请求体或参数不合法"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "未登录，或携带 API Token"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "身份成立但无权执行"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "目标不存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "500":
+          description: "快照生成或读取失败"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          cookieAuth: []
+  "/api/v1/api-tokens":
+    get:
+      operationId: "getApiV1Apitokens"
+      summary: "列出 API Token"
+      description: "只返回元数据：明文与哈希都不出库。"
+      tags:
+        - "Tokens"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "请求体或参数不合法"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "未登录，或凭据无效/已过期"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "身份成立但无权执行"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "目标不存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          cookieAuth: []
+    post:
+      operationId: "postApiV1Apitokens"
+      summary: "签发 API Token"
+      description: "字段：name（唯一）、scopes（取自 GET /api/v1/scopes）、ttl（7d|30d|90d|1y|never）。明文 plaintext 仅本次响应可见。"
+      tags:
+        - "Tokens"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "object"
+      responses:
+        "201":
+          description: "Created"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "请求体或参数不合法"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "未登录，或凭据无效/已过期"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "身份成立但无权执行"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "目标不存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          cookieAuth: []
+  "/api/v1/api-tokens/{id}":
+    delete:
+      operationId: "deleteApiV1ApitokensId"
+      summary: "撤销 API Token"
+      description: "按 ID 撤销（不是按名字）。撤销后该 Token 立即失效；目标不存在返回 404。"
+      tags:
+        - "Tokens"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          description: "Token ID"
+          example: "1"
+          schema:
+            type: "integer"
+            format: "int64"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "请求体或参数不合法"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "未登录，或凭据无效/已过期"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "身份成立但无权执行"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "目标不存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          cookieAuth: []
+  "/api/v1/audit_logs":
+    get:
+      operationId: "getApiV1Auditlogs"
+      summary: "审计日志查询"
+      description: |-
+        倒序（最新在前）+ before_id 游标分页：limit 缺省 100、上限 1000；响应 next_before=0 表示没有更多，否则作为下一次请求的 before_id。过滤维度：from/to（RFC3339，缺省最近 7 天）、server_id、action 前缀（如 container 命中 container.* 全部）、result（ok|error）。本端点自身不写审计行。
+
+        API Token 须具备 scope `read:audit`；浏览器会话不受此限制。
+      tags:
+        - "Audit"
+      parameters:
+        -
+          name: "from"
+          in: "query"
+          required: false
+          description: "起始时间（RFC3339，含）"
+          example: "2026-10-15T00:00:00Z"
+          schema:
+            type: "string"
+        -
+          name: "to"
+          in: "query"
+          required: false
+          description: "截止时间（RFC3339，含）"
+          example: "2026-10-16T00:00:00Z"
+          schema:
+            type: "string"
+        -
+          name: "server_id"
+          in: "query"
+          required: false
+          description: "按服务器过滤（缺省不限）"
+          example: "1"
+          schema:
+            type: "integer"
+            format: "int64"
+        -
+          name: "action"
+          in: "query"
+          required: false
+          description: "动作前缀（如 container、token、auth）"
+          example: "container"
+          schema:
+            type: "string"
+        -
+          name: "result"
+          in: "query"
+          required: false
+          description: "结果（缺省不限）"
+          example: "error"
+          schema:
+            type: "string"
+        -
+          name: "before_id"
+          in: "query"
+          required: false
+          description: "游标：只返回 id 更小的行"
+          example: "0"
+          schema:
+            type: "integer"
+            format: "int64"
+        -
+          name: "limit"
+          in: "query"
+          required: false
+          description: "每页条数（缺省 100，上限 1000）"
+          example: "100"
+          schema:
+            type: "integer"
+            format: "int64"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "参数非法（时间格式 / limit 非正整数 / action 字符集 / result 取值）"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "未登录，或凭据无效/已过期"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "Token 缺少 read:audit scope（会话用户不受此限）"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "目标不存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          cookieAuth: []
+        -
+          bearerAuth: []
+  "/api/v1/auth/login":
+    post:
+      operationId: "postApiV1AuthLogin"
+      summary: "登录"
+      description: "成功写入会话 cookie。仅限浏览器；API Token 不能调用认证端点。"
+      tags:
+        - "Auth"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "object"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "请求体或参数不合法"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "公开端点，不使用"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "身份成立但无权执行"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "目标不存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        - {}
+  "/api/v1/auth/logout":
+    post:
+      operationId: "postApiV1AuthLogout"
+      summary: "登出"
+      description: "删除当前会话并清 cookie；重复调用幂等（已登出再登出仍 200）。"
+      tags:
+        - "Auth"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "请求体或参数不合法"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "未登录，或凭据无效/已过期"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "身份成立但无权执行"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "目标不存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          cookieAuth: []
+  "/api/v1/auth/me":
+    get:
+      operationId: "getApiV1AuthMe"
+      summary: "当前身份"
+      description: "未登录也返回 200，并用 setup_required 提示前端引导首启建号，因此挂在 TryAuth 下而非 RequireAuth。"
+      tags:
+        - "Auth"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "请求体或参数不合法"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "公开端点，不使用"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "身份成立但无权执行"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "目标不存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        - {}
+  "/api/v1/auth/password":
+    post:
+      operationId: "postApiV1AuthPassword"
+      summary: "改密"
+      description: "改密成功后撤销该用户全部会话，需重新登录。审计在本端点内完成，故不再套审计中间件。"
+      tags:
+        - "Auth"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "object"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "请求体或参数不合法"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "未登录，或凭据无效/已过期"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "身份成立但无权执行"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "目标不存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          cookieAuth: []
+  "/api/v1/auth/setup":
+    post:
+      operationId: "postApiV1AuthSetup"
+      summary: "首启建号"
+      description: "仅当系统尚无任何用户时可用，成功即登录。"
+      tags:
+        - "Auth"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "object"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "请求体或参数不合法"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "公开端点，不使用"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "身份成立但无权执行"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "目标不存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        - {}
+  "/api/v1/health":
+    get:
+      operationId: "getApiV1Health"
+      summary: "健康检查"
+      description: "进程存活探针：恒返回 200，不校验身份、不查库。部署脚本与负载均衡用它判断 Hub 是否起来。"
+      tags:
+        - "Meta"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "请求体或参数不合法"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "公开端点，不使用"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "身份成立但无权执行"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "目标不存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        - {}
+  "/api/v1/scopes":
+    get:
+      operationId: "getApiV1Scopes"
+      summary: "API Token 权限项字典"
+      description: "列出全部可申请的 scope 及说明。公开：它不含任何本机信息，只是权限名词表。"
+      tags:
+        - "Meta"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "请求体或参数不合法"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "公开端点，不使用"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "身份成立但无权执行"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "目标不存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        - {}
+  "/api/v1/servers":
+    get:
+      operationId: "getApiV1Servers"
+      summary: "受管主机清单"
+      description: |-
+        返回全部受管主机（含已禁用）。列表不暴露 Agent 令牌等秘密字段；在线状态以 last_seen 为准。纳管（写入 servers 表）机制见 `docs/ARCHITECTURE.md` 的纳管设计裁定。
+
+        API Token 须具备 scope `read:metrics`；浏览器会话不受此限制。
+      tags:
+        - "Servers"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "请求体或参数不合法"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "未登录，或凭据无效/已过期"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "缺少 read:metrics 权限"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "目标不存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "500":
+          description: "读取受管主机清单失败"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          cookieAuth: []
+        -
+          bearerAuth: []
+  "/api/v1/servers/enroll":
+    post:
+      operationId: "postApiV1ServersEnroll"
+      summary: "Agent 自注册纳管"
+      description: |-
+        Agent 启动时以 Authorization: Bearer <join_secret> 调用：认领邀请、写入 servers 行，并以同一 secret 作为本机长期共享令牌（Hub 侧密文存储）。**幂等**：同一 join_secret 重复调用返回既有服务器 id 并刷新 base_url（重启/改址自愈）。
+
+        本端点以一次性 join_secret 作 Bearer（由 POST /api/v1/servers/invite 签发），非 API Token。
+      tags:
+        - "Servers"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "object"
+      responses:
+        "201":
+          description: "Created"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "请求体不合法"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "join_secret 无法识别"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "身份成立但无权执行"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "目标不存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "409":
+          description: "同名主机已存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "410":
+          description: "邀请已过期或已不可用"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          bearerAuth: []
+  "/api/v1/servers/invite":
+    post:
+      operationId: "postApiV1ServersInvite"
+      summary: "签发纳管邀请"
+      description: "生成一枚一次性 join_secret，供 Agent 容器启动时自注册。明文仅本次响应可见。仅浏览器会话可调（与 Token 管理同口径：API Token 不得自签邀请，否则权限收不回来）。"
+      tags:
+        - "Servers"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "object"
+      responses:
+        "201":
+          description: "Created"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "请求体不合法"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "未登录"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "身份成立但无权执行"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "目标不存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          cookieAuth: []
+  "/api/v1/servers/{id}/compose":
+    get:
+      operationId: "getApiV1ServersIdCompose"
+      summary: "Compose 项目清单"
+      description: |-
+        实时取自 Agent：在 Agent 配置的白名单目录（DD_AGENT_COMPOSE_DIRS）内递归发现 compose 文件，并逐个查运行状态。白名单外的项目一律不可见（项目名只经白名单解析，不进 shell）。
+
+        API Token 须具备 scope `read:containers`；浏览器会话不受此限制。
+      tags:
+        - "Compose"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          description: "服务器 ID"
+          example: "1"
+          schema:
+            type: "integer"
+            format: "int64"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "请求体或参数不合法"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "未登录，或凭据无效/已过期"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "服务器已禁用"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "目标不存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "502":
+          description: "Agent 不可达或返回异常"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          cookieAuth: []
+        -
+          bearerAuth: []
+  "/api/v1/servers/{id}/compose/{project}/backups":
+    get:
+      operationId: "getApiV1ServersIdComposeProjectBackups"
+      summary: "Compose 写前备份清单"
+      description: |-
+        列出该 compose 文件的写前备份（<文件>.bak.<RFC3339>），按时间倒序（最新在前）。只回文件名/大小/时间，**不回宿主机绝对路径**（与文件管理模块同口径）。备份由每次 PUT 写 YAML 自动生成；本模块不提供删除——备份只增不减，清理走宿主机。
+
+        API Token 须具备 scope `read:containers`；浏览器会话不受此限制。
+      tags:
+        - "Compose"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          description: "服务器 ID"
+          example: "1"
+          schema:
+            type: "integer"
+            format: "int64"
+        -
+          name: "project"
+          in: "path"
+          required: true
+          description: "compose 项目名（白名单内目录名）"
+          example: "web"
+          schema:
+            type: "string"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "请求体或参数不合法"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "未登录，或凭据无效/已过期"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "服务器已禁用"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "目标不存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "502":
+          description: "Agent 不可达或返回异常"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          cookieAuth: []
+        -
+          bearerAuth: []
+  "/api/v1/servers/{id}/compose/{project}/backups/content":
+    get:
+      operationId: "getApiV1ServersIdComposeProjectBackupsContent"
+      summary: "读取 Compose 备份正文"
+      description: |-
+        读指定备份的正文，供前端预览与 diff。备份名走查询串 file（含 RFC3339 的 + 与 :，放进路径段要处理编码差异，故不进路径）。预览不另开端点：拿到正文后调既有的 compose diff 端点算 unified diff，与现有两段式写入同款。
+
+        API Token 须具备 scope `read:containers`；浏览器会话不受此限制。
+      tags:
+        - "Compose"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          description: "服务器 ID"
+          example: "1"
+          schema:
+            type: "integer"
+            format: "int64"
+        -
+          name: "project"
+          in: "path"
+          required: true
+          description: "compose 项目名"
+          example: "web"
+          schema:
+            type: "string"
+        -
+          name: "file"
+          in: "query"
+          required: true
+          description: "备份文件名（须以 \u003ccompose 文件名\u003e.bak. 开头）"
+          example: "docker-compose.yml.bak.2026-10-16T21:13:00+08:00"
+          schema:
+            type: "string"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "缺少 file 参数，或备份名不合法/越界"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "未登录，或凭据无效/已过期"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "服务器已禁用"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "目标不存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "502":
+          description: "Agent 不可达或返回异常"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          cookieAuth: []
+        -
+          bearerAuth: []
+  "/api/v1/servers/{id}/compose/{project}/backups/restore":
+    post:
+      operationId: "postApiV1ServersIdComposeProjectBackupsRestore"
+      summary: "用备份覆盖当前 Compose 文件"
+      description: |-
+        请求体的 file 字段填备份文件名。恢复**本身就是一次覆盖写**，故 Agent 侧会先把「恢复前的当前内容」备份成新的 .bak.<RFC3339> 再覆盖——否则回滚是单向门：恢复到旧版本后就回不去了。响应回传那份新备份的文件名（仅文件名，不含目录）。注意：改 YAML 不会直接改动运行中的容器，需再执行 compose up 才生效。
+
+        API Token 须具备 scope `write:containers`；浏览器会话不受此限制。
+      tags:
+        - "Compose"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          description: "服务器 ID"
+          example: "1"
+          schema:
+            type: "integer"
+            format: "int64"
+        -
+          name: "project"
+          in: "path"
+          required: true
+          description: "compose 项目名"
+          example: "web"
+          schema:
+            type: "string"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "缺少 file 字段，或备份名不合法/越界"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "未登录，或凭据无效/已过期"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "服务器已禁用"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "目标不存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "502":
+          description: "Agent 不可达或返回异常"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          cookieAuth: []
+        -
+          bearerAuth: []
+  "/api/v1/servers/{id}/compose/{project}/diff":
+    post:
+      operationId: "postApiV1ServersIdComposeProjectDiff"
+      summary: "Compose YAML 修改预览（diff）"
+      description: |-
+        请求体 {"content":"..."}。返回新内容相对当前文件的 unified diff——**只算不写**，不落盘、不产生备份，是「先看 diff → 再确认写」两段式的第一段。scope 归 write：它是写入流程的一段（带请求体的 POST），与 PUT 同一把钥匙。
+
+        API Token 须具备 scope `write:containers`；浏览器会话不受此限制。
+      tags:
+        - "Compose"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          description: "服务器 ID"
+          example: "1"
+          schema:
+            type: "integer"
+            format: "int64"
+        -
+          name: "project"
+          in: "path"
+          required: true
+          description: "项目名（白名单内目录名）"
+          example: "watchtower"
+          schema:
+            type: "string"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "object"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "请求体不合法，或项目名为空（本地拦截，不出门）"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "未登录，或凭据无效/已过期"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "服务器已禁用"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "项目不存在或不在白名单"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "502":
+          description: "Agent 不可达或计算 diff 失败"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          cookieAuth: []
+        -
+          bearerAuth: []
+  "/api/v1/servers/{id}/compose/{project}/file":
+    get:
+      operationId: "getApiV1ServersIdComposeProjectFile"
+      summary: "读取 Compose YAML"
+      description: |-
+        返回项目 compose 文件的绝对路径与原文。只读——要改走下面的 diff 预览 + PUT 两段式。
+
+        API Token 须具备 scope `read:containers`；浏览器会话不受此限制。
+      tags:
+        - "Compose"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          description: "服务器 ID"
+          example: "1"
+          schema:
+            type: "integer"
+            format: "int64"
+        -
+          name: "project"
+          in: "path"
+          required: true
+          description: "项目名（白名单内目录名）"
+          example: "watchtower"
+          schema:
+            type: "string"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "项目名为空（本地拦截，不出门）"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "未登录，或凭据无效/已过期"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "服务器已禁用"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "项目不存在或不在白名单"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "502":
+          description: "Agent 不可达或读文件失败"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          cookieAuth: []
+        -
+          bearerAuth: []
+    put:
+      operationId: "putApiV1ServersIdComposeProjectFile"
+      summary: "写入 Compose YAML"
+      description: |-
+        请求体 {"content":"..."}。Agent 侧**写前先把当前内容备份为 <file>.bak.<RFC3339>**，备份落盘成功才覆盖写（红线「备份优先于变更」）；响应回传备份路径供回滚。建议先用上面的 diff 端点预览再调本端点。
+
+        API Token 须具备 scope `write:containers`；浏览器会话不受此限制。
+      tags:
+        - "Compose"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          description: "服务器 ID"
+          example: "1"
+          schema:
+            type: "integer"
+            format: "int64"
+        -
+          name: "project"
+          in: "path"
+          required: true
+          description: "项目名（白名单内目录名）"
+          example: "watchtower"
+          schema:
+            type: "string"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "object"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "请求体不合法，或项目名为空（本地拦截，不出门）"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "未登录，或凭据无效/已过期"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "服务器已禁用"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "项目不存在或不在白名单"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "502":
+          description: "Agent 不可达，或备份/写入失败"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          cookieAuth: []
+        -
+          bearerAuth: []
+  "/api/v1/servers/{id}/compose/{project}/logs":
+    get:
+      operationId: "getApiV1ServersIdComposeProjectLogs"
+      summary: "Compose 项目日志"
+      description: |-
+        裸文本流（--no-color）。follow=1 为长连接，逐块 Flush，调用方断开即结束；不设 Hub 侧读取超时——流的寿命归调用方 ctx。
+
+        API Token 须具备 scope `read:containers`；浏览器会话不受此限制。
+      tags:
+        - "Compose"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          description: "服务器 ID"
+          example: "1"
+          schema:
+            type: "integer"
+            format: "int64"
+        -
+          name: "project"
+          in: "path"
+          required: true
+          description: "项目名（白名单内目录名）"
+          example: "watchtower"
+          schema:
+            type: "string"
+        -
+          name: "follow"
+          in: "query"
+          required: false
+          description: "持续跟随（仅认 1）"
+          example: "1"
+          schema:
+            type: "boolean"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "text/plain":
+              schema:
+                type: "string"
+        "400":
+          description: "项目名为空（本地拦截，不出门）"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "未登录，或凭据无效/已过期"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "服务器已禁用"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "项目不存在或不在白名单"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "502":
+          description: "Agent 不可达或打开流失败"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          cookieAuth: []
+        -
+          bearerAuth: []
+  "/api/v1/servers/{id}/compose/{project}/{action}":
+    post:
+      operationId: "postApiV1ServersIdComposeProjectAction"
+      summary: "Compose 写动作"
+      description: |-
+        action ∈ up|down|restart|pull；非法动词由 Hub 侧 agentcli 拦下（400，不出门），未知项目 404。响应透传 compose 原生输出。**compose 没有 prune 子命令**——镜像清理走镜像端点，不在此暴露。
+
+        API Token 须具备 scope `write:containers`；浏览器会话不受此限制。
+      tags:
+        - "Compose"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          description: "服务器 ID"
+          example: "1"
+          schema:
+            type: "integer"
+            format: "int64"
+        -
+          name: "project"
+          in: "path"
+          required: true
+          description: "项目名（白名单内目录名）"
+          example: "watchtower"
+          schema:
+            type: "string"
+        -
+          name: "action"
+          in: "path"
+          required: true
+          description: "Compose 动作"
+          example: "up"
+          schema:
+            type: "string"
+            enum:
+              - "up"
+              - "down"
+              - "restart"
+              - "pull"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "动作不在白名单（本地拦截，不出门）"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "未登录，或凭据无效/已过期"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "服务器已禁用"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "项目不存在或不在白名单"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "502":
+          description: "Agent 不可达，或 compose 执行失败（如端口冲突）"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          cookieAuth: []
+        -
+          bearerAuth: []
+  "/api/v1/servers/{id}/containers":
+    get:
+      operationId: "getApiV1ServersIdContainers"
+      summary: "容器清单"
+      description: |-
+        实时取自 Agent 的 Engine 原生清单（未停止的默认不含，all=true 含已停止）。空清单编码为 [] 而非 null。
+
+        API Token 须具备 scope `read:containers`；浏览器会话不受此限制。
+      tags:
+        - "Containers"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          description: "服务器 ID"
+          example: "1"
+          schema:
+            type: "integer"
+            format: "int64"
+        -
+          name: "all"
+          in: "query"
+          required: false
+          description: "含已停止容器（true/false，或 1/0；省略为 false）"
+          example: "false"
+          schema:
+            type: "boolean"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "请求体或参数不合法"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "未登录，或凭据无效/已过期"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "服务器已禁用"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "目标不存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "502":
+          description: "Agent 不可达或返回异常"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          cookieAuth: []
+        -
+          bearerAuth: []
+  "/api/v1/servers/{id}/containers/{cid}":
+    get:
+      operationId: "getApiV1ServersIdContainersCid"
+      summary: "容器详情"
+      description: |-
+        Engine inspect JSON 原样透传（信封的 data 层），Hub 不做字段裁剪。
+
+        API Token 须具备 scope `read:containers`；浏览器会话不受此限制。
+      tags:
+        - "Containers"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          description: "服务器 ID"
+          example: "1"
+          schema:
+            type: "integer"
+            format: "int64"
+        -
+          name: "cid"
+          in: "path"
+          required: true
+          description: "容器 ID 或名字"
+          example: "9f3a2b1c4d5e"
+          schema:
+            type: "string"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "请求体或参数不合法"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "未登录，或凭据无效/已过期"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "服务器已禁用"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "容器不存在（Agent/Engine 报 404）"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "502":
+          description: "Agent 不可达或返回异常"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          cookieAuth: []
+        -
+          bearerAuth: []
+    delete:
+      operationId: "deleteApiV1ServersIdContainersCid"
+      summary: "删除容器"
+      description: |-
+        force=1 强删运行中的容器；v=1 连同匿名卷删除（查询串与请求体取并集，与 Agent 侧同口径）。具名卷与 bind 目录不归 Engine 管，不在此清理。
+
+        API Token 须具备 scope `write:containers`；浏览器会话不受此限制。
+      tags:
+        - "Containers"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          description: "服务器 ID"
+          example: "1"
+          schema:
+            type: "integer"
+            format: "int64"
+        -
+          name: "cid"
+          in: "path"
+          required: true
+          description: "容器 ID 或名字"
+          example: "9f3a2b1c4d5e"
+          schema:
+            type: "string"
+        -
+          name: "force"
+          in: "query"
+          required: false
+          description: "强删运行中的容器（仅认 1）"
+          example: "1"
+          schema:
+            type: "boolean"
+        -
+          name: "v"
+          in: "query"
+          required: false
+          description: "连同匿名卷删除（仅认 1）"
+          example: "1"
+          schema:
+            type: "boolean"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "请求体或参数不合法"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "未登录，或凭据无效/已过期"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "服务器已禁用，或命中 Agent 自身容器（不碰自身红线）"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "容器不存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "409":
+          description: "Engine 拒绝删除（如运行中未 force）"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "502":
+          description: "Agent 不可达或返回异常"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          cookieAuth: []
+        -
+          bearerAuth: []
+  "/api/v1/servers/{id}/containers/{cid}/logs":
+    get:
+      operationId: "getApiV1ServersIdContainersCidLogs"
+      summary: "容器日志"
+      description: |-
+        裸流透传，无信封：默认 stdout/stderr 合流文本（text/plain）；export=1 时 Engine 原始字节流下载（application/octet-stream + Content-Disposition，docker CLI 可直接消费）。follow=1 为长连接，逐块 Flush，浏览器断开即结束。
+
+        API Token 须具备 scope `read:containers`；浏览器会话不受此限制。
+      tags:
+        - "Containers"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          description: "服务器 ID"
+          example: "1"
+          schema:
+            type: "integer"
+            format: "int64"
+        -
+          name: "cid"
+          in: "path"
+          required: true
+          description: "容器 ID 或名字"
+          example: "9f3a2b1c4d5e"
+          schema:
+            type: "string"
+        -
+          name: "follow"
+          in: "query"
+          required: false
+          description: "持续跟随（仅认 1）"
+          example: "1"
+          schema:
+            type: "boolean"
+        -
+          name: "tail"
+          in: "query"
+          required: false
+          description: "尾部行数：all 或纯数字"
+          example: "200"
+          schema:
+            type: "string"
+        -
+          name: "since"
+          in: "query"
+          required: false
+          description: "起始时间（RFC3339 或 Unix 秒）"
+          example: "2026-10-14T00:00:00Z"
+          schema:
+            type: "string"
+            format: "date-time"
+        -
+          name: "until"
+          in: "query"
+          required: false
+          description: "截止时间（RFC3339 或 Unix 秒）"
+          example: "2026-10-14T08:00:00Z"
+          schema:
+            type: "string"
+            format: "date-time"
+        -
+          name: "timestamps"
+          in: "query"
+          required: false
+          description: "每行带时间戳（仅认 1）"
+          example: "1"
+          schema:
+            type: "boolean"
+        -
+          name: "export"
+          in: "query"
+          required: false
+          description: "原始字节流导出下载（仅认 1）"
+          example: "1"
+          schema:
+            type: "boolean"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "text/plain":
+              schema:
+                type: "string"
+        "400":
+          description: "请求体或参数不合法"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "未登录，或凭据无效/已过期"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "服务器已禁用"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "目标不存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "502":
+          description: "Agent 不可达或返回异常"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          cookieAuth: []
+        -
+          bearerAuth: []
+  "/api/v1/servers/{id}/containers/{cid}/{action}":
+    post:
+      operationId: "postApiV1ServersIdContainersCidAction"
+      summary: "容器操作"
+      description: |-
+        action ∈ start|stop|restart|pause|unpause|kill|resize，未知动作 404。stop 请求体 {"timeout_sec":N}（SIGTERM 后等待秒数，省略用引擎默认）；kill 请求体 {"signal":"SIGTERM"}（白名单内信号，空用引擎默认）；resize 查询串 ?h=&w=（行列正整数，Engine 原生约定）；其余动作无选项。写操作不重试（Agent 侧尚无幂等去重），一次失败即如实回报。
+
+        API Token 须具备 scope `write:containers`；浏览器会话不受此限制。
+      tags:
+        - "Containers"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          description: "服务器 ID"
+          example: "1"
+          schema:
+            type: "integer"
+            format: "int64"
+        -
+          name: "cid"
+          in: "path"
+          required: true
+          description: "容器 ID 或名字"
+          example: "9f3a2b1c4d5e"
+          schema:
+            type: "string"
+        -
+          name: "action"
+          in: "path"
+          required: true
+          description: "容器动作"
+          example: "restart"
+          schema:
+            type: "string"
+            enum:
+              - "start"
+              - "stop"
+              - "restart"
+              - "pause"
+              - "unpause"
+              - "kill"
+              - "resize"
+        -
+          name: "h"
+          in: "query"
+          required: false
+          description: "resize 行数（正整数）"
+          example: "40"
+          schema:
+            type: "integer"
+            format: "int64"
+        -
+          name: "w"
+          in: "query"
+          required: false
+          description: "resize 列数（正整数）"
+          example: "120"
+          schema:
+            type: "integer"
+            format: "int64"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "请求体或参数不合法"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "未登录，或凭据无效/已过期"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "服务器已禁用，或命中 Agent 自身容器（不碰自身红线）"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "容器不存在或未知操作"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "409":
+          description: "容器状态不允许该操作（Engine 报 409）"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "502":
+          description: "Agent 不可达或返回异常"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          cookieAuth: []
+        -
+          bearerAuth: []
+  "/api/v1/servers/{id}/files":
+    get:
+      operationId: "getApiV1ServersIdFiles"
+      summary: "文件清单"
+      description: |-
+        实时取自 Agent：在配置的根白名单内递归列举目录内容；空清单编码为 [] 而非 null。root 缺省 0（首个根），path 缺省根自身，depth 缺省 1（只列直接子项）。
+
+        API Token 须具备 scope `read:files`；浏览器会话不受此限制。
+      tags:
+        - "Files"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          description: "服务器 ID"
+          example: "1"
+          schema:
+            type: "integer"
+            format: "int64"
+        -
+          name: "root"
+          in: "query"
+          required: false
+          description: "根白名单序号（缺省 0）"
+          example: "0"
+          schema:
+            type: "integer"
+            format: "int64"
+        -
+          name: "path"
+          in: "query"
+          required: false
+          description: "相对根的路径（可空，表示根自身）"
+          example: "app/config"
+          schema:
+            type: "string"
+        -
+          name: "depth"
+          in: "query"
+          required: false
+          description: "递归深度（缺省 1）"
+          example: "1"
+          schema:
+            type: "integer"
+            format: "int64"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "请求体或参数不合法"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "未登录，或凭据无效/已过期"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "服务器已禁用"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "目标不存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "502":
+          description: "Agent 不可达或返回异常"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          cookieAuth: []
+        -
+          bearerAuth: []
+  "/api/v1/servers/{id}/files/content":
+    get:
+      operationId: "getApiV1ServersIdFilesContent"
+      summary: "文件正文下载"
+      description: |-
+        裸流透传，无信封：正文可能是任意二进制。元信息走响应头（X-DD-File-Path / X-DD-File-Size / X-DD-Truncated，截断标记用于提示客户端「文件比这更长」）。可按单文件上限截断。
+
+        API Token 须具备 scope `read:files`；浏览器会话不受此限制。
+      tags:
+        - "Files"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          description: "服务器 ID"
+          example: "1"
+          schema:
+            type: "integer"
+            format: "int64"
+        -
+          name: "root"
+          in: "query"
+          required: false
+          description: "根白名单序号（缺省 0）"
+          example: "0"
+          schema:
+            type: "integer"
+            format: "int64"
+        -
+          name: "path"
+          in: "query"
+          required: false
+          description: "相对根的路径"
+          example: "app/config.yaml"
+          schema:
+            type: "string"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/octet-stream":
+              schema:
+                type: "object"
+        "400":
+          description: "请求体或参数不合法"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "未登录，或凭据无效/已过期"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "服务器已禁用"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "路径不存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "502":
+          description: "Agent 不可达或打开流失败"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          cookieAuth: []
+        -
+          bearerAuth: []
+    put:
+      operationId: "putApiV1ServersIdFilesContent"
+      summary: "写入文件内容"
+      description: |-
+        请求体即文件内容（不经信封）。Agent 侧写前先把当前内容备份为 <file>.bak.<RFC3339>，备份落盘成功才覆盖写，响应回传备份路径供回滚。上传上限由共享常量 MaxFileUploadBytes（16 MiB）约束：Hub 与 Agent 同源，避免「Hub 放行、Agent 413」。
+
+        API Token 须具备 scope `write:files`；浏览器会话不受此限制。
+      tags:
+        - "Files"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          description: "服务器 ID"
+          example: "1"
+          schema:
+            type: "integer"
+            format: "int64"
+        -
+          name: "root"
+          in: "query"
+          required: false
+          description: "根白名单序号（缺省 0）"
+          example: "0"
+          schema:
+            type: "integer"
+            format: "int64"
+        -
+          name: "path"
+          in: "query"
+          required: false
+          description: "相对根的路径"
+          example: "app/config.yaml"
+          schema:
+            type: "string"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "请求体或参数不合法"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "未登录，或凭据无效/已过期"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "服务器已禁用，或命中敏感黑名单/越界路径"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "路径不存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "413":
+          description: "上传内容超过单文件上限"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "502":
+          description: "Agent 不可达，或备份/写入失败"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          cookieAuth: []
+        -
+          bearerAuth: []
+  "/api/v1/servers/{id}/files/stat":
+    get:
+      operationId: "getApiV1ServersIdFilesStat"
+      summary: "文件元信息"
+      description: |-
+        取文件或目录的元信息（大小、类型、修改时间、是否被截断）。不返回正文——正文走 content 流式下载。
+
+        API Token 须具备 scope `read:files`；浏览器会话不受此限制。
+      tags:
+        - "Files"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          description: "服务器 ID"
+          example: "1"
+          schema:
+            type: "integer"
+            format: "int64"
+        -
+          name: "root"
+          in: "query"
+          required: false
+          description: "根白名单序号（缺省 0）"
+          example: "0"
+          schema:
+            type: "integer"
+            format: "int64"
+        -
+          name: "path"
+          in: "query"
+          required: false
+          description: "相对根的路径"
+          example: "app/config.yaml"
+          schema:
+            type: "string"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "请求体或参数不合法"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "未登录，或凭据无效/已过期"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "服务器已禁用"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "路径不存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "502":
+          description: "Agent 不可达或返回异常"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          cookieAuth: []
+        -
+          bearerAuth: []
+  "/api/v1/servers/{id}/files/{action}":
+    post:
+      operationId: "postApiV1ServersIdFilesAction"
+      summary: "文件写动作"
+      description: |-
+        action ∈ mkdir | delete | rename；body {"action","path","dest"}（rename 需 dest）。动作名取 URL 段，与请求体必须一致。非法动作由 Hub 侧 agentcli 拦下（400，不出门）。写前备份、路径白名单与敏感黑名单均在 Agent 侧。
+
+        API Token 须具备 scope `write:files`；浏览器会话不受此限制。
+      tags:
+        - "Files"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          description: "服务器 ID"
+          example: "1"
+          schema:
+            type: "integer"
+            format: "int64"
+        -
+          name: "action"
+          in: "path"
+          required: true
+          description: "文件动作"
+          example: "mkdir"
+          schema:
+            type: "string"
+            enum:
+              - "mkdir"
+              - "delete"
+              - "rename"
+        -
+          name: "root"
+          in: "query"
+          required: false
+          description: "根白名单序号（缺省 0）"
+          example: "0"
+          schema:
+            type: "integer"
+            format: "int64"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "object"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "动作不在白名单，或动作名与请求体不一致（本地拦截，不出门）"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "未登录，或凭据无效/已过期"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "服务器已禁用，或命中敏感黑名单/越界路径"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "路径不存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "409":
+          description: "目标已存在或目录非空"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "502":
+          description: "Agent 不可达或执行失败"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          cookieAuth: []
+        -
+          bearerAuth: []
+  "/api/v1/servers/{id}/images":
+    get:
+      operationId: "getApiV1ServersIdImages"
+      summary: "镜像清单"
+      description: |-
+        实时取自 Agent 的 Engine 原生清单（all=true 含中间层）。dangling=true 只列悬空镜像（无 tag），是 prune dry-run 两段式的第一段。
+
+        API Token 须具备 scope `read:containers`；浏览器会话不受此限制。
+      tags:
+        - "Images"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          description: "服务器 ID"
+          example: "1"
+          schema:
+            type: "integer"
+            format: "int64"
+        -
+          name: "all"
+          in: "query"
+          required: false
+          description: "含中间层镜像（true/false，或 1/0；省略为 false）"
+          example: "false"
+          schema:
+            type: "boolean"
+        -
+          name: "dangling"
+          in: "query"
+          required: false
+          description: "只列悬空镜像（true/false，或 1/0；省略为 false）"
+          example: "false"
+          schema:
+            type: "boolean"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "请求体或参数不合法"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "未登录，或凭据无效/已过期"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "服务器已禁用"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "目标不存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "502":
+          description: "Agent 不可达或返回异常"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          cookieAuth: []
+        -
+          bearerAuth: []
+  "/api/v1/servers/{id}/images/prune":
+    post:
+      operationId: "postApiV1ServersIdImagesPrune"
+      summary: "清理悬空镜像"
+      description: |-
+        真删（dry-run 两段式的第二段：前端先 GET images?dangling=true 展示清单，用户确认后才调本端点）。返回 Engine 的清理清单与回收字节数。
+
+        API Token 须具备 scope `write:containers`；浏览器会话不受此限制。
+      tags:
+        - "Images"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          description: "服务器 ID"
+          example: "1"
+          schema:
+            type: "integer"
+            format: "int64"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "请求体或参数不合法"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "未登录，或凭据无效/已过期"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "服务器已禁用"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "目标不存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "502":
+          description: "Agent 不可达或返回异常"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          cookieAuth: []
+        -
+          bearerAuth: []
+  "/api/v1/servers/{id}/images/pull":
+    post:
+      operationId: "postApiV1ServersIdImagesPull"
+      summary: "拉取镜像"
+      description: |-
+        请求体 {"ref":"alpine:3.20"}。长操作（大镜像以分钟计），Hub 侧超时 10 分钟。响应是汇总结果（最终状态/层清单），Engine 流内业务失败映射 502。
+
+        API Token 须具备 scope `write:containers`；浏览器会话不受此限制。
+      tags:
+        - "Images"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          description: "服务器 ID"
+          example: "1"
+          schema:
+            type: "integer"
+            format: "int64"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "ref 为空或字符集非法（本地校验，不出门）"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "未登录，或凭据无效/已过期"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "服务器已禁用"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "目标不存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "502":
+          description: "Agent 不可达，或 Engine 流内报错（如仓库不存在）"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          cookieAuth: []
+        -
+          bearerAuth: []
+  "/api/v1/servers/{id}/images/{ref...}":
+    delete:
+      operationId: "deleteApiV1ServersIdImagesRef"
+      summary: "删除镜像"
+      description: |-
+        ref 形如 alpine:3.20 或镜像 ID（可含 /，如 library/nginx:latest）。被容器占用的镜像 Engine 回 409；强删（先处理容器）不在本端点，是调用方决策链。
+
+        API Token 须具备 scope `write:containers`；浏览器会话不受此限制。
+      tags:
+        - "Images"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          description: "服务器 ID"
+          example: "1"
+          schema:
+            type: "integer"
+            format: "int64"
+        -
+          name: "ref"
+          in: "path"
+          required: true
+          description: "镜像引用：name:tag 或镜像 ID，可含 / 与 :（如 library/nginx:latest）。尾通配符容许斜杠，无需转义"
+          example: "alpine:3.20"
+          schema:
+            type: "string"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "请求体或参数不合法"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "未登录，或凭据无效/已过期"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "服务器已禁用"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "镜像不存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "409":
+          description: "镜像被容器占用"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "502":
+          description: "Agent 不可达或返回异常"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          cookieAuth: []
+        -
+          bearerAuth: []
+  "/api/v1/servers/{id}/metrics":
+    get:
+      operationId: "getApiV1ServersIdMetrics"
+      summary: "实时指标快照"
+      description: |-
+        返回最近一次采集的主机指标与每容器占用。服务器不存在或从未采集时 404。
+
+        API Token 须具备 scope `read:metrics`；浏览器会话不受此限制。
+      tags:
+        - "Servers"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          description: "服务器 ID"
+          example: "1"
+          schema:
+            type: "integer"
+            format: "int64"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "非法服务器 ID"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "未登录，或凭据无效/已过期"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "API Token 缺少所需 scope：read:metrics"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "服务器不存在或尚无快照"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          cookieAuth: []
+        -
+          bearerAuth: []
+  "/api/v1/servers/{id}/metrics/overview":
+    get:
+      operationId: "getApiV1ServersIdMetricsOverview"
+      summary: "历史指标曲线"
+      description: |-
+        返回 [from,to] 内主机与容器历史点（升序）。默认最近 1 小时，窗口上限 8 天（保留期 7 天），limit 限定点数（默认 720，上限 1440，超出取最新）。
+
+        API Token 须具备 scope `read:metrics`；浏览器会话不受此限制。
+      tags:
+        - "Servers"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          description: "服务器 ID"
+          example: "1"
+          schema:
+            type: "integer"
+            format: "int64"
+        -
+          name: "from"
+          in: "query"
+          required: false
+          description: "起始时间（RFC3339，UTC）"
+          example: "2026-10-14T00:00:00Z"
+          schema:
+            type: "string"
+            format: "date-time"
+        -
+          name: "to"
+          in: "query"
+          required: false
+          description: "截止时间（RFC3339，UTC）"
+          example: "2026-10-14T08:00:00Z"
+          schema:
+            type: "string"
+            format: "date-time"
+        -
+          name: "limit"
+          in: "query"
+          required: false
+          description: "最多返回的点数"
+          example: "720"
+          schema:
+            type: "integer"
+            format: "int64"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "参数非法（时间格式、to\u003cfrom、limit 非正整数）"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "未登录，或凭据无效/已过期"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "API Token 缺少所需 scope：read:metrics"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "服务器不存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          cookieAuth: []
+        -
+          bearerAuth: []
+  "/api/v1/servers/{id}/networks":
+    get:
+      operationId: "getApiV1ServersIdNetworks"
+      summary: "容器网络清单（只读）"
+      description: |-
+        实时取自 Agent 的 Engine 原生网络清单。每项自带 Containers 映射（接入容器名与 IPv4/Mac），故「哪些容器接入了」不需要额外请求——与卷只给 RefCount 计数不同，差异来自 Engine 的数据形态。
+
+        API Token 须具备 scope `read:containers`；浏览器会话不受此限制。
+      tags:
+        - "Networks"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          description: "服务器 ID"
+          example: "1"
+          schema:
+            type: "integer"
+            format: "int64"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "请求体或参数不合法"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "未登录，或凭据无效/已过期"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "服务器已禁用"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "目标不存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "502":
+          description: "Agent 不可达或返回异常"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          cookieAuth: []
+        -
+          bearerAuth: []
+  "/api/v1/servers/{id}/volumes":
+    get:
+      operationId: "getApiV1ServersIdVolumes"
+      summary: "数据卷清单（只读）"
+      description: |-
+        实时取自 Agent 的 Engine 原生卷清单。UsageData 可能为 null（驱动未统计），null 表示「Engine 没给」而非「0 个容器在用」——把这两者混同会让用户误判卷可删。卷不提供创建/删除/prune：删除卷即删数据，且 prune 的 dangling 判定由 Engine 做出、误判不可逆。
+
+        API Token 须具备 scope `read:containers`；浏览器会话不受此限制。
+      tags:
+        - "Volumes"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          description: "服务器 ID"
+          example: "1"
+          schema:
+            type: "integer"
+            format: "int64"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "请求体或参数不合法"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "未登录，或凭据无效/已过期"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "服务器已禁用"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "目标不存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "502":
+          description: "Agent 不可达或返回异常"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          cookieAuth: []
+        -
+          bearerAuth: []
+  "/api/v1/settings/protected-containers":
+    get:
+      operationId: "getApiV1SettingsProtectedcontainers"
+      summary: "读取保护名单"
+      description: "返回正则数组与 using_default：名单为空时容器守卫回落默认名单（^dockdeck-），UI 据此提示「当前为默认名单」。S7.8 起存 JSON 数组文本（正则含逗号不被切碎）；S7.8 前的逗号分隔存量读取时兼容，不迁移。"
+      tags:
+        - "Settings"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "请求体或参数不合法"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "未登录，或携带 API Token（本端点仅会话可调）"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "身份成立但无权执行"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "目标不存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          cookieAuth: []
+    put:
+      operationId: "putApiV1SettingsProtectedcontainers"
+      summary: "覆盖写保护名单"
+      description: "整名单覆盖：逐条编译校验，坏正则 400 并指出第几条，库无写入；空数组即清除（回落默认名单）。保存即时生效——容器守卫逐请求读 settings，无需重启。"
+      tags:
+        - "Settings"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "object"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "请求体不合法，或第 N 条正则编译失败"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "未登录，或携带 API Token"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "身份成立但无权执行"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "目标不存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          cookieAuth: []
+  "/api/v1/settings/tls-fingerprint":
+    get:
+      operationId: "getApiV1SettingsTlsfingerprint"
+      summary: "TLS 证书指纹"
+      description: "返回内置自签证书的 SHA-256 指纹（hex，冒号分隔），供浏览器证书固定时人工比对。非自签模式（none / 外部终止 TLS）下 fingerprint 为空串、self_signed=false。不展示过期时间：指纹是「当下这一枚」的标识，过期归运维在宿主机侧处理。"
+      tags:
+        - "Settings"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "请求体或参数不合法"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "未登录，或携带 API Token"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "身份成立但无权执行"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "目标不存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          cookieAuth: []
+components:
+  securitySchemes:
+    bearerAuth:
+      type: "http"
+      scheme: "bearer"
+      description: "API Token（ddk_ 前缀），Authorization: Bearer \u003ctoken\u003e。能做什么由签发时勾选的 scope 决定，scope 字典见 GET /api/v1/scopes。"
+    cookieAuth:
+      type: "apiKey"
+      in: "cookie"
+      name: "dd_session"
+      description: "浏览器会话 cookie，由 POST /api/v1/auth/login 签发。"
+  schemas:
+    Envelope:
+      type: "object"
+      description: "统一响应信封：成功只有 data，失败只有 error。客户端先看 HTTP 码再看 code。"
+      properties:
+        data:
+          description: "端点各自载荷，可为对象或数组"
+        error:
+          "$ref": "#/components/schemas/ErrorBody"
+    ErrorBody:
+      type: "object"
+      description: "错误载荷。code 是稳定的机器可读标识；message 是给人看的中文，可能随版本改动，客户端应判 code 而非文案。"
+      properties:
+        code:
+          type: "string"
+          description: "如 invalid_credentials / scope_denied / not_found"
+        message:
+          type: "string"
+    Scope:
+      type: "string"
+      description: "API Token 权限项。"
+      enum:
+        - "read:metrics"
+        - "read:containers"
+        - "write:containers"
+        - "read:files"
+        - "write:files"
+        - "read:audit"
+tags:
+  -
+    name: "Audit"
+    description: "审计日志查询与导出。"
+  -
+    name: "Auth"
+    description: "登录、建号、改密——仅浏览器会话可用，API Token 不能调用。"
+  -
+    name: "Compose"
+    description: "Compose 项目与 YAML。"
+  -
+    name: "Containers"
+    description: "容器清单、操作与日志。"
+  -
+    name: "Files"
+    description: "白名单根目录内的文件读写。"
+  -
+    name: "Images"
+    description: "镜像与清理。"
+  -
+    name: "Meta"
+    description: "健康检查、spec 本体、scope 字典。"
+  -
+    name: "Networks"
+  -
+    name: "Servers"
+    description: "受管主机纳管（UI 专属）。"
+  -
+    name: "Settings"
+  -
+    name: "Tokens"
+    description: "API Token 管理（仅浏览器会话可用）。"
+  -
+    name: "Volumes"

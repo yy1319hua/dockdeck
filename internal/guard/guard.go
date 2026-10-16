@@ -15,12 +15,15 @@
 package guard
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
 )
 
-// SettingKey 是 settings 表里保护名单的键名。值为逗号分隔的正则。
+// SettingKey 是 settings 表里保护名单的键名。S7.8 起值为 JSON 数组文本
+// （如 ["^dockdeck-","^db-[0-9]{2,3}$"]——正则含逗号也不被切碎）；S7.8 前
+// 的存量是逗号分隔纯文本，ParseList 读取时兼容，老数据不迁移。
 const SettingKey = "protected_containers"
 
 // DefaultPatterns 是保护名单缺省值。
@@ -88,13 +91,40 @@ func Confirm(target, confirm string) error {
 	return nil
 }
 
-// ParseList 把 settings 里逗号分隔的正则串拆成切片（去空段、去首尾空白）。
+// ParseList 把 settings 里的正则串拆成切片（去空段、去首尾空白）。
+// 三种形态按序兼容：
+//  1. **JSON 数组**（S7.8 起新写入格式）：一条正则一个元素，正则里含逗号
+//     （量词 {2,3}、字符类 [a-z,0-9]）也能完整保留——旧格式按逗号切碎正是
+//     本轮换存储格式的原因；
+//  2. **旧逗号分隔纯文本**（S7.8 前存量）：非 JSON 形态且含逗号时按逗号切，
+//     老数据不迁移；
+//  3. 其余（单条正则）：trim 后整体一条。
 func ParseList(raw string) []string {
-	var out []string
-	for _, p := range strings.Split(raw, ",") {
-		if p = strings.TrimSpace(p); p != "" {
-			out = append(out, p)
+	raw = strings.TrimSpace(raw)
+	if strings.HasPrefix(raw, "[") {
+		var arr []string
+		if json.Unmarshal([]byte(raw), &arr) == nil {
+			out := make([]string, 0, len(arr))
+			for _, p := range arr {
+				if p = strings.TrimSpace(p); p != "" {
+					out = append(out, p)
+				}
+			}
+			return out
 		}
+		// 以 [ 开头但不是合法 JSON 数组（如正则 [a-z]+ 单独存量）：回落下面。
+	}
+	var out []string
+	if strings.Contains(raw, ",") {
+		for _, p := range strings.Split(raw, ",") {
+			if p = strings.TrimSpace(p); p != "" {
+				out = append(out, p)
+			}
+		}
+		return out
+	}
+	if raw != "" {
+		out = append(out, raw)
 	}
 	return out
 }

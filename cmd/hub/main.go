@@ -70,6 +70,8 @@ func run(args []string) error {
 		tokens: apitoken.NewAPI(sqlDB),
 		// 登录/建号入口 IP 限流：突发 10，每 30s 补 1。
 		rl: middleware.NewRateLimit(10, 30*time.Second),
+		// S7.8：备份下载的临时目录与 TLS 指纹回显都从这里取。
+		dataDir: cfg.DataDir,
 	}
 	handler := middleware.RequestCtx(httpx.SecurityHeaders(srv.routes()))
 
@@ -87,6 +89,7 @@ func run(args []string) error {
 			return err
 		}
 		fingerprint = fp
+		srv.tlsFingerprint = fingerprint // S7.8：指纹端点从这里读，与启动日志同一来源
 		httpSrv.TLSConfig = &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
 	}
 
@@ -150,6 +153,11 @@ type server struct {
 	tokens *apitoken.API
 	rl     *middleware.RateLimit
 	table  *route.Table // 由 routes() 赋值；spec 从这里生成
+
+	// S7.8 设置页依赖：dataDir 供整库备份落临时文件（<dataDir>/backups/）；
+	// tlsFingerprint 供指纹端点回显（仅自签模式有值，其余模式空串）。
+	dataDir        string
+	tlsFingerprint string
 }
 
 // routes 用 route.Table 声明端点：注册与 OpenAPI 生成共用同一份声明。
@@ -692,6 +700,62 @@ func (s *server) routes() http.Handler {
 		},
 		InternalRef: "cmd/hub/audit.go auditLogs",
 	}, s.auditLogs)
+
+	// ---- S7.8 设置页（方案 Q1–Q5 全 A）----
+	// 四枚一律 AuthSession：泄漏的 API Token 不得改安全配置、不得拖库
+	// （与 Token 管理同口径）。PUT 与 backup 包 Audit——改安全配置与
+	// 拖库都必须是审计表里的一等公民；两枚 GET 不包：读配置与读指纹
+	// 没有副作用，留痕只会淹掉真操作记录（Q4 口径）。
+	tbl.Add(route.Entry{
+		Method: "GET", Path: "/api/v1/settings/protected-containers", AuthMode: route.AuthSession,
+		Summary: "读取保护名单", Tags: []string{"Settings"},
+		Desc: "返回正则数组与 using_default：名单为空时容器守卫回落默认名单（^dockdeck-），" +
+			"UI 据此提示「当前为默认名单」。S7.8 起存 JSON 数组文本（正则含逗号不被切碎）；" +
+			"S7.8 前的逗号分隔存量读取时兼容，不迁移。",
+		Responses: []route.Response{
+			{Status: 401, Desc: "未登录，或携带 API Token（本端点仅会话可调）"},
+		},
+		InternalRef: "cmd/hub/settings.go getProtectedContainers",
+	}, s.getProtectedContainers)
+
+	tbl.Add(route.Entry{
+		Method: "PUT", Path: "/api/v1/settings/protected-containers", AuthMode: route.AuthSession,
+		Summary: "覆盖写保护名单", Tags: []string{"Settings"}, Body: &route.Body{},
+		Desc: "整名单覆盖：逐条编译校验，坏正则 400 并指出第几条，库无写入；" +
+			"空数组即清除（回落默认名单）。保存即时生效——容器守卫逐请求读 " +
+			"settings，无需重启。",
+		Responses: []route.Response{
+			{Status: 400, Desc: "请求体不合法，或第 N 条正则编译失败"},
+			{Status: 401, Desc: "未登录，或携带 API Token"},
+		},
+		InternalRef: "cmd/hub/settings.go putProtectedContainers",
+	}, middleware.Audit(s.st, "settings.protected.update", s.putProtectedContainers))
+
+	tbl.Add(route.Entry{
+		Method: "GET", Path: "/api/v1/settings/tls-fingerprint", AuthMode: route.AuthSession,
+		Summary: "TLS 证书指纹", Tags: []string{"Settings"},
+		Desc: "返回内置自签证书的 SHA-256 指纹（hex，冒号分隔），供浏览器证书固定时人工比对。" +
+			"非自签模式（none / 外部终止 TLS）下 fingerprint 为空串、self_signed=false。" +
+			"不展示过期时间：指纹是「当下这一枚」的标识，过期归运维在宿主机侧处理。",
+		Responses: []route.Response{
+			{Status: 401, Desc: "未登录，或携带 API Token"},
+		},
+		InternalRef: "cmd/hub/settings.go getTLSFingerprint",
+	}, s.getTLSFingerprint)
+
+	tbl.Add(route.Entry{
+		Method: "GET", Path: "/api/v1/admin/backup", AuthMode: route.AuthSession,
+		NoEnvelope: true, ContentType: "application/vnd.sqlite3",
+		Summary: "下载整库快照", Tags: []string{"Settings"},
+		Desc: "VACUUM INTO 生成一致快照后流式下载（临时文件中转，用完即删）。" +
+			"文件含全部表——用户、会话、审计、受管主机与各服务器加密令牌；" +
+			"一份快照等于一份需要同等保护的数据库副本，仅会话可调正是为此。",
+		Responses: []route.Response{
+			{Status: 401, Desc: "未登录，或携带 API Token"},
+			{Status: 500, Desc: "快照生成或读取失败"},
+		},
+		InternalRef: "cmd/hub/settings.go backupDB",
+	}, middleware.Audit(s.st, "admin.backup", s.backupDB))
 
 	// 受管主机清单：直接读 servers 表，不做实时探测（在线状态以 last_seen 为准）。
 	// 列表只投影管理所需字段，绝不回带 Agent 令牌等秘密；纳管（写入 servers）机制见 `docs/ARCHITECTURE.md` 的纳管设计裁定。

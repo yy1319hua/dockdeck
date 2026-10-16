@@ -221,7 +221,7 @@ func (s *server) containerAction(w http.ResponseWriter, r *http.Request) {
 //
 // S4.4 三重门（本端点守前两道，Agent 自我保护是物理防线）：
 //  1. 保护名单命中即拒（403）——名单来自 settings.protected_containers
-//     （逗号分隔正则），空缺省用 guard.DefaultPatterns；
+//     （S7.8 起 JSON 数组文本，存量逗号分隔读取兼容），空缺省用 guard.DefaultPatterns；
 //  2. 名字确认（400）——confirm 须与目标 ID/名字完全一致，query 与 body
 //     取并集（与 force/v 同款口径），并透传给 Agent（Agent 侧同守一道）。
 //
@@ -273,7 +273,8 @@ func (s *server) containerRemove(w http.ResponseWriter, r *http.Request) {
 }
 
 // containerGuard 取保护名单并编译。名单存 settings.protected_containers
-// （逗号分隔正则），空缺省回落 DefaultPatterns；坏正则报错——名单是
+// （S7.8 起 JSON 数组文本，存量逗号分隔读取兼容），空缺省回落 DefaultPatterns；
+// 坏正则报错——名单是
 // 安全边界，宁可端点 500 也不静默放行。逐请求读取：settings 改动即时
 // 生效，SQLite 本地读的开销可忽略。
 func (s *server) containerGuard(ctx context.Context) (*guard.Guard, error) {

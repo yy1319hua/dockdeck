@@ -6,6 +6,7 @@ import Containers from '@/pages/Containers.vue'
 import Images from '@/pages/Images.vue'
 import Compose from '@/pages/Compose.vue'
 import Files from '@/pages/Files.vue'
+import Audit from '@/pages/Audit.vue'
 import DesignTokens from '@/pages/DesignTokens.vue'
 import Login from '@/pages/Login.vue'
 import Setup from '@/pages/Setup.vue'
@@ -73,6 +74,15 @@ const routes: RouteRecordRaw[] = [
         name: 'files',
         component: Files,
         meta: { title: '文件 · DockDeck', requiresAuth: true },
+      },
+      {
+        // S7.7 审计页：全局页（无主机切换器——审计是 Hub 单点写入的全站数据，
+        // server_id 只是过滤维度）；过滤条件进 store、行展开是页面本地 ref；
+        // 无轮询——审计是已发生事件的记录，只留手动刷新。
+        path: 'audit',
+        name: 'audit',
+        component: Audit,
+        meta: { title: '审计 · DockDeck', requiresAuth: true },
       },
       {
         // 设计令牌色卡页：开发期自检用。

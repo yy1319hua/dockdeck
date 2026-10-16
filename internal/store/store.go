@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -229,6 +230,10 @@ func (s *Store) RevokeAllForUser(ctx context.Context, userID int64) error {
 // ---- 审计 ----
 
 type AuditEntry struct {
+	// ID/Ts 仅读路径（ListAuditLogs 的游标分页与展示）使用；写路径
+	// 两者都留空——id 由自增列产生，ts 由表 DEFAULT 产生。
+	ID        int64
+	Ts        string
 	UserID    int64
 	Username  string
 	ServerID  int64
@@ -251,6 +256,91 @@ func (s *Store) WriteAudit(ctx context.Context, e AuditEntry) error {
 		nullInt64(e.UserID), e.Username, nullInt64(e.ServerID),
 		e.Action, e.Target, e.Detail, e.Result, e.Error, e.IP, e.RequestID)
 	return err
+}
+
+// ---- 审计查询（S7.7）----
+
+// AuditFilter 审计查询过滤条件。零值字段=不限。
+// From/To 是秒级 RFC3339 UTC 字符串：表里 ts 就是该格式的 TEXT，
+// 字典序即时间序，直接比较（调用方负责把用户输入归一成同格式——
+// 带毫秒或时区偏移的 RFC3339 与秒级 Z 后缀混比会错位）。
+type AuditFilter struct {
+	From     string
+	To       string
+	ServerID int64  // 0=不限
+	Action   string // 前缀匹配（SQL LIKE 'x%'），如 "container" 命中 container.*
+	Result   string // ok | error；空=不限
+	BeforeID int64  // 游标：只取 id 严格更小的行（倒序翻页）
+	Limit    int    // <=0 取默认 100
+}
+
+// ListAuditLogs 倒序（id 降序=最新在前）查审计行，第二个返回值表示是否
+// 还有更多（此时调用方应把本页最后一条的 id 作为下游游标）。
+//
+// limit+1 探测法：多查一条判断有无更多，比 COUNT(*) 少一次全表扫描。
+func (s *Store) ListAuditLogs(ctx context.Context, f AuditFilter) ([]AuditEntry, bool, error) {
+	limit := f.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	where := []string{"1=1"}
+	args := make([]any, 0, 8)
+	if f.From != "" {
+		where = append(where, "ts >= ?")
+		args = append(args, f.From)
+	}
+	if f.To != "" {
+		where = append(where, "ts <= ?")
+		args = append(args, f.To)
+	}
+	if f.ServerID > 0 {
+		where = append(where, "server_id = ?")
+		args = append(args, f.ServerID)
+	}
+	if f.Action != "" {
+		where = append(where, "action LIKE ?")
+		args = append(args, f.Action+"%")
+	}
+	if f.Result != "" {
+		where = append(where, "result = ?")
+		args = append(args, f.Result)
+	}
+	if f.BeforeID > 0 {
+		where = append(where, "id < ?")
+		args = append(args, f.BeforeID)
+	}
+	// user_id/server_id 可空（ON DELETE SET NULL）、TEXT 列可空——
+	// COALESCE 成 0/空串，扫进 int64/string 不需要 sql.Null* 中转。
+	q := fmt.Sprintf(
+		`SELECT id, COALESCE(ts,''), COALESCE(user_id,0), COALESCE(username,''), COALESCE(server_id,0),
+		        action, COALESCE(target,''), COALESCE(detail,''), result, COALESCE(error,''),
+		        COALESCE(ip,''), COALESCE(request_id,'')
+		   FROM audit_logs WHERE %s ORDER BY id DESC LIMIT ?`,
+		strings.Join(where, " AND "))
+	args = append(args, limit+1)
+
+	rows, err := s.DB.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+	var out []AuditEntry
+	for rows.Next() {
+		var e AuditEntry
+		if err := rows.Scan(&e.ID, &e.Ts, &e.UserID, &e.Username, &e.ServerID,
+			&e.Action, &e.Target, &e.Detail, &e.Result, &e.Error, &e.IP, &e.RequestID); err != nil {
+			return nil, false, err
+		}
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	hasMore := len(out) > limit
+	if hasMore {
+		out = out[:limit]
+	}
+	return out, hasMore, nil
 }
 
 // ---- 设置 ----

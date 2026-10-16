@@ -664,6 +664,35 @@ func (s *server) routes() http.Handler {
 		InternalRef: "cmd/hub/files.go fileAction",
 	}, middleware.Audit(s.st, "file.action", s.fileAction))
 
+	// ---- S7.7 审计查询（audit_logs 自 S1 只写不读，本期补查询端点；
+	// read:audit scope 早在 S1.10 预留而无端点消费，本期起有）----
+	// 鉴权用 AuthScope：会话用户不受 scope 限（ServeSession 不查 scope，
+	// 见 internal/auth），API Token 必须勾 read:audit，否则 403 scope_denied。
+	// 刻意不包 middleware.Audit：高频读留痕会淹掉真操作记录（方案 Q4）。
+	tbl.Add(route.Entry{
+		Method: "GET", Path: "/api/v1/audit_logs", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadAudit,
+		Summary: "审计日志查询", Tags: []string{"Audit"},
+		Desc: "倒序（最新在前）+ before_id 游标分页：limit 缺省 100、上限 1000；" +
+			"响应 next_before=0 表示没有更多，否则作为下一次请求的 before_id。" +
+			"过滤维度：from/to（RFC3339，缺省最近 7 天）、server_id、action 前缀" +
+			"（如 container 命中 container.* 全部）、result（ok|error）。" +
+			"本端点自身不写审计行。",
+		Params: []route.Param{
+			{Name: "from", Desc: "起始时间（RFC3339，含）", Required: false, Example: "2026-10-15T00:00:00Z", SchemaType: "string"},
+			{Name: "to", Desc: "截止时间（RFC3339，含）", Required: false, Example: "2026-10-16T00:00:00Z", SchemaType: "string"},
+			{Name: "server_id", Desc: "按服务器过滤（缺省不限）", Required: false, Example: "1", SchemaType: "integer", SchemaFmt: "int64"},
+			{Name: "action", Desc: "动作前缀（如 container、token、auth）", Required: false, Example: "container", SchemaType: "string"},
+			{Name: "result", Desc: "结果（缺省不限）", Required: false, Example: "error", SchemaType: "string"},
+			{Name: "before_id", Desc: "游标：只返回 id 更小的行", Required: false, Example: "0", SchemaType: "integer", SchemaFmt: "int64"},
+			{Name: "limit", Desc: "每页条数（缺省 100，上限 1000）", Required: false, Example: "100", SchemaType: "integer", SchemaFmt: "int64"},
+		},
+		Responses: []route.Response{
+			{Status: 400, Desc: "参数非法（时间格式 / limit 非正整数 / action 字符集 / result 取值）"},
+			{Status: 403, Desc: "Token 缺少 read:audit scope（会话用户不受此限）"},
+		},
+		InternalRef: "cmd/hub/audit.go auditLogs",
+	}, s.auditLogs)
+
 	// 受管主机清单：直接读 servers 表，不做实时探测（在线状态以 last_seen 为准）。
 	// 列表只投影管理所需字段，绝不回带 Agent 令牌等秘密；纳管（写入 servers）机制见 `docs/ARCHITECTURE.md` 的纳管设计裁定。
 	tbl.Add(route.Entry{

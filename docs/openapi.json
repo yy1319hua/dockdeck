@@ -3808,7 +3808,7 @@
         ]
       }
     },
-    "/api/v1/servers/{id}/images/{ref...}": {
+    "/api/v1/servers/{id}/images/{ref}": {
       "delete": {
         "operationId": "deleteApiV1ServersIdImagesRef",
         "summary": "删除镜像",
@@ -4600,21 +4600,24 @@
       "description": "健康检查、spec 本体、scope 字典。"
     },
     {
-      "name": "Networks"
+      "name": "Networks",
+      "description": "容器网络只读清单（含接入容器名单）。"
     },
     {
       "name": "Servers",
       "description": "受管主机纳管（UI 专属）。"
     },
     {
-      "name": "Settings"
+      "name": "Settings",
+      "description": "面板安全设置：保护名单、TLS 指纹、整库快照——仅浏览器会话可用。"
     },
     {
       "name": "Tokens",
       "description": "API Token 管理（仅浏览器会话可用）。"
     },
     {
-      "name": "Volumes"
+      "name": "Volumes",
+      "description": "数据卷只读清单（Engine 只给使用计数，不给接入名单）。"
     }
   ]
 }

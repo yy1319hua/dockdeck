@@ -50,6 +50,10 @@ type Fake struct {
 	imageList   []protocol.ImageSummary
 	pullResult  protocol.PullResult
 	pruneResult protocol.PruneResult
+	// volumeList / networkList 是卷与网络两个只读端点（S7.9）的配置响应。
+	// 两者形态按真实引擎给：卷是对象包数组（这里只存解开后的清单）、网络是裸数组。
+	volumeList  []protocol.VolumeSummary
+	networkList []protocol.NetworkSummary
 	// composeList / composeAction / composeLogs 是 Compose 端点（S4.2）的配置响应。
 	composeList   []protocol.ComposeProject
 	composeAction protocol.ComposeActionResult
@@ -267,6 +271,9 @@ func (f *Fake) Handler() http.Handler {
 	mux.Handle("POST /api/v1/images/pull", authed(f.serveImagePull))
 	mux.Handle("DELETE /api/v1/images/{ref...}", authed(f.serveImageDelete))
 	mux.Handle("POST /api/v1/images/prune", authed(f.serveImagePrune))
+	// ---- 卷与网络（S7.9）：只读两条 ----
+	mux.Handle("GET /api/v1/volumes", authed(f.serveVolumeList))
+	mux.Handle("GET /api/v1/networks", authed(f.serveNetworkList))
 	// ---- Compose 端点（S4.2）：list/logs 读；action 写。{project} 是白名单内
 	// 项目名（目录名），与真 Agent 路由同款方法限定。----
 	mux.Handle("GET /api/v1/compose", authed(f.serveComposeList))
@@ -522,6 +529,37 @@ func (f *Fake) serveImageList(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, list)
 }
 
+// serveVolumeList 是卷清单（S7.9 只读）。与真 Agent 同口径：nil 回空数组而非 null，
+// 让 Hub 侧 agentcli 解码稳定（null 也能解，但空数组与「无卷」的语义更直白）。
+func (f *Fake) serveVolumeList(w http.ResponseWriter, r *http.Request) {
+	if done, status := f.maybeFail(r); done {
+		w.WriteHeader(status)
+		return
+	}
+	f.mu.Lock()
+	list := f.volumeList
+	f.mu.Unlock()
+	if list == nil {
+		list = []protocol.VolumeSummary{}
+	}
+	httpx.WriteJSON(w, http.StatusOK, list)
+}
+
+// serveNetworkList 是网络清单（S7.9 只读）。
+func (f *Fake) serveNetworkList(w http.ResponseWriter, r *http.Request) {
+	if done, status := f.maybeFail(r); done {
+		w.WriteHeader(status)
+		return
+	}
+	f.mu.Lock()
+	list := f.networkList
+	f.mu.Unlock()
+	if list == nil {
+		list = []protocol.NetworkSummary{}
+	}
+	httpx.WriteJSON(w, http.StatusOK, list)
+}
+
 func (f *Fake) serveImagePull(w http.ResponseWriter, r *http.Request) {
 	if done, status := f.maybeFail(r); done {
 		w.WriteHeader(status)
@@ -678,6 +716,20 @@ func (f *Fake) serveComposeFilePut(w http.ResponseWriter, r *http.Request) {
 func (f *Fake) SetImageList(list []protocol.ImageSummary) {
 	f.mu.Lock()
 	f.imageList = list
+	f.mu.Unlock()
+}
+
+// SetVolumeList 配置 GET /api/v1/volumes 的响应。
+func (f *Fake) SetVolumeList(list []protocol.VolumeSummary) {
+	f.mu.Lock()
+	f.volumeList = list
+	f.mu.Unlock()
+}
+
+// SetNetworkList 配置 GET /api/v1/networks 的响应。
+func (f *Fake) SetNetworkList(list []protocol.NetworkSummary) {
+	f.mu.Lock()
+	f.networkList = list
 	f.mu.Unlock()
 }
 

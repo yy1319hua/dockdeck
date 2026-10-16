@@ -71,7 +71,7 @@ func filesServer(t *testing.T, root string, maxFile int64) *httptest.Server {
 		t.Fatalf("newFilesAPI: %v", err)
 	}
 	srv := httptest.NewServer(buildHandler(smokeToken, smokeCollector(t), nil,
-		newContainersAPI("", ""), newImagesAPI(""), newComposeAPI(nil), fapi))
+		newContainersAPI("", ""), newImagesAPI(""), newComposeAPI(nil), fapi, newResourcesAPI("")))
 	t.Cleanup(srv.Close)
 	return srv
 }
@@ -137,7 +137,7 @@ func TestFiles_DisabledWithoutRoots(t *testing.T) {
 		t.Fatal("未配根目录时 newFilesAPI 应返回 nil")
 	}
 	srv := httptest.NewServer(buildHandler(smokeToken, smokeCollector(t), nil,
-		newContainersAPI("", ""), newImagesAPI(""), newComposeAPI(nil), fapi))
+		newContainersAPI("", ""), newImagesAPI(""), newComposeAPI(nil), fapi, newResourcesAPI("")))
 	defer srv.Close()
 
 	for _, tc := range []struct{ method, path string }{

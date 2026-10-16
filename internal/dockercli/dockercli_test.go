@@ -35,6 +35,11 @@ type fakeEngine struct {
 	deleteStatus int
 	pruneBody    []byte
 	pruneStatus  int
+	// volumes / networks 是卷与网络两个只读端点（S7.9）的响应体。
+	// 两者形态刻意不同（对象包数组 vs 裸数组），用来钉住「两处解码模板
+	// 不通用」——把它们写成同一个样子的测试就抓不到抄错。
+	volumes  []byte
+	networks []byte
 }
 
 func newFakeEngine(t *testing.T, apiVersion string) (*fakeEngine, string) {
@@ -120,6 +125,32 @@ func newFakeEngine(t *testing.T, apiVersion string) (*fakeEngine, string) {
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
+	})
+	// 卷与网络（S7.9）：只读两端点。nil 时回 Engine 的空形态
+	// （卷是对象包空数组、网络是裸空数组），与真实引擎一致。
+	mux.HandleFunc("/volumes", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if f.volumes == nil {
+			_, _ = w.Write([]byte(`{"Volumes":[],"Warnings":null}`))
+			return
+		}
+		_, _ = w.Write(f.volumes)
+	})
+	mux.HandleFunc("/networks", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if f.networks == nil {
+			_, _ = w.Write([]byte(`[]`))
+			return
+		}
+		_, _ = w.Write(f.networks)
 	})
 	// Engine 对版本前缀路由：/v1.51/version 与 /version 等价。
 	// 剥掉 /vX.Y 前缀后再进 mux，模拟 Engine 的真实路由行为。

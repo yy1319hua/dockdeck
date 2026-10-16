@@ -56,7 +56,7 @@ func run(args []string) error {
 		Addr: cfg.ListenAddr,
 		Handler: buildHandler(cfg.Token, collector.New(cfg.DiskMounts), collector.NilStatsSource{},
 			newContainersAPI(cfg.DockerSocket, cfg.SelfContainer), newImagesAPI(cfg.DockerSocket),
-			newComposeAPI(cfg.ComposeDirs), fapi),
+			newComposeAPI(cfg.ComposeDirs), fapi, newResourcesAPI(cfg.DockerSocket)),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -96,7 +96,8 @@ func run(args []string) error {
 // compapi 是 Compose 端点（S4.2）：白名单目录来自配置，exec 走宿主 docker compose。
 // fapi 是文件管理端点（S5.1）：**传 nil 时一条路由都不注册**——红线第 3 条
 // 「未配 --fs-root 时该模块不注册路由」的落点就在这个 if 上。
-func buildHandler(token string, col *collector.Collector, src collector.ContainerStatsSource, capi *containersAPI, iapi *imagesAPI, compapi *composeAPI, fapi *filesAPI) http.Handler {
+// rapi 是卷与网络端点（S7.9）：只读两条，与容器共享同一把 docker socket。
+func buildHandler(token string, col *collector.Collector, src collector.ContainerStatsSource, capi *containersAPI, iapi *imagesAPI, compapi *composeAPI, fapi *filesAPI, rapi *resourcesAPI) http.Handler {
 	mux := http.NewServeMux()
 	// Agent 侧同样使用 /api/v1 前缀，与 Hub 侧路由一一对应。
 	mux.Handle("/api/v1/info", agenthttp.Auth(token, nil)(agenthttp.Info()))
@@ -115,6 +116,9 @@ func buildHandler(token string, col *collector.Collector, src collector.Containe
 	mux.Handle("POST /api/v1/images/pull", agenthttp.Auth(token, nil)(http.HandlerFunc(iapi.pull)))
 	mux.Handle("DELETE /api/v1/images/{ref...}", agenthttp.Auth(token, nil)(http.HandlerFunc(iapi.delete)))
 	mux.Handle("POST /api/v1/images/prune", agenthttp.Auth(token, nil)(http.HandlerFunc(iapi.prune)))
+	// ---- 卷与网络（S7.9）：只读两条，无写端点。----
+	mux.Handle("GET /api/v1/volumes", agenthttp.Auth(token, nil)(http.HandlerFunc(rapi.volumes)))
+	mux.Handle("GET /api/v1/networks", agenthttp.Auth(token, nil)(http.HandlerFunc(rapi.networks)))
 	// ---- Compose 接口（S4.2）：list/logs 读；action 写（无自身守卫，白名单即保护）。
 	// {project} 是白名单内项目名（目录名），Agent 侧 resolveProject 映射到真实路径，
 	// 防 ../ 穿越——白名单外的名字（含任意路径）一律 404。----

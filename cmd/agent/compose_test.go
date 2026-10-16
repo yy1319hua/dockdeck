@@ -87,7 +87,7 @@ func (f *fakeComposeOp) WriteFile(ctx context.Context, file string, content stri
 
 func agentWithCompose(t *testing.T, op dockercli.ComposeOperator) *httptest.Server {
 	t.Helper()
-	return httptest.NewServer(buildHandler(smokeToken, smokeCollector(t), nil, newContainersAPI("", ""), newImagesAPI(""), &composeAPI{op: op}, nil))
+	return httptest.NewServer(buildHandler(smokeToken, smokeCollector(t), nil, newContainersAPI("", ""), newImagesAPI(""), &composeAPI{op: op}, nil, newResourcesAPI("")))
 }
 
 func TestComposeAgentList(t *testing.T) {

@@ -463,6 +463,40 @@ func (s *server) routes() http.Handler {
 		InternalRef: "cmd/hub/images.go imagePrune",
 	}, middleware.Audit(s.st, "image.prune", s.imagePrune))
 
+	// ---- S7.9 卷与网络转发（只读两条，scope 复用容器 scope）----
+	tbl.Add(route.Entry{
+		Method: "GET", Path: "/api/v1/servers/{id}/volumes", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadContainers,
+		Summary: "数据卷清单（只读）", Tags: []string{"Volumes"},
+		Desc: "实时取自 Agent 的 Engine 原生卷清单。" +
+			"UsageData 可能为 null（驱动未统计），null 表示「Engine 没给」而非「0 个容器在用」——" +
+			"把这两者混同会让用户误判卷可删。卷不提供创建/删除/prune：删除卷即删数据，" +
+			"且 prune 的 dangling 判定由 Engine 做出、误判不可逆。",
+		Params: []route.Param{
+			{Name: "id", Desc: "服务器 ID", Required: true, Example: "1", SchemaType: "integer", SchemaFmt: "int64"},
+		},
+		Responses: []route.Response{
+			{Status: 403, Desc: "服务器已禁用"},
+			{Status: 502, Desc: "Agent 不可达或返回异常"},
+		},
+		InternalRef: "cmd/hub/resources.go volumeList",
+	}, middleware.Audit(s.st, "volume.list", s.volumeList))
+
+	tbl.Add(route.Entry{
+		Method: "GET", Path: "/api/v1/servers/{id}/networks", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadContainers,
+		Summary: "容器网络清单（只读）", Tags: []string{"Networks"},
+		Desc: "实时取自 Agent 的 Engine 原生网络清单。" +
+			"每项自带 Containers 映射（接入容器名与 IPv4/Mac），故「哪些容器接入了」不需要额外请求——" +
+			"与卷只给 RefCount 计数不同，差异来自 Engine 的数据形态。",
+		Params: []route.Param{
+			{Name: "id", Desc: "服务器 ID", Required: true, Example: "1", SchemaType: "integer", SchemaFmt: "int64"},
+		},
+		Responses: []route.Response{
+			{Status: 403, Desc: "服务器已禁用"},
+			{Status: 502, Desc: "Agent 不可达或返回异常"},
+		},
+		InternalRef: "cmd/hub/resources.go networkList",
+	}, middleware.Audit(s.st, "network.list", s.networkList))
+
 	// ---- S4.7 Compose 转发（Agent 侧 S4.2 已落地，Hub 侧补齐转发）----
 	tbl.Add(route.Entry{
 		Method: "GET", Path: "/api/v1/servers/{id}/compose", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadContainers,

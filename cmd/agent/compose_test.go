@@ -30,12 +30,19 @@ type fakeComposeOp struct {
 	called []string
 
 	// S4.3 文件读写相关。
-	fileContent string   // ReadFile 返回的当前内容
-	fileErr     error    // ReadFile/Diff/WriteFile 的统一错误注入
-	diffOut     string   // Diff 返回的 diff 文本
-	writeBackup string   // WriteFile 返回的备份路径
-	writeErr    error    // WriteFile 错误注入
-	wrote       []string // 记录写入调用，验证 file|content 透传
+	fileContent string // ReadFile 返回的当前内容
+	fileErr     error  // ReadFile/Diff/WriteFile 的统一错误注入
+	diffOut     string // Diff 返回的 diff 文本
+	writeBackup string // WriteFile 返回的备份路径
+	// S7.11 备份端点相关。
+	backups       []protocol.ComposeBackup // ListBackups 返回的清单
+	backupsErr    error                    // ListBackups 错误注入
+	backupContent map[string]string        // ReadBackup 按名字返回正文
+	backupErr     error                    // ReadBackup/RestoreBackup 错误注入
+	restoreNew    string                   // RestoreBackup 返回的「恢复前新备份文件名」
+	lastBackup    string                   // 记录最近一次读/恢复用的备份名
+	writeErr      error                    // WriteFile 错误注入
+	wrote         []string                 // 记录写入调用，验证 file|content 透传
 }
 
 func (f *fakeComposeOp) ListProjects(ctx context.Context) ([]protocol.ComposeProject, error) {
@@ -83,6 +90,31 @@ func (f *fakeComposeOp) Diff(ctx context.Context, file string, content string) (
 func (f *fakeComposeOp) WriteFile(ctx context.Context, file string, content string) (string, error) {
 	f.wrote = append(f.wrote, file+"|"+content)
 	return f.writeBackup, f.writeErr
+}
+
+// S7.11：备份三件套的假实现。backups 是预置清单；backupContent 按名字返回正文
+// （空 map 时返回空串）；restoreNew 是 RestoreBackup 返回的「恢复前新备份文件名」。
+func (f *fakeComposeOp) ListBackups(ctx context.Context, file string) ([]protocol.ComposeBackup, error) {
+	if f.backupsErr != nil {
+		return nil, f.backupsErr
+	}
+	return f.backups, nil
+}
+
+func (f *fakeComposeOp) ReadBackup(ctx context.Context, file, name string) (string, error) {
+	if f.backupErr != nil {
+		return "", f.backupErr
+	}
+	f.lastBackup = name
+	return f.backupContent[name], nil
+}
+
+func (f *fakeComposeOp) RestoreBackup(ctx context.Context, file, name string) (string, error) {
+	if f.backupErr != nil {
+		return "", f.backupErr
+	}
+	f.lastBackup = name
+	return f.restoreNew, nil
 }
 
 func agentWithCompose(t *testing.T, op dockercli.ComposeOperator) *httptest.Server {

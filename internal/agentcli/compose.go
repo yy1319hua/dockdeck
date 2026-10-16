@@ -125,3 +125,54 @@ func (c *Client) ComposeFilePut(ctx context.Context, project string, content str
 	}
 	return &res, nil
 }
+
+// ComposeBackups 列举项目的写前备份（只读）。只回文件名/大小/时间，不含目录。
+func (c *Client) ComposeBackups(ctx context.Context, project string) ([]protocol.ComposeBackup, error) {
+	if project == "" {
+		return nil, fmt.Errorf("agentcli: 项目名不能为空")
+	}
+	var res protocol.ComposeBackupsList
+	if _, err := c.do(ctx, http.MethodGet, "/api/v1/compose/"+project+"/backups", nil, &res); err != nil {
+		return nil, err
+	}
+	return res.Backups, nil
+}
+
+// ComposeBackupContent 读备份正文（预览与 diff 用）。
+// 备份名走查询串并转义——它含 RFC3339 的 "+" 与 ":"（如 +08:00），不转义
+// 会被当成空格/分隔符吃掉一截。
+func (c *Client) ComposeBackupContent(ctx context.Context, project, name string) (*protocol.ComposeBackupContent, error) {
+	if project == "" {
+		return nil, fmt.Errorf("agentcli: 项目名不能为空")
+	}
+	if name == "" {
+		return nil, fmt.Errorf("agentcli: 备份名不能为空")
+	}
+	var res protocol.ComposeBackupContent
+	path := "/api/v1/compose/" + project + "/backups/content?file=" + url.QueryEscape(name)
+	if _, err := c.do(ctx, http.MethodGet, path, nil, &res); err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
+
+// ComposeRestore 用备份覆盖当前 compose 文件。
+// 恢复本身是一次覆盖写，Agent 侧会先把「恢复前的当前内容」备份下来（Q2-A），
+// 响应回传那份新备份的文件名。
+func (c *Client) ComposeRestore(ctx context.Context, project, name string) (*protocol.ComposeBackupRestored, error) {
+	if project == "" {
+		return nil, fmt.Errorf("agentcli: 项目名不能为空")
+	}
+	if name == "" {
+		return nil, fmt.Errorf("agentcli: 备份名不能为空")
+	}
+	body, err := json.Marshal(protocol.ComposeBackupUpdate{File: name})
+	if err != nil {
+		return nil, err
+	}
+	var res protocol.ComposeBackupRestored
+	if _, err := c.do(ctx, http.MethodPost, "/api/v1/compose/"+project+"/backups/restore", body, &res); err != nil {
+		return nil, normalize(err)
+	}
+	return &res, nil
+}

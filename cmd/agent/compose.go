@@ -166,3 +166,72 @@ func (a *composeAPI) filePut(w http.ResponseWriter, r *http.Request) {
 	}
 	httpx.WriteJSON(w, http.StatusOK, protocol.ComposeFileWritten{BackupFile: backup})
 }
+
+// backupsList 实现 GET /api/v1/compose/{project}/backups：列举该项目的写前备份。
+// 只读——只回文件名/大小/时间，不回宿主机绝对路径（Q4-A）。
+func (a *composeAPI) backupsList(w http.ResponseWriter, r *http.Request) {
+	project := r.PathValue("project")
+	p, ok := a.op.ResolveProject(r.Context(), project)
+	if !ok {
+		httpx.WriteError(w, http.StatusNotFound, protocol.CodeNotFound, "compose 项目不存在或不在白名单: "+project)
+		return
+	}
+	list, err := a.op.ListBackups(r.Context(), p.ConfigFile)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadGateway, protocol.CodeUpstreamError, "列举 compose 备份失败: "+err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, protocol.ComposeBackupsList{Backups: list})
+}
+
+// backupsContent 实现 GET /api/v1/compose/{project}/backups/content?file=<备份名>：
+// 读备份正文，供前端预览与 diff。备份名走查询串而非路径段——它含 RFC3339 的
+// "+" 与 ":"（如 +08:00），放进路径段要处理编码差异（S7.5 已踩过同类坑）。
+func (a *composeAPI) backupsContent(w http.ResponseWriter, r *http.Request) {
+	project := r.PathValue("project")
+	p, ok := a.op.ResolveProject(r.Context(), project)
+	if !ok {
+		httpx.WriteError(w, http.StatusNotFound, protocol.CodeNotFound, "compose 项目不存在或不在白名单: "+project)
+		return
+	}
+	name := r.URL.Query().Get("file")
+	if name == "" {
+		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, "缺少 file 参数（备份文件名）")
+		return
+	}
+	content, err := a.op.ReadBackup(r.Context(), p.ConfigFile, name)
+	if err != nil {
+		// 名字不合法（不以 <compose 文件>.bak. 开头 / 越界）与读失败都归 400：
+		// 这两种都是调用方给错了名字，不是上游故障。
+		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, protocol.ComposeBackupContent{Name: name, Content: content})
+}
+
+// backupsRestore 实现 POST /api/v1/compose/{project}/backups/restore：用备份覆盖当前文件。
+// 请求体 {"file": "<备份名>"}。恢复由 op 侧先备份「恢复前的当前内容」再覆盖（Q2-A），
+// 响应回传那份新备份的文件名——有了它，恢复之后还能再回到恢复前的状态。
+func (a *composeAPI) backupsRestore(w http.ResponseWriter, r *http.Request) {
+	project := r.PathValue("project")
+	p, ok := a.op.ResolveProject(r.Context(), project)
+	if !ok {
+		httpx.WriteError(w, http.StatusNotFound, protocol.CodeNotFound, "compose 项目不存在或不在白名单: "+project)
+		return
+	}
+	var req protocol.ComposeBackupUpdate
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, "请求体不合法: "+err.Error())
+		return
+	}
+	if req.File == "" {
+		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, "缺少 file 字段（备份文件名）")
+		return
+	}
+	backup, err := a.op.RestoreBackup(r.Context(), p.ConfigFile, req.File)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, protocol.ComposeBackupRestored{Backup: backup})
+}

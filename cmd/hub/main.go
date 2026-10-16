@@ -609,6 +609,63 @@ func (s *server) routes() http.Handler {
 		InternalRef: "cmd/hub/compose.go composeFilePut",
 	}, middleware.Audit(s.st, "compose.file.write", s.composeFilePut))
 
+	// ---- S7.11 Compose 写前备份转发：列举/读取只读（read:containers）、
+	// 恢复是覆盖写（write:containers，与写 YAML 同款）。三条都落审计。----
+	tbl.Add(route.Entry{
+		Method: "GET", Path: "/api/v1/servers/{id}/compose/{project}/backups", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadContainers,
+		Summary: "Compose 写前备份清单", Tags: []string{"Compose"},
+		Desc: "列出该 compose 文件的写前备份（<文件>.bak.<RFC3339>），按时间倒序（最新在前）。" +
+			"只回文件名/大小/时间，**不回宿主机绝对路径**（与文件管理模块同口径）。" +
+			"备份由每次 PUT 写 YAML 自动生成；本模块不提供删除——备份只增不减，清理走宿主机。",
+		Params: []route.Param{
+			{Name: "id", Desc: "服务器 ID", Required: true, Example: "1", SchemaType: "integer", SchemaFmt: "int64"},
+			{Name: "project", Desc: "compose 项目名（白名单内目录名）", Required: true, Example: "web"},
+		},
+		Responses: []route.Response{
+			{Status: 403, Desc: "服务器已禁用"},
+			{Status: 502, Desc: "Agent 不可达或返回异常"},
+		},
+		InternalRef: "cmd/hub/compose.go composeBackupsList",
+	}, middleware.Audit(s.st, "compose.backups.list", s.composeBackupsList))
+
+	tbl.Add(route.Entry{
+		Method: "GET", Path: "/api/v1/servers/{id}/compose/{project}/backups/content", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadContainers,
+		Summary: "读取 Compose 备份正文", Tags: []string{"Compose"},
+		Desc: "读指定备份的正文，供前端预览与 diff。备份名走查询串 file（含 RFC3339 的 + 与 :，" +
+			"放进路径段要处理编码差异，故不进路径）。预览不另开端点：拿到正文后调既有的 " +
+			"compose diff 端点算 unified diff，与现有两段式写入同款。",
+		Params: []route.Param{
+			{Name: "id", Desc: "服务器 ID", Required: true, Example: "1", SchemaType: "integer", SchemaFmt: "int64"},
+			{Name: "project", Desc: "compose 项目名", Required: true, Example: "web"},
+			{Name: "file", Desc: "备份文件名（须以 <compose 文件名>.bak. 开头）", Required: true, Example: "docker-compose.yml.bak.2026-10-16T21:13:00+08:00"},
+		},
+		Responses: []route.Response{
+			{Status: 400, Desc: "缺少 file 参数，或备份名不合法/越界"},
+			{Status: 403, Desc: "服务器已禁用"},
+			{Status: 502, Desc: "Agent 不可达或返回异常"},
+		},
+		InternalRef: "cmd/hub/compose.go composeBackupsContent",
+	}, middleware.Audit(s.st, "compose.backups.read", s.composeBackupsContent))
+
+	tbl.Add(route.Entry{
+		Method: "POST", Path: "/api/v1/servers/{id}/compose/{project}/backups/restore", AuthMode: route.AuthScope, Scope: apitoken.ScopeWriteContainers,
+		Summary: "用备份覆盖当前 Compose 文件", Tags: []string{"Compose"},
+		Desc: "请求体的 file 字段填备份文件名。恢复**本身就是一次覆盖写**，故 Agent 侧" +
+			"会先把「恢复前的当前内容」备份成新的 .bak.<RFC3339> 再覆盖——否则回滚是单向门：" +
+			"恢复到旧版本后就回不去了。响应回传那份新备份的文件名（仅文件名，不含目录）。" +
+			"注意：改 YAML 不会直接改动运行中的容器，需再执行 compose up 才生效。",
+		Params: []route.Param{
+			{Name: "id", Desc: "服务器 ID", Required: true, Example: "1", SchemaType: "integer", SchemaFmt: "int64"},
+			{Name: "project", Desc: "compose 项目名", Required: true, Example: "web"},
+		},
+		Responses: []route.Response{
+			{Status: 400, Desc: "缺少 file 字段，或备份名不合法/越界"},
+			{Status: 403, Desc: "服务器已禁用"},
+			{Status: 502, Desc: "Agent 不可达或返回异常"},
+		},
+		InternalRef: "cmd/hub/compose.go composeBackupsRestore",
+	}, middleware.Audit(s.st, "compose.backups.restore", s.composeBackupsRestore))
+
 	// ---- S5.5 文件管理转发（Agent 侧 S5.1–S5.4/S5.6 已落地，Hub 侧补齐转发+审计）----
 	// read:files 覆盖 list/stat/content（读）；write:files 覆盖 content 写与动作（写）。
 	tbl.Add(route.Entry{

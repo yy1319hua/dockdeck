@@ -81,6 +81,15 @@ type ComposeOperator interface {
 	// WriteFile 写前把当前内容备份为 <file>.bak.<RFC3339>，再覆盖写入 content，
 	// 返回备份文件路径（供回滚）。
 	WriteFile(ctx context.Context, file string, content string) (string, error)
+
+	// S7.11 备份三件套（实现在 compose_backup.go）：
+	//   ListBackups  列举写前备份（最新在前）；
+	//   ReadBackup   读备份正文（名字过三道路径关卡）；
+	//   RestoreBackup 用备份覆盖当前文件——恢复本身也是覆盖写，故同样先备份
+	//   当前内容，否则回滚是单向门。**不提供删除**：备份只增不减。
+	ListBackups(ctx context.Context, file string) ([]protocol.ComposeBackup, error)
+	ReadBackup(ctx context.Context, file, name string) (string, error)
+	RestoreBackup(ctx context.Context, file, name string) (string, error)
 }
 
 // ComposeClient 操作白名单目录内的 compose 项目。

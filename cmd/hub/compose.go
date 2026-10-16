@@ -151,3 +151,62 @@ func (s *server) composeFilePut(w http.ResponseWriter, r *http.Request) {
 	}
 	httpx.WriteJSON(w, http.StatusOK, res)
 }
+
+// composeBackupsList 实现 GET /servers/{id}/compose/{project}/backups：备份清单（只读）。
+// 预览不另开端点——前端拿备份正文后调既有的 composeFileDiff 算 diff，与
+// 现有两段式写入完全同款（Q1-A）。
+func (s *server) composeBackupsList(w http.ResponseWriter, r *http.Request) {
+	cl, ok := s.agentFor(w, r)
+	if !ok {
+		return
+	}
+	list, err := cl.ComposeBackups(r.Context(), r.PathValue("project"))
+	if err != nil {
+		writeAgentError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, protocol.ComposeBackupsList{Backups: list})
+}
+
+// composeBackupsContent 实现 GET .../backups/content?file=<备份名>：读备份正文。
+func (s *server) composeBackupsContent(w http.ResponseWriter, r *http.Request) {
+	cl, ok := s.agentFor(w, r)
+	if !ok {
+		return
+	}
+	name := r.URL.Query().Get("file")
+	if name == "" {
+		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, "缺少 file 参数（备份文件名）")
+		return
+	}
+	res, err := cl.ComposeBackupContent(r.Context(), r.PathValue("project"), name)
+	if err != nil {
+		writeAgentError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+// composeBackupsRestore 实现 POST .../backups/restore：用备份覆盖当前 compose 文件。
+// 恢复是覆盖写，故挂 write:containers 而非 read（与写 YAML 同款）。
+func (s *server) composeBackupsRestore(w http.ResponseWriter, r *http.Request) {
+	cl, ok := s.agentFor(w, r)
+	if !ok {
+		return
+	}
+	var body protocol.ComposeBackupUpdate
+	if err := decodeOptionalBody(r, &body); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, err.Error())
+		return
+	}
+	if body.File == "" {
+		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, "缺少 file 字段（备份文件名）")
+		return
+	}
+	res, err := cl.ComposeRestore(r.Context(), r.PathValue("project"), body.File)
+	if err != nil {
+		writeAgentError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res)
+}

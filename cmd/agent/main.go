@@ -131,6 +131,11 @@ func buildHandler(token string, col *collector.Collector, src collector.Containe
 	mux.Handle("GET /api/v1/compose/{project}/file", agenthttp.Auth(token, nil)(http.HandlerFunc(compapi.fileGet)))
 	mux.Handle("POST /api/v1/compose/{project}/diff", agenthttp.Auth(token, nil)(http.HandlerFunc(compapi.fileDiff)))
 	mux.Handle("PUT /api/v1/compose/{project}/file", agenthttp.Auth(token, nil)(http.HandlerFunc(compapi.filePut)))
+	// ---- Compose 写前备份（S7.11）：列举/读取是只读，恢复是覆盖写（恢复前先备份当前内容）。
+	// backups/content 与 file 都是字面量段，比 POST 的 {action} 通配更具体，不冲突。----
+	mux.Handle("GET /api/v1/compose/{project}/backups", agenthttp.Auth(token, nil)(http.HandlerFunc(compapi.backupsList)))
+	mux.Handle("GET /api/v1/compose/{project}/backups/content", agenthttp.Auth(token, nil)(http.HandlerFunc(compapi.backupsContent)))
+	mux.Handle("POST /api/v1/compose/{project}/backups/restore", agenthttp.Auth(token, nil)(http.HandlerFunc(compapi.backupsRestore)))
 	// ---- 文件管理（S5.1）：未配 --fs-root 时 fapi 为 nil，这里一条都不注册。
 	// 上传路由用 AuthN 抬高签名体上限（验签要读完整 body），其余端点仍用默认上限。
 	// stat/content 是字面量段，与 POST 的 {action} 通配不冲突（方法也不同）。----

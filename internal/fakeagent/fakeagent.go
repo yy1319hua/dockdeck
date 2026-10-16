@@ -63,6 +63,13 @@ type Fake struct {
 	composeFile        protocol.ComposeFile
 	composeFileDiff    protocol.ComposeFileDiff
 	composeFileWritten protocol.ComposeFileWritten
+	// composeBackups / backupContents / backupRestored 是写前备份端点（S7.11）
+	// 的配置响应：清单、按名字取正文、恢复结果（恢复前新备份的文件名）。
+	// backupName 记录最近一次读/恢复请求带的备份名，供断言「名字真的透传到了 Agent」。
+	composeBackups []protocol.ComposeBackup
+	backupContents map[string]string
+	backupRestored protocol.ComposeBackupRestored
+	backupName     string
 	// fileList / fileMeta / fileContent* / fileWritten / fileActionDone 是文件端点
 	// （S5.5）的配置响应。content 走裸流（与真实 Agent 一致）：GET 返回正文与
 	// X-DD-File-* 头，PUT 接收正文并记录，POST {action} 接收 FileAction 体。
@@ -167,6 +174,34 @@ func (f *Fake) SetComposeFileWritten(v protocol.ComposeFileWritten) {
 	f.mu.Lock()
 	f.composeFileWritten = v
 	f.mu.Unlock()
+}
+
+// SetComposeBackups 配置 GET /api/v1/compose/{project}/backups 的响应。
+func (f *Fake) SetComposeBackups(list []protocol.ComposeBackup) {
+	f.mu.Lock()
+	f.composeBackups = list
+	f.mu.Unlock()
+}
+
+// SetBackupContents 配置 GET .../backups/content 按名字返回的正文。
+func (f *Fake) SetBackupContents(m map[string]string) {
+	f.mu.Lock()
+	f.backupContents = m
+	f.mu.Unlock()
+}
+
+// SetBackupRestored 配置 POST .../backups/restore 的响应。
+func (f *Fake) SetBackupRestored(v protocol.ComposeBackupRestored) {
+	f.mu.Lock()
+	f.backupRestored = v
+	f.mu.Unlock()
+}
+
+// LastBackupName 返回最近一次读/恢复请求带的备份名（供断言透传）。
+func (f *Fake) LastBackupName() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.backupName
 }
 
 // SetFileList / SetFileMeta / SetFileContent / SetFileWritten / SetFileActionDone
@@ -284,6 +319,10 @@ func (f *Fake) Handler() http.Handler {
 	mux.Handle("GET /api/v1/compose/{project}/file", authed(f.serveComposeFileGet))
 	mux.Handle("POST /api/v1/compose/{project}/diff", authed(f.serveComposeFileDiff))
 	mux.Handle("PUT /api/v1/compose/{project}/file", authed(f.serveComposeFilePut))
+	// ---- 写前备份（S7.11）：清单/正文只读，恢复是覆盖写 ----
+	mux.Handle("GET /api/v1/compose/{project}/backups", authed(f.serveComposeBackups))
+	mux.Handle("GET /api/v1/compose/{project}/backups/content", authed(f.serveComposeBackupsContent))
+	mux.Handle("POST /api/v1/compose/{project}/backups/restore", authed(f.serveComposeBackupsRestore))
 	// ---- 文件端点（S5.5）：list/stat/content（读）与 content 写、{action} 写动作。
 	// 与真实 Agent 路由同款方法限定；content 走裸流（不经信封）。----
 	mux.Handle("GET /api/v1/files", authed(f.serveFileList))
@@ -708,6 +747,61 @@ func (f *Fake) serveComposeFilePut(w http.ResponseWriter, r *http.Request) {
 	f.recordBody(raw)
 	f.mu.Lock()
 	res := f.composeFileWritten
+	f.mu.Unlock()
+	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+// serveComposeBackups 是备份清单（S7.11 只读）。
+func (f *Fake) serveComposeBackups(w http.ResponseWriter, r *http.Request) {
+	if done, status := f.maybeFail(r); done {
+		w.WriteHeader(status)
+		return
+	}
+	f.mu.Lock()
+	list := f.composeBackups
+	f.mu.Unlock()
+	if list == nil {
+		list = []protocol.ComposeBackup{}
+	}
+	httpx.WriteJSON(w, http.StatusOK, protocol.ComposeBackupsList{Backups: list})
+}
+
+// serveComposeBackupsContent 是备份正文。备份名走查询串（含 + 与 :）。
+func (f *Fake) serveComposeBackupsContent(w http.ResponseWriter, r *http.Request) {
+	if done, status := f.maybeFail(r); done {
+		w.WriteHeader(status)
+		return
+	}
+	name := r.URL.Query().Get("file")
+	if name == "" {
+		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, "缺少 file 参数（备份文件名）")
+		return
+	}
+	f.mu.Lock()
+	f.backupName = name
+	content := f.backupContents[name]
+	f.mu.Unlock()
+	httpx.WriteJSON(w, http.StatusOK, protocol.ComposeBackupContent{Name: name, Content: content})
+}
+
+// serveComposeBackupsRestore 是恢复（覆盖写）。记下名字供断言。
+func (f *Fake) serveComposeBackupsRestore(w http.ResponseWriter, r *http.Request) {
+	if done, status := f.maybeFail(r); done {
+		w.WriteHeader(status)
+		return
+	}
+	var body protocol.ComposeBackupUpdate
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, "请求体不合法")
+		return
+	}
+	if body.File == "" {
+		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, "缺少 file 字段（备份文件名）")
+		return
+	}
+	f.mu.Lock()
+	f.backupName = body.File
+	res := f.backupRestored
 	f.mu.Unlock()
 	httpx.WriteJSON(w, http.StatusOK, res)
 }

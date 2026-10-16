@@ -190,7 +190,8 @@ func TestMethodPathsMatchesEntries(t *testing.T) {
 		t.Fatalf("spec 覆盖 %d 条，登记表 %d 条", len(mp), len(entries))
 	}
 	for _, e := range entries {
-		if !mp[e.Method+" "+e.Path] {
+		// 登记表路径要先过 SpecPath（{ref...} → {ref}）才与 spec 的键同一口径。
+		if !mp[e.Method+" "+SpecPath(e.Path)] {
 			t.Fatalf("spec 缺 %s %s", e.Method, e.Path)
 		}
 	}
@@ -335,6 +336,8 @@ func TestNoDuplicateParameters(t *testing.T) {
 // TestPathParamsTailWildcard 覆盖 Go mux 尾通配符的文档名规范化：
 // {ref...}（容纳含 "/" 的镜像引用，如 library/nginx:latest）在 OpenAPI
 // 参数与路径模板里都呈现为 {ref}——"." 与 "..." 不是文档层词汇。
+// 路径模板一侧由 SpecPath 负责（S8.2 补：此前只规范了参数名，路径键仍写作
+// {ref...}，模板变量与声明的参数名对不上，严格校验器会判非法）。
 func TestPathParamsTailWildcard(t *testing.T) {
 	got := pathParams("/api/v1/servers/{id}/images/{ref...}")
 	want := []string{"id", "ref"}
@@ -344,6 +347,16 @@ func TestPathParamsTailWildcard(t *testing.T) {
 	for i := range want {
 		if got[i] != want[i] {
 			t.Errorf("参数 %d = %q 期望 %q", i, got[i], want[i])
+		}
+	}
+
+	// 路径模板同样要规范化，且只动尾通配符，不碰别的段。
+	for _, c := range []struct{ in, want string }{
+		{"/api/v1/servers/{id}/images/{ref...}", "/api/v1/servers/{id}/images/{ref}"},
+		{"/api/v1/servers/{id}/containers/{cid}/{action}", "/api/v1/servers/{id}/containers/{cid}/{action}"},
+	} {
+		if g := SpecPath(c.in); g != c.want {
+			t.Errorf("SpecPath(%q) = %q 期望 %q", c.in, g, c.want)
 		}
 	}
 }

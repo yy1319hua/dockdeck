@@ -139,20 +139,127 @@ func TestSpecMatchesRouteTable(t *testing.T) {
 	entries := h.srv.table.Entries()
 	served := h.srv.spec().MethodPaths()
 
-	if len(served) != len(entries) {
-		t.Fatalf("spec 覆盖 %d 条，登记表 %d 条", len(served), len(entries))
-	}
+	// 两侧先归一到文档形态再比：Go mux 的尾通配符 {ref...} 在 spec 里是 {ref}
+	// （openapi.SpecPath 是唯一口径），登记表一侧不规范化就比不出漂移。
+	want := map[string]bool{}
 	for _, e := range entries {
-		if !served[e.Method+" "+e.Path] {
-			t.Errorf("spec 缺端点 %s %s", e.Method, e.Path)
+		want[e.Method+" "+openapi.SpecPath(e.Path)] = true
+	}
+	if len(want) != len(entries) {
+		t.Errorf("规范化后端点键撞车：登记表 %d 条、去重后 %d 条（同一路径不能既声明 {x} 又声明 {x...}）",
+			len(entries), len(want))
+	}
+	for k := range want {
+		if !served[k] {
+			t.Errorf("spec 缺端点 %s", k)
 		}
 	}
 	// 反向：spec 不得凭空多出没登记的端点。
 	for k := range served {
-		if _, ok := h.srv.table.Keys()[k]; !ok {
+		if !want[k] {
 			t.Errorf("spec 有 %q 但登记表没有", k)
 		}
 	}
+}
+
+// TestSpecAnnotationsComplete 把 S8.1 补齐的注解钉住：任何端点缺 summary /
+// 分组 / 说明，或参数与响应缺说明，或用到没写说明的分组，都在这里红。
+// 注解漏了不影响运行、只在客户端与文档里体现，所以只能靠测试兜。
+func TestSpecAnnotationsComplete(t *testing.T) {
+	h := newHub(t)
+	d := h.srv.spec()
+
+	for _, e := range h.srv.table.Entries() {
+		key := e.Method + " " + e.Path
+		if e.Summary == "" {
+			t.Errorf("%s：缺 Summary", key)
+		}
+		if len(e.Tags) == 0 {
+			t.Errorf("%s：缺 Tags（不进任何分组，文档里会散落无标题）", key)
+		}
+		if e.Desc == "" {
+			t.Errorf("%s：缺 Desc", key)
+		}
+		for _, p := range e.Params {
+			if p.Desc == "" {
+				t.Errorf("%s：参数 %s 缺 Desc", key, p.Name)
+			}
+		}
+		for _, r := range e.Responses {
+			if r.Desc == "" {
+				t.Errorf("%s：响应 %d 缺 Desc", key, r.Status)
+			}
+		}
+		op := specOperation(t, d, e.Method, openapi.SpecPath(e.Path))
+		if op == nil {
+			continue
+		}
+		if op.Summary != e.Summary {
+			t.Errorf("%s：spec 的 summary %q 与登记表 %q 不一致", key, op.Summary, e.Summary)
+		}
+		if len(op.Responses) == 0 {
+			t.Errorf("%s：spec 里没有任何响应", key)
+		}
+	}
+
+	// 分组说明：spec 里每个 tag 都要有说明（未登记的 tag 会渲染成空标题）。
+	if len(d.Tags) == 0 {
+		t.Error("spec 没有任何 tag")
+	}
+	for _, tag := range d.Tags {
+		if tag.Description == "" {
+			t.Errorf("分组 %s 在 spec 里没有说明（补 openapi.tagDesc）", tag.Name)
+		}
+	}
+}
+
+// TestCommittedSpecMatchesGenerated 钉住「产物只能由生成器产出」：现生成一份到
+// 临时目录，与仓库里的 docs/openapi.json 与 docs/openapi.yaml 逐字节比对。
+// 手改产物、或改了注解却忘了重新生成，都在这里红（spec 是公开契约，与实际
+// 实装不一致的「文档」比没有文档更糟）。
+func TestCommittedSpecMatchesGenerated(t *testing.T) {
+	dir := t.TempDir()
+	if err := dumpOpenAPI(dir); err != nil {
+		t.Fatalf("生成 spec：%v", err)
+	}
+	for _, name := range []string{"openapi.json", "openapi.yaml"} {
+		generated, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatalf("读现生成产物 %s：%v", name, err)
+		}
+		committed, err := os.ReadFile(filepath.Join("..", "..", "docs", name))
+		if err != nil {
+			t.Fatalf("读仓库产物 docs/%s：%v", name, err)
+		}
+		if !bytes.Equal(committed, generated) {
+			t.Errorf("docs/%s 与现生成不一致：产物过期或被手改——重跑 "+
+				"`go run ./cmd/hub --dump-openapi docs` 后一并提交", name)
+		}
+	}
+}
+
+// specOperation 取端点在 spec 里的 operation；路径或方法对不上时报错并返回 nil。
+func specOperation(t *testing.T, d *openapi.Doc, method, path string) *openapi.Operation {
+	t.Helper()
+	pi, ok := d.Paths[path]
+	if !ok {
+		t.Errorf("spec 里没有路径 %s", path)
+		return nil
+	}
+	switch method {
+	case http.MethodGet:
+		return pi.Get
+	case http.MethodPost:
+		return pi.Post
+	case http.MethodPut:
+		return pi.Put
+	case http.MethodPatch:
+		return pi.Patch
+	case http.MethodDelete:
+		return pi.Delete
+	}
+	t.Errorf("未知方法 %s", method)
+	return nil
 }
 
 // TestSpecHasNoDuplicateParameters 扫真实登记表的每一条：任何端点都不得
@@ -163,7 +270,7 @@ func TestSpecHasNoDuplicateParameters(t *testing.T) {
 	h := newHub(t)
 	d := h.srv.spec()
 	for _, e := range h.srv.table.Entries() {
-		pi := d.Paths[e.Path]
+		pi := d.Paths[openapi.SpecPath(e.Path)]
 		var op *openapi.Operation
 		switch e.Method {
 		case http.MethodGet:

@@ -130,7 +130,10 @@ var tagDesc = map[string]string{
 	"Compose":    "Compose 项目与 YAML。",
 	"Files":      "白名单根目录内的文件读写。",
 	"Audit":      "审计日志查询与导出。",
+	"Settings":   "面板安全设置：保护名单、TLS 指纹、整库快照——仅浏览器会话可用。",
 	"Tokens":     "API Token 管理（仅浏览器会话可用）。",
+	"Volumes":    "数据卷只读清单（Engine 只给使用计数，不给接入名单）。",
+	"Networks":   "容器网络只读清单（含接入容器名单）。",
 	"Meta":       "健康检查、spec 本体、scope 字典。",
 }
 
@@ -162,11 +165,12 @@ func Generate(info Info, entries []route.Entry) *Doc {
 		for _, t := range e.Tags {
 			tagSeen[t] = true
 		}
-		pi := d.Paths[e.Path]
+		docPath := SpecPath(e.Path)
+		pi := d.Paths[docPath]
 		if err := fill(&pi, e.Method, operation(e)); err != nil {
 			panic("openapi: " + err.Error()) // route.Add 已校验方法，走到这里说明是本包缺陷
 		}
-		d.Paths[e.Path] = pi
+		d.Paths[docPath] = pi
 	}
 
 	for t := range tagSeen {
@@ -327,6 +331,12 @@ func pathParams(p string) []string {
 		p = p[j+1:]
 	}
 }
+
+// SpecPath 把 Go mux 的路径模板转成 OpenAPI 路径模板：尾通配符 {ref...} → {ref}。
+// 文档层没有 "..." 这样的词汇，且路径模板里的变量名必须与声明的 path 参数名
+// 完全一致——{ref...} 配一个叫 ref 的参数会被严格校验器判非法。
+// 一致性测试用同一个函数把登记表路径规范化后再与 spec 比对，口径只此一处。
+func SpecPath(p string) string { return strings.ReplaceAll(p, "...}", "}") }
 
 // indexOfParam 找 name+in 的参数下标；找不到返回 -1。
 func indexOfParam(ps []Param, name, in string) int {

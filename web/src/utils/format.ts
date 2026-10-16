@@ -66,3 +66,16 @@ export function formatRatePercent(ratio: number): string {
   }
   return `${Math.round(ratio * 100)}%`
 }
+
+/**
+ * Unix 秒 → 本地日期时间（Engine 的 Created 口径，秒而非毫秒）。
+ * 镜像/构建时间这类「过去某时刻」用绝对时间比「3 天前」更可用——要核对版本。
+ */
+export function formatWhen(unixSec: number | undefined | null): string {
+  if (!unixSec || !Number.isFinite(unixSec) || unixSec <= 0) {
+    return '—'
+  }
+  const d = new Date(unixSec * 1000)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}

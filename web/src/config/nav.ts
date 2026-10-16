@@ -23,5 +23,5 @@ export const navItems: NavItem[] = [
   { label: 'Compose', icon: 'compose', to: 'compose' },
   { label: '文件', icon: 'files', to: 'files' },
   { label: '审计', icon: 'audit', to: 'audit' },
-  { label: '设置', icon: 'settings' },
+  { label: '设置', icon: 'settings', to: 'settings' },
 ]

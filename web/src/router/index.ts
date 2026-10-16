@@ -7,6 +7,7 @@ import Images from '@/pages/Images.vue'
 import Compose from '@/pages/Compose.vue'
 import Files from '@/pages/Files.vue'
 import Audit from '@/pages/Audit.vue'
+import Settings from '@/pages/Settings.vue'
 import DesignTokens from '@/pages/DesignTokens.vue'
 import Login from '@/pages/Login.vue'
 import Setup from '@/pages/Setup.vue'
@@ -83,6 +84,15 @@ const routes: RouteRecordRaw[] = [
         name: 'audit',
         component: Audit,
         meta: { title: '审计 · DockDeck', requiresAuth: true },
+      },
+      {
+        // S7.8 设置页：单页五分区（改密 / API Token / 保护名单 / TLS 指纹 /
+        // 整库备份）。全局页无主机切换器——设置是 Hub 单点配置，不按机维度
+        // （与审计页同构）；表单草稿进 store，一次性明文等易失态留页面本地。
+        path: 'settings',
+        name: 'settings',
+        component: Settings,
+        meta: { title: '设置 · DockDeck', requiresAuth: true },
       },
       {
         // 设计令牌色卡页：开发期自检用。

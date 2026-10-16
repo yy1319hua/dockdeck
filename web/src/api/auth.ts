@@ -30,3 +30,19 @@ export function setup(cred: Credentials): Promise<null> {
 export function logout(): Promise<null> {
   return post<null>('/auth/logout')
 }
+
+/**
+ * POST /auth/password：改密。**成功后后端撤销该用户全部会话（含当前）**，
+ * 响应 relogin_required=true 即要求前端立刻登出并回登录页——抱着旧 cookie
+ * 继续跑只会在下一个请求 401。
+ *
+ * 失败按后端 code 原样抛 ApiError，页面据此提示：
+ *   invalid_credentials —— 旧口令错误（401）；
+ *   weak_password       —— 新口令不足 8 位（400）。
+ */
+export function changePassword(oldPassword: string, newPassword: string): Promise<{ reloginRequired: boolean }> {
+  return postJSON<{ ok?: boolean; relogin_required?: boolean }>('/auth/password', {
+    old_password: oldPassword,
+    new_password: newPassword,
+  }).then((w) => ({ reloginRequired: w.relogin_required ?? false }))
+}

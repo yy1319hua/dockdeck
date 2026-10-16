@@ -22,8 +22,9 @@ N 份证书、N 套口令、N 个监听端口——不可维护，也不安全�
 
 ## OpenAPI 与 App 调用
 
-UI 与 App 共用同一组 `/api/*` 端点，契约由源码注释生成，运行时暴露在 `GET /api/openapi.json`，
-仓库内同步维护 `docs/openapi.yaml`。spec 与路由有一致性测试保证（漏注解即测试红）。
+UI 与 App 共用同一组 `/api/*` 端点。契约与运行时路由**同源生成**：`cmd/hub --dump-openapi <dir>` 复用运行时
+同一份路由声明写出 `docs/openapi.json` 与 `docs/openapi.yaml`（两者都入库，勿手改），运行时暴露在
+`GET /api/openapi.json`。spec 与路由有一致性测试保证（漏注解即测试红）。
 
 App 侧使用 Bearer API Token（与浏览器 cookie 会话互不越权），token 只在创建时明文显示一次，
 库里存 SHA-256。scope：`read:metrics`、`read:containers`、`write:containers`、`write:files`、`read:audit`。

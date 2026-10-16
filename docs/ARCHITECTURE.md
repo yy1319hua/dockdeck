@@ -79,7 +79,15 @@ Agent 启动时校验绑定地址属于 tailscale0，否则拒绝启动（`--all
 
 ## OpenAPI
 
-- 对外契约文件：`docs/openapi.yaml`，由源码注释生成，运行时经 `GET /api/openapi.json` 暴露同一份 spec。
+- **同源生成（S8.1）**：`cmd/hub --dump-openapi <dir>` 复用运行时同一份 `route.Table` 写出
+  `docs/openapi.json` 与 `docs/openapi.yaml` 后退出——不建库、不开监听、不碰线上数据目录，
+  故 spec 与运行时路由不可能漂移。两份产物都入库，勿手改（改注解 → 重新生成）。
+- 运行时经 `GET /api/openapi.json` 暴露同一份 spec（公开端点，依赖 tailnet / 内网隔离，见 GAP-4）。
+- **YAML 发射器零依赖**（`internal/openapi/yaml.go`）：先 `Doc.JSON()` 再逐 token 走成保序值树按缩进输出，
+  键序与 JSON 逐节一致；多行串用 `|-` 字面块，会被 YAML 类型推断的裸键（数字开头、`true/false/null`、
+  含 `/` `#`）一律加引号，保证 YAML 解析回来与 JSON 深等值。
+- **参数刻画**：`route.Param.Enum` 声明取值白名单（三个 `{action}` 端点：容器动作 / Compose 动作 / 文件动作），
+  **只进文档、不参与运行时校验**——动词白名单仍由各 handler 把关；`{ref...}` 的取值说明含「可带 `/` 与 `:`」。
 - **spec 与路由一致性有测试保证**：注册表与 spec 逐条比对，路由缺注解即测试红（S8.2）。
 - 版本：`openapi: 3.0.3`（App 侧工具链兼容性最稳）。
 - 鉴权声明：`securitySchemes` 提供 `cookieAuth` 与 `bearerAuth` 两种。

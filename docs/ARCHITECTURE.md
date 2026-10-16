@@ -102,31 +102,67 @@ Agent 启动时校验绑定地址属于 tailscale0，否则拒绝启动（`--all
 
 ## HTTP 契约
 
-Hub API 前缀 `/api/v1`，响应统一 `{ "data": ..., "error": { "code", "message" } }`。
+Hub API 前缀 `/api/v1`（`/api/v1/servers/{id}/…` 转发到对应 Agent，`/api/v1/{auth,api-tokens,settings,admin,audit_logs,scopes,health,openapi.json}` 由 Hub 直处），
+响应统一 `{ "data": ..., "error": { "code", "message" } }`。下表以实装路由登记表（`cmd/hub/main.go` → `route.Table`）为准；与 `docs/openapi.{json,yaml}` 同源。
 
-| Hub | scope | 说明 |
+> 说明：`p` = 实装方法/路径；`s会话` = 仅 cookie 会话（Token 调一律 401）；`b Token` = 受 scope 约束（见 §6）；`—公开` = 无需凭据。
+> 纳管（`/servers`、`/servers/invite`）和自注册（`/servers/enroll`）接入真实路由；纳管**无 `PATCH/DELETE /servers*`、无 `/servers/{id}/test`**。
+
+### 公开端点（Token 与 session 都跳过）
+
+| p | 说明 |
+| --- | --- |
+| `GET /health` | 健康检查（ladder：db→disk→enrolled；503 表降级） |
+| `GET /scopes` | API Token 权限项字典（scope→说明） |
+| `GET /auth/me` | 当前身份（未登录→401；未建号→setup_required） |
+| `POST /auth/login` | 登录（账号锁 5 次/15min → 429；IP 限流 10 桶 / 30s 补 1） |
+| `POST /auth/setup` | 首启建号（仅当无账号；IP 限流同 login） |
+| `GET /api/openapi.json` | spec 本体（同源生成；版本字段由构建时注入，仓库默认 `dev`） |
+
+### 仅会话端点（Token 一律 `401 unauthenticated`）
+
+| p | 说明 |
+| --- | --- |
+| `POST /auth/logout` | 登出 |
+| `POST /auth/password` | 改密 |
+| `GET/POST/DELETE /api-tokens{+/{id}}` | Token 签发、列表、按 id 撤销（撤销后再调同 id → 404） |
+| `POST /servers/invite` | 签发纳管邀请（TTL 默认 30min/最大 24h；返回 join_secret） |
+| `GET/PUT /settings/protected-containers` | 保护名单：取 → `{patterns, using_default}`；写 → JSON 数组，非法正则 400 `bad_pattern` |
+| `GET /settings/tls-fingerprint` | 自签证书 SHA-256 指纹（`{fingerprint, self_signed}`） |
+| `GET /admin/backup` | 整库快照下载（DB 这时不 WAL checkpoint，GET 不落审计；PUT 类写入才包） |
+
+### 鉴权端点（Token 受 scope 约束，会话用户全权限）
+
+> scope 只约束 Token；会话用户（含调这些端点的浏览器）不受 scope 限制。
+> 读 `read:*`、写 `write:*`；**写不蕴含读**。每行末尾括号里是**缺 scope 时的错码**。
+
+| p | scope | 说明 |
 | --- | --- | --- |
-| `POST /auth/login` `/auth/logout` `GET /auth/me` `POST /auth/password` | 会话 | 仅 cookie；Token 不可调用 |
-| `GET/POST/PATCH/DELETE /servers*` `POST /servers/{id}/test` | 会话 | 纳管管理，UI 专属 |
-| `GET/POST/DELETE /api-tokens*` | 会话 | Token 签发与撤销，UI 专属 |
-| `GET /servers/{id}/overview` `GET /servers/{id}/metrics?since=&until=&step=` | `read:metrics` | **监控主线** |
-| `GET /servers/overview` | `read:metrics` | 多主机聚合（哪吒式总览） |
-| `GET /servers/{id}/containers` `GET .../containers/{cid}` | `read:containers` | 容器清单与详情 |
-| `POST .../containers/{cid}/{action}` | `write:containers` | start/stop/restart/pause/unpause/kill/resize |
-| `DELETE .../containers/{cid}` | `write:containers` | 需 `confirm=<name>` 且非保护对象 |
-| `GET .../containers/{cid}/logs?tail=&since=&until=&follow=` | `read:containers` | 日志 |
-| `GET .../images` `POST .../images/pull` `DELETE .../images/{ref}` `POST .../prune` | `read:`/`write:containers` | 镜像 |
-| `GET .../compose` `POST .../compose/{project}/{action}` `GET .../compose/{project}/logs` `GET/PUT .../compose/{project}/file` `POST .../compose/{project}/diff` | `read:`/`write:containers` | Compose（list/写动作/日志；YAML 读写与 diff 预览。Agent 侧 S4.2+S4.3 落地，**Hub 侧转发 S4.7 补齐**。写 YAML 走 `ComposeDirs` 白名单而非 `fs-root`，故归 `write:containers` 而非 `write:files`） |
-| `GET .../files?path=` `GET .../files/stat?path=` `GET .../files/content?path=` | `read:files` | 文件列表/元信息/读取（**scope 由原定的 `read:metrics` 改为 `read:files`**：与「写不蕴含读、读文件≠读指标」的既有口径一致。Agent 侧 S5.1 已落地，Hub 侧路由已随 S5.5 落地） |
-| `PUT .../files/content` `POST .../files/{action}` | `write:files` | 写/删/建目录/改名，限根白名单，写前自动 `*.bak.<RFC3339>` 备份（Agent 侧 S5.1 已落地，Hub 侧路由已随 S5.5 落地） |
-| `GET /audit` `GET /audit/export` | `read:audit` | 审计查询与导出 |
-| `GET/PUT /settings/protected-containers` `GET /settings/tls-fingerprint` `GET /admin/backup` | 会话 | 设置页四端点（S7.8）：保护名单读写、TLS 指纹、整库快照下载。**一律 AuthSession**——泄漏的 API Token 不得改安全配置、不得拖库（同 Token 管理端点口径）；PUT 与备份包 `middleware.Audit`，两枚 GET 不包 |
-| `GET /servers/{id}/volumes` `GET /servers/{id}/networks` | `read:containers` | 卷与网络只读清单（S7.9）：数据卷与容器网络，scope 复用容器 scope（GAP-2 同族沿用，不新增 scope）；读也落审计（`volume.list` / `network.list`，与 `container.list` 同口径）。**无写端点**——删卷即删数据、prune 由 Engine 判 dangling 误判不可逆 |
-| `GET /servers/{id}/compose/{project}/backups` `GET .../backups/content` `POST .../backups/restore` | `read:`/`write:containers` | Compose 写前备份（S7.11）：清单与读正文只读，**恢复是覆盖写故挂 write**（与写 YAML 同款）。只回文件名/大小/时间、**不回宿主机绝对路径**；**不提供删除**。备份名含 RFC3339 的 `+` 与 `:`，故读走查询串、恢复走请求体 |
-| `GET /ws` | 会话 | WebSocket：`log`、`stats` 推送 |
-| `GET /api/openapi.json` | 公开 | spec 本体 |
+| `GET /servers` | Token `read:metrics`（403） | 受管主机清单；`ServerSummary` 线上字段 PascalCase（无 JSON tag） |
+| `POST /servers/enroll` | Token `read:metrics`（403） | Agent 自注册纳管（201）；与 login/setup 同受 IP 限流 |
+| `GET /servers/{id}/metrics` | `read:metrics` | 实时指标快照（单时刻，无 since/until/step） |
+| `GET /servers/{id}/metrics/overview` | `read:metrics` | 历史曲线；窗口上限 8 天、`limit` 默认 720/上限 1440 |
+| `GET /servers/{id}/containers` `…/containers/{cid}` | `read:containers` | 容器清单与详情（PascalCase 线上字段） |
+| `GET …/containers/{cid}/logs` | `read:containers` | 日志流（**无信封、无读超时、不重试**；`since/until` 接受 Unix 秒或 RFC3339） |
+| `POST …/containers/{cid}/{action}` | `write:containers` | start/stop/restart/pause/unpause/kill/resize（枚举白名单，文档只进不校） |
+| `DELETE …/containers/{cid}` | `write:containers` | 需 `confirm=<id 或名字>` 精确一致 + 非保护名单；query 与 body 取并集 |
+| `GET …/images` `POST …/images/pull` `DELETE …/images/{ref}` `POST …/images/prune` | 读 `read:containers`/写 `write:containers` | 镜像清单、拉取、删除、`prune` 清悬空（**无 dry-run**） |
+| `GET …/compose` `GET/PUT …/compose/{project}/file` `POST …/compose/{project}/diff` | `read/write:containers` | Compose 项目清单、YAML 读写与 diff 预览 |
+| `POST …/compose/{project}/{action}` `GET …/compose/{project}/logs` | 写/读 `containers` | Compose 写动作（diff/up 等；枚举白名单）与项目日志 |
+| `GET …/compose/{project}/backups` `…/backups/content` `POST …/backups/restore` | 读/写 `containers` | 清单与读正文只读；**恢复是覆盖写故挂 write**；只回文件名/大小/时间，不含绝对路径，不提供删除 |
+| `GET …/files` `…/files/stat` `…/files/content` | `read:files` | 列表、元信息、正文下载（**scope 是 `read:files`，不是 `read:metrics`**） |
+| `PUT …/files/content` `POST …/files/{action}` | `write:files` | 写/删/建目录/改名；限根白名单；写前自动 `*.bak.<RFC3339>` 备份 |
+| `GET /servers/{id}/volumes` `…/networks` | `read:containers` | 卷与网络只读清单；**无写端点**；读落审计（`volume.list`/`network.list`） |
+| `GET /audit_logs` | `read:audit`；会话全权限 | 审计查询（游标 `before_id`，不含导出端点） |
+
+### 跨端点口径（易踩点，详见 `docs/API.md` §7）
+- **PascalCase 线上字段**：容器/镜像/servers 的 DTO 无 JSON tag（如 `ServerSummary.ID/Name/…`），这是有意选择，不是漂移。
+- **写不蕴含读**：发 `write:files` 的 Token 调 `read:files` 仍 403；需要读就同时勾 `read:*`。
+- **`X-DD-Request-Id`**：审计关联键，**不是执行级去重**（Agent 无状态、写操作不重试）。
+- **`docs/API.md` 与本文冲突时以 spec 为准**——那本身就是 bug，应反馈。
 
 Agent API 前缀 `/api/v1`：`/info` `/metrics` `/containers*` `/images*` `/compose*` `/logs` `/files*`，
+语义与 Hub 一一对应；Hub 只做鉴权、审计、聚合，不重新实现 Docker 逻辑。Agent API 前缀 `/api/v1`：`/info` `/metrics` `/containers*` `/images*` `/compose*` `/logs` `/files*`，
 语义与 Hub 一一对应；Hub 只做鉴权、审计、聚合，不重新实现 Docker 逻辑。
 
 ### Engine 契约实测基线（2026-10-14，node1 生产机 + ARM 宿主机，Docker Engine 29.1.3 / API 1.52）

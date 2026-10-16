@@ -76,7 +76,7 @@ func Load(args []string) (Config, error) {
 	}
 
 	fs := flag.NewFlagSet("hub", flag.ContinueOnError)
-	fs.StringVar(&c.ListenAddr, "listen", c.ListenAddr, "监听地址 host:port，必须为 tailscale 网卡 IP 或回环")
+	fs.StringVar(&c.ListenAddr, "listen", c.ListenAddr, "监听地址 host:port，必须为 tailnet / 内网 / 回环的具体 IP（禁止 0.0.0.0）")
 	fs.StringVar(&c.DataDir, "data-dir", c.DataDir, "数据目录")
 	fs.StringVar(&c.MasterKeyPath, "master-key", c.MasterKeyPath, "机器主密钥文件路径")
 	var tlsMode string
@@ -101,7 +101,7 @@ func Load(args []string) (Config, error) {
 	return c, nil
 }
 
-// Validate 强制「明文只允许回环」——防止把无 TLS 的监听暴露到 tailnet 之外。
+// Validate 强制「明文只允许回环」——防止把无 TLS 的监听暴露到不可信网络。
 func (c Config) Validate() error {
 	host, port, err := net.SplitHostPort(c.ListenAddr)
 	if err != nil {
@@ -113,7 +113,7 @@ func (c Config) Validate() error {
 	ip := net.ParseIP(host)
 	// host 为空或 IP 为未指定地址（0.0.0.0 / ::）→ 拒绝，绝不绑所有接口。
 	if host == "" || ip == nil || ip.IsUnspecified() {
-		return fmt.Errorf("拒绝绑定 %q：DockDeck 只允许绑定 tailscale 网卡 IP 或回环，不得暴露到所有接口", c.ListenAddr)
+		return fmt.Errorf("拒绝绑定 %q：DockDeck 只允许绑定 tailnet / 内网 / 回环的具体 IP，禁止绑定 0.0.0.0（所有接口）", c.ListenAddr)
 	}
 	if c.TLSMode == TLSModeNone && !ip.IsLoopback() {
 		return fmt.Errorf("TLS_MODE=none 仅允许回环监听，当前为 %q；对外请用 self", host)

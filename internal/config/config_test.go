@@ -25,11 +25,11 @@ func TestLoad_PLAINTEXTOnlyLoopback(t *testing.T) {
 	}
 }
 
-func TestLoad_SelfSignedTailnetOK(t *testing.T) {
+func TestLoad_SelfSignedInternalIPOK(t *testing.T) {
 	c := defaults()
 	c.TLSMode = TLSModeSelf
 	c.ListenAddr = "192.0.2.5:8443"
 	if err := c.Validate(); err != nil {
-		t.Fatalf("自签 + tailnet IP 应允许: %v", err)
+		t.Fatalf("自签 + 内网/具体 IP 应允许: %v", err)
 	}
 }

@@ -1,5 +1,5 @@
 // Command hub 是 DockDeck 管理面板的服务端。
-// 单二进制内嵌前端静态资源，绑定 tailscale 网卡 IP 提供 HTTPS。
+// 单二进制内嵌前端静态资源，绑定 tailnet / 内网的具体 IP（非 0.0.0.0）提供 HTTPS。
 package main
 
 import (

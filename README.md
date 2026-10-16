@@ -27,7 +27,8 @@ UI 与 App 共用同一组 `/api/*` 端点。契约与运行时路由**同源生
 `GET /api/openapi.json`。spec 与路由有一致性测试保证（漏注解即测试红）。
 
 App 侧使用 Bearer API Token（与浏览器 cookie 会话互不越权），token 只在创建时明文显示一次，
-库里存 SHA-256。scope：`read:metrics`、`read:containers`、`write:containers`、`write:files`、`read:audit`。
+库里存 SHA-256。scope 共六项：`read:metrics`、`read:containers`、`write:containers`、`read:files`、
+`write:files`、`read:audit`（字典与顺序以 `GET /api/v1/scopes` 为准，即 `internal/apitoken.AllScopes`）。
 
 ```
 curl -H "Authorization: Bearer <token>" \

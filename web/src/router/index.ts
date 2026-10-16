@@ -5,6 +5,7 @@ import HostDetail from '@/pages/HostDetail.vue'
 import Containers from '@/pages/Containers.vue'
 import Images from '@/pages/Images.vue'
 import Compose from '@/pages/Compose.vue'
+import VolumesNetworks from '@/pages/VolumesNetworks.vue'
 import Files from '@/pages/Files.vue'
 import Audit from '@/pages/Audit.vue'
 import Settings from '@/pages/Settings.vue'
@@ -67,6 +68,15 @@ const routes: RouteRecordRaw[] = [
         name: 'compose',
         component: Compose,
         meta: { title: 'Compose · DockDeck', requiresAuth: true },
+      },
+      {
+        // S7.9 卷与网络页：全局页 + 顶部主机切换器（与容器/镜像页同构），页内
+        // 两分区（数据卷 / 容器网络），**只读**——不提供创建与删除；网络行展开
+        // 看接入名单是页面本地 ref（易失 UI 态，同 S7.5/S7.6/S7.7 纪律）。
+        path: 'volumes-networks',
+        name: 'volumes-networks',
+        component: VolumesNetworks,
+        meta: { title: '卷与网络 · DockDeck', requiresAuth: true },
       },
       {
         // S7.6 文件页：全局页 + 顶部主机切换器（同构）；目录位置进 store（切走回来停原目录），

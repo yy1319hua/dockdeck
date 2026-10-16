@@ -21,6 +21,8 @@ export const navItems: NavItem[] = [
   { label: '容器', icon: 'container', to: 'containers' },
   { label: '镜像', icon: 'image', to: 'images' },
   { label: 'Compose', icon: 'compose', to: 'compose' },
+  // S7.9：卷与网络是一页两分区（Q1-A），故只占一个侧栏项。
+  { label: '卷与网络', icon: 'volnet', to: 'volumes-networks' },
   { label: '文件', icon: 'files', to: 'files' },
   { label: '审计', icon: 'audit', to: 'audit' },
   { label: '设置', icon: 'settings', to: 'settings' },

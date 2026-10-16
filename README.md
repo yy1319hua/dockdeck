@@ -6,7 +6,7 @@ Hub 负责登录、聚合、审计与界面，并对外提供 OpenAPI 供 App �
 
 - 技术栈：Go（`net/http` 标准库路由）+ Vue 3 + SQLite（`modernc.org/sqlite`，纯 Go 无 CGO）
 - 架构：兼容 `linux/arm64` 与 `linux/amd64`，`CGO_ENABLED=0` 静态编译
-- 访问：账号密码登录 + Tailscale 私网，**不开任何公网端口、不改防火墙**
+- 访问：账号密码登录 + Tailscale 私网或内网反代，**不开任何公网端口、不改防火墙**
 - 含：主机监控（CPU/内存/磁盘/网络/负载/在线率/历史曲线）、容器管理、日志、镜像、Compose、
   文件管理、审计日志、OpenAPI + API Token
 - 不含（明确排除）：服务拨测、告警通知、Web 终端、免登录公开状态页
@@ -17,7 +17,7 @@ Hub 负责登录、聚合、审计与界面，并对外提供 OpenAPI 供 App �
 
 面板要管的不是一台机器，而是散在各处的宿主机。让浏览器或 App 直连每台机器的 Docker API 意味着
 N 份证书、N 套口令、N 个监听端口——不可维护，也不安全。DockDeck 把信任边界收在一处：
-客户端只面对 Hub，Hub 只面对自己纳管的 Agent，Agent 只监听在 tailscale 网卡上、
+客户端只面对 Hub，Hub 只面对自己纳管的 Agent，Agent 监听在 tailscale 网卡或指定网卡上、
 只认一个每机独立的 token。审计日志因此天然集中在 Hub，权限模型也只需要在一处守。
 
 ## OpenAPI 与 App 调用

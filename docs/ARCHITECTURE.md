@@ -2,7 +2,7 @@
 
 多服务器监控与 Docker 管理面板，监控主线参照哪吒监控（Nezha）。一个 Hub 管 N 台宿主机，
 每台宿主机跑一个 Agent 采集主机指标、按需读写 docker.sock 与受限文件目录。
-仅 Tailscale 私网访问，不开任何公网端口。对外提供 OpenAPI，App 与浏览器 UI 共用同一组端点。
+Tailscale 私网或内网反代访问，不开任何公网端口。对外提供 OpenAPI，App 与浏览器 UI 共用同一组端点。
 
 ## 功能边界（2026-10-13 用户确认）
 
@@ -18,7 +18,7 @@
 ## 组件
 
 ```
-浏览器 / App ──HTTPS──► Hub(:8443, 只绑 tailnet IP)
+浏览器 / App ──HTTPS──► Hub(:8443, 绑 tailnet / 内网的具体 IP（非 0.0.0.0）)
                           ├─ Go 单二进制，前端 go:embed
                           ├─ SQLite（用户/服务器/会话/API令牌/审计/指标快照）
                           ├─ 鉴权：cookie 会话 + Bearer API Token（scope 制）
@@ -40,7 +40,7 @@ tailscale 网卡的具体 IP，`docker-proxy` 只在该地址监听，其它接�
 -p <TAILNET_IP>:9527:9527     # Agent
 ```
 
-`TAILNET_IP` 由部署脚本用 `tailscale ip -4` 现取，写进 `.env`，不硬编码进仓库。
+`BIND_IP` 由部署脚本现取（`tailscale ip -4` 或指定内网 IP），写进 `.env`，不硬编码进仓库。
 Agent 启动时校验绑定地址属于 tailscale0，否则拒绝启动（`--allow-insecure-bind` 例外）。
 
 ## 认证

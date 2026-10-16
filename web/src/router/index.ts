@@ -4,6 +4,7 @@ import Overview from '@/pages/Overview.vue'
 import HostDetail from '@/pages/HostDetail.vue'
 import Containers from '@/pages/Containers.vue'
 import Images from '@/pages/Images.vue'
+import Compose from '@/pages/Compose.vue'
 import DesignTokens from '@/pages/DesignTokens.vue'
 import Login from '@/pages/Login.vue'
 import Setup from '@/pages/Setup.vue'
@@ -56,6 +57,13 @@ const routes: RouteRecordRaw[] = [
         name: 'images',
         component: Images,
         meta: { title: '镜像 · DockDeck', requiresAuth: true },
+      },
+      {
+        // S7.5 Compose 页：全局页 + 顶部主机切换器（同构）；编辑面板与两段式写入在页内。
+        path: 'compose',
+        name: 'compose',
+        component: Compose,
+        meta: { title: 'Compose · DockDeck', requiresAuth: true },
       },
       {
         // 设计令牌色卡页：开发期自检用。

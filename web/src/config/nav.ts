@@ -20,7 +20,7 @@ export const navItems: NavItem[] = [
   { label: '主机详情', icon: 'host' },
   { label: '容器', icon: 'container', to: 'containers' },
   { label: '镜像', icon: 'image', to: 'images' },
-  { label: 'Compose', icon: 'compose' },
+  { label: 'Compose', icon: 'compose', to: 'compose' },
   { label: '文件', icon: 'files' },
   { label: '审计', icon: 'audit' },
   { label: '设置', icon: 'settings' },

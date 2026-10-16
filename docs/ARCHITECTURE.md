@@ -113,6 +113,8 @@ Agent API 前缀 `/api/v1`：`/info` `/metrics` `/containers*` `/images*` `/comp
 
 ### Engine 契约实测基线（2026-10-14，node1 生产机 + ARM 宿主机，Docker Engine 29.1.3 / API 1.52）
 
+> node1 连接信息（IP 等）属生产资产，禁止抄进入库文件（硬规矩 6）。本节只保留代号与引擎版本，不写可定位信息。
+
 以下行为在 node1 生产机与 ARM 宿主机（均为 Docker 29.1.3 / API 1.52）上**只读实测**确认，
 Hub/Agent 的口径与之对齐；升级引擎大版本时需复测：
 

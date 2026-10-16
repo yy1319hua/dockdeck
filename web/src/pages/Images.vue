@@ -435,29 +435,6 @@ function onSelectHost(e: Event): void {
   white-space: nowrap;
 }
 
-.link {
-  padding: 0 var(--space-1);
-  background: none;
-  border: none;
-  color: var(--accent);
-  font-size: var(--text-sm);
-  cursor: pointer;
-}
-
-.link:hover:not(:disabled) {
-  color: var(--accent-hover);
-  text-decoration: underline;
-}
-
-.link:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.link--danger {
-  color: var(--danger);
-}
-
 .im__prune-list {
   max-height: 240px;
   overflow-y: auto;

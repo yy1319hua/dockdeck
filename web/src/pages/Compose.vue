@@ -591,29 +591,6 @@ function onSelectHost(e: Event): void {
   color: var(--fg-subtle);
 }
 
-.link {
-  padding: 0 var(--space-1);
-  background: none;
-  border: none;
-  color: var(--accent);
-  font-size: var(--text-sm);
-  cursor: pointer;
-}
-
-.link:hover:not(:disabled) {
-  color: var(--accent-hover);
-  text-decoration: underline;
-}
-
-.link:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.link--danger {
-  color: var(--danger);
-}
-
 /* ---------- 空态 ---------- */
 
 .cp__empty {

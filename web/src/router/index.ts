@@ -5,6 +5,7 @@ import HostDetail from '@/pages/HostDetail.vue'
 import Containers from '@/pages/Containers.vue'
 import Images from '@/pages/Images.vue'
 import Compose from '@/pages/Compose.vue'
+import Files from '@/pages/Files.vue'
 import DesignTokens from '@/pages/DesignTokens.vue'
 import Login from '@/pages/Login.vue'
 import Setup from '@/pages/Setup.vue'
@@ -64,6 +65,14 @@ const routes: RouteRecordRaw[] = [
         name: 'compose',
         component: Compose,
         meta: { title: 'Compose · DockDeck', requiresAuth: true },
+      },
+      {
+        // S7.6 文件页：全局页 + 顶部主机切换器（同构）；目录位置进 store（切走回来停原目录），
+        // 编辑态是页面本地 ref。无轮询——文件非实时数据，只留手动刷新。
+        path: 'files',
+        name: 'files',
+        component: Files,
+        meta: { title: '文件 · DockDeck', requiresAuth: true },
       },
       {
         // 设计令牌色卡页：开发期自检用。

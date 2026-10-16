@@ -121,3 +121,36 @@
   border-color: var(--danger);
   filter: brightness(1.1);
 }
+
+/* 表格行内的文字型动作按钮（S7.6 起全站共用）。
+   来源：Containers/Images/Compose 三页各自抄了一份一模一样的 scoped 定义，
+   Files 页还要用第四遍——抽到这里，各页删本地副本。
+   与 .btn 的分工：.btn 是块状按钮（工具栏、对话框底部），.link 是行内轻量
+   动作（每行操作列里的文字按钮），不抢视觉重量。
+   修饰符：--warn（重启等需斟酌的动作）、--danger（删除等破坏性动作）。 */
+.link {
+  padding: 0 var(--space-1);
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.link:hover:not(:disabled) {
+  color: var(--accent-hover);
+  text-decoration: underline;
+}
+
+.link:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.link--warn {
+  color: var(--warning);
+}
+
+.link--danger {
+  color: var(--danger);
+}

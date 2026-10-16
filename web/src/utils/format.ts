@@ -79,3 +79,20 @@ export function formatWhen(unixSec: number | undefined | null): string {
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
+
+/**
+ * RFC3339 时间串 → 本地日期时间（后端 time.Time 的 json 序列化口径，
+ * 如文件管理 mod_time）。与 formatWhen 输出同格式，输入形态不同。
+ */
+export function formatRFC3339(iso: string | undefined | null): string {
+  if (!iso) {
+    return '—'
+  }
+  const t = Date.parse(iso)
+  if (Number.isNaN(t)) {
+    return '—'
+  }
+  const d = new Date(t)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}

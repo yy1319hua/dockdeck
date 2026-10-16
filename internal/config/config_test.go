@@ -15,7 +15,7 @@ func TestLoad_RejectsWildcardBind(t *testing.T) {
 func TestLoad_PLAINTEXTOnlyLoopback(t *testing.T) {
 	c := defaults()
 	c.TLSMode = TLSModeNone
-	c.ListenAddr = "100.64.0.5:8443" // 非回环 + 明文 → 拒
+	c.ListenAddr = "192.0.2.5:8443" // 非回环 + 明文 → 拒
 	if err := c.Validate(); err == nil {
 		t.Fatal("明文非回环应被拒")
 	}
@@ -28,7 +28,7 @@ func TestLoad_PLAINTEXTOnlyLoopback(t *testing.T) {
 func TestLoad_SelfSignedTailnetOK(t *testing.T) {
 	c := defaults()
 	c.TLSMode = TLSModeSelf
-	c.ListenAddr = "100.64.0.5:8443"
+	c.ListenAddr = "192.0.2.5:8443"
 	if err := c.Validate(); err != nil {
 		t.Fatalf("自签 + tailnet IP 应允许: %v", err)
 	}

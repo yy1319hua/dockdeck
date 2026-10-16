@@ -41,9 +41,9 @@ func TestLoadAgent_RejectsWildcardBind(t *testing.T) {
 }
 
 func TestLoadAgent_TLSNoneRequiresLoopback(t *testing.T) {
-	withIfaces(t, map[string][]net.IP{"tailscale0": {net.ParseIP("100.64.0.2")}})
+	withIfaces(t, map[string][]net.IP{"tailscale0": {net.ParseIP("192.0.2.2")}})
 	t.Setenv("DD_AGENT_TOKEN", "tok")
-	if _, err := LoadAgent([]string{"-listen", "100.64.0.2:9527", "-tls", "none"}); err == nil {
+	if _, err := LoadAgent([]string{"-listen", "192.0.2.2:9527", "-tls", "none"}); err == nil {
 		t.Fatal("明文模式绑定非回环应被拒绝")
 	}
 	// 回环 + none 放行。
@@ -68,13 +68,13 @@ func TestLoadAgent_AllowsLoopbackEvenWithoutIface(t *testing.T) {
 }
 
 func TestLoadAgent_AllowsListedInterface(t *testing.T) {
-	withIfaces(t, map[string][]net.IP{"tailscale0": {net.ParseIP("100.64.0.2")}})
+	withIfaces(t, map[string][]net.IP{"tailscale0": {net.ParseIP("192.0.2.2")}})
 	t.Setenv("DD_AGENT_TOKEN", "tok")
-	c, err := LoadAgent([]string{"-listen", "100.64.0.2:9527"})
+	c, err := LoadAgent([]string{"-listen", "192.0.2.2:9527"})
 	if err != nil {
 		t.Fatalf("白名单网卡上的地址应放行，got %v", err)
 	}
-	if c.ListenAddr != "100.64.0.2:9527" {
+	if c.ListenAddr != "192.0.2.2:9527" {
 		t.Errorf("ListenAddr = %q", c.ListenAddr)
 	}
 }
@@ -101,7 +101,7 @@ func TestLoadAgent_AllowsExtraCIDR(t *testing.T) {
 }
 
 func TestLoadAgent_RejectsForeignAddress(t *testing.T) {
-	withIfaces(t, map[string][]net.IP{"tailscale0": {net.ParseIP("100.64.0.2")}})
+	withIfaces(t, map[string][]net.IP{"tailscale0": {net.ParseIP("192.0.2.2")}})
 	t.Setenv("DD_AGENT_TOKEN", "tok")
 	_, err := LoadAgent([]string{"-listen", "203.0.113.9:9527"})
 	if err == nil {
@@ -144,14 +144,14 @@ func TestLoadAgent_TokenFromFile(t *testing.T) {
 }
 
 func TestLoadAgent_EnvOverridesDefaults(t *testing.T) {
-	withIfaces(t, map[string][]net.IP{"tailscale0": {net.ParseIP("100.64.0.2")}})
+	withIfaces(t, map[string][]net.IP{"tailscale0": {net.ParseIP("192.0.2.2")}})
 	t.Setenv("DD_AGENT_TOKEN", "env-token")
-	t.Setenv("DD_AGENT_LISTEN", "100.64.0.2:9527")
+	t.Setenv("DD_AGENT_LISTEN", "192.0.2.2:9527")
 	c, err := LoadAgent(nil)
 	if err != nil {
 		t.Fatalf("环境变量配置应可用，got %v", err)
 	}
-	if c.Token != "env-token" || c.ListenAddr != "100.64.0.2:9527" {
+	if c.Token != "env-token" || c.ListenAddr != "192.0.2.2:9527" {
 		t.Errorf("got token=%q addr=%q", c.Token, c.ListenAddr)
 	}
 	if c.TLSMode != TLSModeSelf {
@@ -160,14 +160,14 @@ func TestLoadAgent_EnvOverridesDefaults(t *testing.T) {
 }
 
 func TestSplitHostPort(t *testing.T) {
-	host, port, err := SplitHostPort("100.64.0.2:9527")
-	if err != nil || host != "100.64.0.2" || port != 9527 {
+	host, port, err := SplitHostPort("192.0.2.2:9527")
+	if err != nil || host != "192.0.2.2" || port != 9527 {
 		t.Errorf("got %q %d %v", host, port, err)
 	}
-	if _, _, err := SplitHostPort("100.64.0.2"); err == nil {
+	if _, _, err := SplitHostPort("192.0.2.2"); err == nil {
 		t.Error("缺端口应报错")
 	}
-	if _, _, err := SplitHostPort("100.64.0.2:notaport"); err == nil {
+	if _, _, err := SplitHostPort("192.0.2.2:notaport"); err == nil {
 		t.Error("非数字端口应报错")
 	}
 }

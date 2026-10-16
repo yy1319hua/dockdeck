@@ -44,7 +44,7 @@ func seedServer(t *testing.T, s *Store, name, token string, enabled bool) int64 
 	}
 	res, err := s.DB.Exec(
 		`INSERT INTO servers(name,base_url,token_cipher,enabled) VALUES(?,?,?,?)`,
-		name, "https://100.64.0.1:9527", ct, on,
+		name, "https://192.0.2.1:9527", ct, on,
 	)
 	if err != nil {
 		t.Fatalf("insert server: %v", err)
@@ -67,7 +67,7 @@ func TestServerConn_RoundTrip(t *testing.T) {
 	if c.ID != id || c.Name != "srv-a" {
 		t.Errorf("id/name = %d/%q，期望 %d/%q", c.ID, c.Name, id, "srv-a")
 	}
-	if c.BaseURL != "https://100.64.0.1:9527" {
+	if c.BaseURL != "https://192.0.2.1:9527" {
 		t.Errorf("base_url = %q", c.BaseURL)
 	}
 	if c.Token != "agent-token-xyz" {

@@ -96,6 +96,8 @@ Agent 启动时校验绑定地址属于 tailscale0，否则拒绝启动（`--all
   模板变量名与声明的 path 参数名必须一致——路由侧仍是 `{ref...}`（要容纳含 `/` 的引用）。
 - 版本：`openapi: 3.0.3`（App 侧工具链兼容性最稳）。
 - 鉴权声明：`securitySchemes` 提供 `cookieAuth` 与 `bearerAuth` 两种。
+- **使用指南 `docs/API.md`（S8.3）**：面向 App / 脚本 / 自动化的「怎么用」——两套身份与鉴权矩阵、信封与错误码全表、`X-DD-Request-Id` 语义（审计关联，非执行级去重）、Token 创建/撤销全流程、六个 scope 的端点归属、跨端点约定与踩坑清单、curl 与 TypeScript 客户端示例。**分工**：契约本体是 spec（端点 / 参数 / 响应码以 spec 为准），API.md 与 spec 冲突时以 spec 为准并视为 bug。文档与 spec / 登记表的一致性由 `<工作区>/tools/verify-api-doc.py`（**不进 git**，工作区工具）机械核对：登记表↔spec 逐条、六个 scope 端点归属、47 条示例的路径/方法/查询参数。
+- **已知缺口（未修，另立小项）**：`DELETE /servers/{id}/containers/{cid}` 运行时强制 `confirm`（值须等于目标 id 或名字，否则 400 `bad_request`；兼作防误删护栏并与保护名单构成双闸门），但该参数未登记在登记表 `Desc`/`Params`、spec 里也没有。修它要改 `cmd/hub/main.go` 并重新生成产物（白名单外，需 plan 令牌）。`docs/API.md` 已如实记录。
 - UI 与 App 共用端点集，不为 App 另开一套路径。
 
 ## HTTP 契约

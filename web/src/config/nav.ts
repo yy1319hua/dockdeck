@@ -19,7 +19,7 @@ export const navItems: NavItem[] = [
   // 从总览卡片进入；此项保持置灰，不做假链接。
   { label: '主机详情', icon: 'host' },
   { label: '容器', icon: 'container', to: 'containers' },
-  { label: '镜像', icon: 'image' },
+  { label: '镜像', icon: 'image', to: 'images' },
   { label: 'Compose', icon: 'compose' },
   { label: '文件', icon: 'files' },
   { label: '审计', icon: 'audit' },

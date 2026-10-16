@@ -3,6 +3,7 @@ import AppShell from '@/components/layout/AppShell.vue'
 import Overview from '@/pages/Overview.vue'
 import HostDetail from '@/pages/HostDetail.vue'
 import Containers from '@/pages/Containers.vue'
+import Images from '@/pages/Images.vue'
 import DesignTokens from '@/pages/DesignTokens.vue'
 import Login from '@/pages/Login.vue'
 import Setup from '@/pages/Setup.vue'
@@ -48,6 +49,13 @@ const routes: RouteRecordRaw[] = [
         name: 'containers',
         component: Containers,
         meta: { title: '容器 · DockDeck', requiresAuth: true },
+      },
+      {
+        // S7.4 镜像页：全局页 + 顶部主机切换器（与容器页同构，用户拍板）。
+        path: 'images',
+        name: 'images',
+        component: Images,
+        meta: { title: '镜像 · DockDeck', requiresAuth: true },
       },
       {
         // 设计令牌色卡页：开发期自检用。

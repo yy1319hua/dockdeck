@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -335,20 +336,55 @@ func (c *ComposeClient) Diff(ctx context.Context, file string, content string) (
 	return diff.Unified(cur, content), nil
 }
 
-// WriteFile 写前把当前内容备份为 <file>.bak.<RFC3339>，再覆盖写入 content，
+// WriteFile 写前把当前内容备份为 <file>.bak.<定宽奈秒时间戳>，再覆盖写入 content，
 // 返回备份文件路径供用户回滚。备份先落盘成功才动原文件——任一失败即中止，
 // 不给"原文件已改但无备份"留口子（对应红线「备份优先于变更」）。
+//
+// 备份名的时间戳格式见 backupTimeLayout（compose_backup.go）：定宽奈秒 +
+// writeBackupExclusive 的 O_EXCL，保证同名不覆盖。写成功后跑一次轮转
+// （rotateComposeBackups），把备份数压回 maxComposeBackups 以内。
 func (c *ComposeClient) WriteFile(ctx context.Context, file string, content string) (string, error) {
 	cur, err := c.ReadFile(ctx, file)
 	if err != nil {
 		return "", err
 	}
-	backup := file + ".bak." + time.Now().Format(time.RFC3339)
-	if err := os.WriteFile(backup, []byte(cur), 0o644); err != nil {
+	backup, err := writeBackupExclusive(file+".bak."+time.Now().Format(backupTimeLayout), []byte(cur))
+	if err != nil {
 		return "", fmt.Errorf("dockercli: 备份 compose 文件失败: %w", err)
 	}
 	if err := os.WriteFile(file, []byte(content), 0o644); err != nil {
 		return "", fmt.Errorf("dockercli: 写入 compose 文件失败: %w", err)
 	}
+	// 轮转放在写入成功之后：只在前一次完整成功的基础上做清理，失败不轮转。
+	// 轮转本身尽力而为（见其注释），删不掉也不该让已成功的写入报错。
+	rotateComposeBackups(file)
 	return backup, nil
+}
+
+// writeBackupExclusive 以 O_CREATE|O_EXCL 原子落一份新备份：目标已存在则返回
+// ErrExist，由本函数自动换 <base>.N 后缀重试（N 有上限，防病态无限循环），
+// 返回实际落盘的名字。
+//
+// 为什么用 O_EXCL 而不是「先查存在、再 os.WriteFile」：后者在查与写之间有
+// 窗口，且 time.RFC3339 是秒级——同一秒两次写（或粗时钟主机上奈秒都撞）会
+// 算出同一个名，后一次直接清空重写前一份，用户静默丢一个备份。O_EXCL 把
+// 「绝不覆盖既有备份」变成内核保证，不依赖时钟精度：备份是回滚点，被静默
+// 覆盖等于偷走用户一条退路（S7.11 红线「备份优先于变更」）。
+func writeBackupExclusive(base string, data []byte) (string, error) {
+	name := base
+	for n := 1; n <= 1000; n++ {
+		f, err := os.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		if err == nil {
+			if _, werr := f.Write(data); werr != nil {
+				f.Close()
+				return "", werr
+			}
+			return name, f.Close()
+		}
+		if !errors.Is(err, os.ErrExist) {
+			return "", err
+		}
+		name = fmt.Sprintf("%s.%d", base, n)
+	}
+	return "", fmt.Errorf("dockercli: 备份名冲突过多: %s", base)
 }

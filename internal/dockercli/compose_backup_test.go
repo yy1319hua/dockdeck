@@ -4,6 +4,7 @@ package dockercli
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -152,5 +153,203 @@ func TestComposeRestoreBackup(t *testing.T) {
 	// 恢复用的那份备份仍在（读备份不消耗备份）。
 	if _, err := os.ReadFile(filepath.Join(dir, pick)); err != nil {
 		t.Errorf("恢复用的备份不应被挪走: %v", err)
+	}
+}
+
+// TestWriteBackupExclusive 验证「同名不覆盖」是内核保证，不靠时钟精度：目标
+// 已存在时自动换 .N 后缀，且既有文件内容一个字节都不能被动。旧实现用
+// os.WriteFile，撞名即清空重写——这正是缺陷①的根。
+func TestWriteBackupExclusive(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "docker-compose.yml.bak.2026-01-01T00:00:00.000000000+08:00")
+
+	got, err := writeBackupExclusive(base, []byte("first"))
+	if err != nil {
+		t.Fatalf("首次写备份: %v", err)
+	}
+	if got != base {
+		t.Errorf("首次应返回原名: got %q, want %q", got, base)
+	}
+
+	got, err = writeBackupExclusive(base, []byte("second"))
+	if err != nil {
+		t.Fatalf("二次写备份: %v", err)
+	}
+	if want := base + ".1"; got != want {
+		t.Errorf("撞名应换后缀: got %q, want %q", got, want)
+	}
+	orig, err := os.ReadFile(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(orig) != "first" {
+		t.Errorf("既有备份被覆盖: %q, want first（O_EXCL 应保证不覆盖）", orig)
+	}
+	suffix, err := os.ReadFile(base + ".1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(suffix) != "second" {
+		t.Errorf(".1 内容 = %q, want second", suffix)
+	}
+
+	got, err = writeBackupExclusive(base, []byte("third"))
+	if err != nil {
+		t.Fatalf("三次写备份: %v", err)
+	}
+	if want := base + ".2"; got != want {
+		t.Errorf("连续撞名应递增: got %q, want %q", got, want)
+	}
+}
+
+// TestWriteFileBackupNoOverwrite 是缺陷①的端到端回归：连续两次写入绝不能只
+// 留下一份备份。旧实现秒级 RFC3339，同秒两次写算出同名、后一次清空重写，用户
+// 静默丢一份；新实现靠 O_EXCL，无论时间戳是否相同都落两份。
+func TestWriteFileBackupNoOverwrite(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "docker-compose.yml")
+	if err := os.WriteFile(file, []byte("v0"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := NewComposeClient(nil)
+
+	if _, err := c.WriteFile(context.Background(), file, "v1"); err != nil {
+		t.Fatalf("第一次写入: %v", err)
+	}
+	if _, err := c.WriteFile(context.Background(), file, "v2"); err != nil {
+		t.Fatalf("第二次写入: %v", err)
+	}
+
+	names, err := backupNames(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(names) != 2 {
+		t.Fatalf("两次写入应留两份备份，实际 %d 份: %v（同秒覆盖回归）", len(names), names)
+	}
+	// 两份内容分别是写入前的 v0 与 v1，顺序无关，但都要在。
+	seen := map[string]bool{}
+	for _, n := range names {
+		b, err := os.ReadFile(filepath.Join(dir, n))
+		if err != nil {
+			t.Fatal(err)
+		}
+		seen[string(b)] = true
+	}
+	if !seen["v0"] || !seen["v1"] {
+		t.Errorf("两份备份内容应为 v0 与 v1，实际 %v（少一份即静默丢失）", seen)
+	}
+}
+
+// TestBackupNamesMixedFormatOrder 验证新旧备份格式混存时顺序仍对：清单与轮转
+// 都靠「文件名倒字典序＝时间倒序」，混排一旦乱就会列错/删错。
+func TestBackupNamesMixedFormatOrder(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "docker-compose.yml")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	names := []string{
+		"docker-compose.yml.bak.2026-01-01T00:00:00+08:00",           // 旧格式，最早
+		"docker-compose.yml.bak.2026-01-01T00:00:00.000000001+08:00", // 新格式
+		"docker-compose.yml.bak.2026-01-01T00:00:00.000000009+08:00", // 新格式
+		"docker-compose.yml.bak.2026-01-01T00:00:01+08:00",           // 旧格式，最晚
+	}
+	for _, n := range names {
+		if err := os.WriteFile(filepath.Join(dir, n), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// 噪音：别的文件的备份、无关文件、目录形态的同名项——都须被过滤。
+	if err := os.WriteFile(filepath.Join(dir, "other.yml.bak.2026-01-01T00:00:00+08:00"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "docker-compose.yml.bak.2026-01-01T00:00:02+08:00"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := backupNames(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"docker-compose.yml.bak.2026-01-01T00:00:01+08:00",
+		"docker-compose.yml.bak.2026-01-01T00:00:00.000000009+08:00",
+		"docker-compose.yml.bak.2026-01-01T00:00:00.000000001+08:00",
+		"docker-compose.yml.bak.2026-01-01T00:00:00+08:00",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("备份数 = %d, want %d（噪音/目录须被过滤）: %v", len(got), len(want), got)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("第 %d 个 = %q, want %q（新旧格式混排须仍按时间倒序）", i, got[i], w)
+		}
+	}
+}
+
+// TestRotateComposeBackups 验证缺陷②：超过 maxComposeBackups 份时删最旧、留
+// 最新，且绝不碰 compose 文件本身、别的文件的备份、无关文件与目录形态项。
+func TestRotateComposeBackups(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "docker-compose.yml")
+	if err := os.WriteFile(file, []byte("cur"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// 造 maxComposeBackups+5 份，序号越大越新（定宽，字典序＝时间序）。
+	total := maxComposeBackups + 5
+	for i := 1; i <= total; i++ {
+		n := fmt.Sprintf("docker-compose.yml.bak.2026-01-01T00:00:00.%09d+08:00", i)
+		if err := os.WriteFile(filepath.Join(dir, n), []byte("b"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// 噪音：别的文件的备份、无关文件、目录形态的「备份」——都不能被删。
+	if err := os.WriteFile(filepath.Join(dir, "other.yml.bak.2026-01-01T00:00:00.000000001+08:00"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dirBackup := filepath.Join(dir, "docker-compose.yml.bak.2026-01-01T00:00:00.000000000+08:00")
+	if err := os.Mkdir(dirBackup, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	rotateComposeBackups(file)
+
+	names, err := backupNames(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(names) != maxComposeBackups {
+		t.Fatalf("轮转后应剩 %d 份，实际 %d 份", maxComposeBackups, len(names))
+	}
+	for i, n := range names {
+		want := fmt.Sprintf("docker-compose.yml.bak.2026-01-01T00:00:00.%09d+08:00", total-i)
+		if n != want {
+			t.Errorf("第 %d 份 = %q, want %q（须留最新、删最旧）", i, n, want)
+		}
+	}
+	for seq := 1; seq <= total-maxComposeBackups; seq++ {
+		n := fmt.Sprintf("docker-compose.yml.bak.2026-01-01T00:00:00.%09d+08:00", seq)
+		if _, err := os.Lstat(filepath.Join(dir, n)); !os.IsNotExist(err) {
+			t.Errorf("旧备份 %s 应已被轮转删除", n)
+		}
+	}
+	if _, err := os.Stat(file); err != nil {
+		t.Errorf("compose 文件本身被误伤: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "notes.txt")); err != nil {
+		t.Errorf("无关文件被误伤: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "other.yml.bak.2026-01-01T00:00:00.000000001+08:00")); err != nil {
+		t.Errorf("别的文件的备份被误伤: %v", err)
+	}
+	if _, err := os.Stat(dirBackup); err != nil {
+		t.Errorf("目录形态的「备份」被误伤（轮转只删普通文件）: %v", err)
 	}
 }

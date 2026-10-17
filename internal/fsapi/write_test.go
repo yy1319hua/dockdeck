@@ -4,6 +4,7 @@ package fsapi
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -348,5 +349,150 @@ func TestGuard_WriteBackupCollisionKeepsBoth(t *testing.T) {
 	}
 	if got := mustRead(t, filepath.Join(root, "notes.txt")); got != "second\n" {
 		t.Errorf("目标内容 = %q，want second\\n", got)
+	}
+}
+
+// 轮转：超过 maxFileBackups 份后自动删最旧的，保留最新的。
+//
+// 预置的 25 份时间戳全部早于运行时刻（2020 年），backup() 新生成的
+// 那份必然排在最前，删除集合完全确定、不赌时钟。其中掺了 5 份
+// 定宽奈秒新格式，与秒级旧格式混排：整秒相同时旧格式（'+' 结尾）
+// 应排在新格式（'.' 结尾）之前——更早生成的排更前。
+func TestGuard_WriteBackupRotation(t *testing.T) {
+	root := testTree(t)
+	g := newGuard(t, []string{root}, 3)
+
+	// 20 份秒级旧格式 + 5 份定宽奈秒新格式。
+	for i := 0; i < 20; i++ {
+		name := fmt.Sprintf("notes.txt.bak.2020-01-01T00:00:%02d+08:00", i)
+		if err := os.WriteFile(filepath.Join(root, name), []byte("old"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 1; i <= 5; i++ {
+		name := fmt.Sprintf("notes.txt.bak.2020-01-01T00:00:%02d.%09d+08:00", i-1, i)
+		if err := os.WriteFile(filepath.Join(root, name), []byte("old"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, err := g.Write(0, "notes.txt", strings.NewReader("rotated\n")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	backups := backupsOf(t, root, "notes.txt")
+	if len(backups) != maxFileBackups {
+		t.Fatalf("备份份数 = %d，want %d：%v", len(backups), maxFileBackups, backups)
+	}
+	// 字典序最小的 6 份应被删掉：00:00/00:01/00:02 的旧新各一份。
+	for _, gone := range []string{
+		"notes.txt.bak.2020-01-01T00:00:00+08:00",
+		"notes.txt.bak.2020-01-01T00:00:00.000000001+08:00",
+		"notes.txt.bak.2020-01-01T00:00:01+08:00",
+		"notes.txt.bak.2020-01-01T00:00:01.000000002+08:00",
+		"notes.txt.bak.2020-01-01T00:00:02+08:00",
+		"notes.txt.bak.2020-01-01T00:00:02.000000003+08:00",
+	} {
+		if _, err := os.Lstat(filepath.Join(root, gone)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("最旧的 %s 应被轮转删除，got err=%v", gone, err)
+		}
+	}
+	// 留下的应含第 3 秒起的旧格式与最后两份新格式。
+	for _, keep := range []string{
+		"notes.txt.bak.2020-01-01T00:00:03+08:00",
+		"notes.txt.bak.2020-01-01T00:00:19+08:00",
+		"notes.txt.bak.2020-01-01T00:00:03.000000004+08:00",
+		"notes.txt.bak.2020-01-01T00:00:04.000000005+08:00",
+	} {
+		if _, err := os.Lstat(filepath.Join(root, keep)); err != nil {
+			t.Errorf("较新的 %s 应保留，got err=%v", keep, err)
+		}
+	}
+	if got := mustRead(t, filepath.Join(root, "notes.txt")); got != "rotated\n" {
+		t.Errorf("目标内容 = %q，want rotated\\n", got)
+	}
+}
+
+// 轮转不误伤：撞进 <base>.bak. 前缀的目录/软链形态项，以及别文件的
+// 备份、原文件本身，都不在删除范围内。非 regular 项被跳过时还会
+// 占掉一个名额——宁肯少删一个，也不删错。
+func TestGuard_WriteBackupRotationSkipsNonRegular(t *testing.T) {
+	root := testTree(t)
+	g := newGuard(t, []string{root}, 3)
+
+	// 20 份整，不超限；外加一个目录和一个软链，名字都排在所有
+	// 备份之前（'!'/'0' < '2'），一进待删区就会被 IsRegular 拦下。
+	for i := 0; i < maxFileBackups; i++ {
+		name := fmt.Sprintf("notes.txt.bak.2020-01-01T00:00:%02d+08:00", i)
+		if err := os.WriteFile(filepath.Join(root, name), []byte("old"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Mkdir(filepath.Join(root, "notes.txt.bak.!dir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("other.txt", filepath.Join(root, "notes.txt.bak.0link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "other.txt"), []byte("other\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	otherBackup := "other.txt.bak.2020-01-01T00:00:00+08:00"
+	if err := os.WriteFile(filepath.Join(root, otherBackup), []byte("other-old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := g.Write(0, "notes.txt", strings.NewReader("kept\n")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	// 23 个前缀项（20 预置 + 2 非 regular + 1 新生成）超限 3 个，
+	// 待删的是字典序最旧 3 个：00:00:00 备份（regular，真删）+
+	// 目录/软链（跳过）。即 regular 备份最终保留 20 份——跳过非
+	// regular 项但名额照占，与「只对 regular 计数」等价。
+	all := backupsOf(t, root, "notes.txt")
+	if len(all) != 22 {
+		t.Errorf("前缀项 = %d，want 22：%v", len(all), all)
+	}
+	if _, err := os.Lstat(filepath.Join(root, "notes.txt.bak.2020-01-01T00:00:00+08:00")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("00:00:00 是最旧项之一，应被删，got err=%v", err)
+	}
+	for _, keep := range []string{
+		"notes.txt.bak.!dir",
+		"notes.txt.bak.0link",
+		"notes.txt.bak.2020-01-01T00:00:01+08:00",
+		"notes.txt.bak.2020-01-01T00:00:19+08:00",
+		"notes.txt",
+		otherBackup,
+	} {
+		if _, err := os.Lstat(filepath.Join(root, keep)); err != nil {
+			t.Errorf("%s 不该被轮转碰掉，got err=%v", keep, err)
+		}
+	}
+}
+
+// 并发覆盖写同一文件：选名与占名是同一个 O_EXCL 调用，没有
+// 「检查后又被抢占」的窗口——每个 goroutine 都该成功，且备份
+// 一份不少（竞态撞名自动换 .N，不是失败）。
+func TestGuard_WriteBackupConcurrentKeepsAll(t *testing.T) {
+	root := testTree(t)
+	g := newGuard(t, []string{root}, 3)
+
+	const n = 8
+	errs := make(chan error, n)
+	for i := 0; i < n; i++ {
+		go func(i int) {
+			_, err := g.Write(0, "notes.txt", strings.NewReader(fmt.Sprintf("v%d\n", i)))
+			errs <- err
+		}(i)
+	}
+	for i := 0; i < n; i++ {
+		if err := <-errs; err != nil {
+			t.Errorf("并发 Write #%d: %v", i, err)
+		}
+	}
+	backups := backupsOf(t, root, "notes.txt")
+	if len(backups) != n {
+		t.Errorf("备份份数 = %d，want %d：%v", len(backups), n, backups)
 	}
 }

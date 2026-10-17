@@ -9,6 +9,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/yy1319hua/dockdeck/internal/protocol"
@@ -25,6 +27,19 @@ const dirMode = 0o755
 
 // uploadTempPattern 是流式写入用的临时文件名（与目标同目录，便于 rename）。
 const uploadTempPattern = ".dd-upload-*"
+
+// backupTimeLayout 是备份文件名里的时间戳：定宽到纳秒（9 位小数）。
+//
+// 定宽是关键：轮转依赖「文件名字典序 = 备份时间先后序」，
+// RFC3339Nano 小数位变长会把这个次序打乱。纳秒精度把同秒撞名
+// 压到几乎为零，剩下的竞态由 O_EXCL + .N 后缀兜底。
+const backupTimeLayout = "2006-01-02T15:04:05.000000000Z07:00"
+
+// maxFileBackups 是单个文件的备份保留份数，与 dockercli compose 备份
+// 轮转口径一致（20 份）：远超手工回滚所需，又不至于让「每次保存
+// 留一份」无上限地堆积。用户侧仍无删除入口（S5.4 口径）——
+// 系统侧自动轮转是对「只增不减」的唯一兜底。
+const maxFileBackups = 20
 
 // Write 流式写入文件内容。
 //
@@ -104,10 +119,15 @@ func (g *Guard) Write(rootIndex int, rel string, content io.Reader) (protocol.Fi
 	}, nil
 }
 
-// backup 把当前内容另存为 <abs>.bak.<RFC3339>，返回备份的绝对路径。
+// backup 把当前内容另存为 <abs>.bak.<定宽奈秒时间戳>，返回备份的绝对路径。
 //
-// 同一秒内的两次写入会撞名，此时追加 .1/.2…：备份的价值是「还能回去」，
-// 覆盖掉上一份备份就失去意义了。
+// 两个刻意的设计：
+//  1. 选名与占名是同一个 O_CREATE|O_EXCL 调用——「绝不覆盖既有备份」
+//     由内核保证，同一纳秒的竞态撞名自动换 .1/.2…，
+//     不存在「Lstat 检查后又被抢占」的窗口（旧实现的漏洞：
+//     两个并发备份会都通过检查，然后后一个直接 EEXIST 失败，
+//     整次 Write 报错，而不是换名重来）；
+//  2. 写成功后轮转：只保留最近 maxFileBackups 份，更旧的自动删。
 func (g *Guard) backup(abs string) (string, error) {
 	src, err := os.Open(abs)
 	if err != nil {
@@ -115,34 +135,63 @@ func (g *Guard) backup(abs string) (string, error) {
 	}
 	defer src.Close()
 
-	base := abs + ".bak." + time.Now().Format(time.RFC3339)
+	base := abs + ".bak." + time.Now().Format(backupTimeLayout)
 	name := base
-	for i := 1; ; i++ {
-		if _, err := os.Lstat(name); errors.Is(err, fs.ErrNotExist) {
-			break
-		} else if err != nil {
+	for n := 1; n <= 1000; n++ {
+		dst, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, fileMode)
+		if err == nil {
+			if _, cerr := io.Copy(dst, src); cerr != nil {
+				dst.Close()
+				_ = os.Remove(name)
+				return "", cerr
+			}
+			if cerr := dst.Close(); cerr != nil {
+				_ = os.Remove(name)
+				return "", cerr
+			}
+			rotateFileBackups(abs)
+			return name, nil
+		}
+		if !errors.Is(err, os.ErrExist) {
 			return "", err
 		}
-		name = fmt.Sprintf("%s.%d", base, i)
-		if i > 1000 {
-			return "", fmt.Errorf("fsapi: 备份文件名重名过多: %s", base)
+		name = fmt.Sprintf("%s.%d", base, n)
+	}
+	return "", fmt.Errorf("fsapi: 备份文件名重名过多: %s", base)
+}
+
+// rotateFileBackups 轮转 abs 的备份：按名字排序后只保留最近
+// maxFileBackups 份，更旧的删掉。
+//
+// 只删普通文件：撞进 <base>.bak. 前缀的目录/软链形态项跳过不删，
+// 但名额照占——等价于「regular 备份最终保留 maxFileBackups 份」。
+// 删错了没有后悔药，宁肯跳过。
+func rotateFileBackups(abs string) {
+	dir := filepath.Dir(abs)
+	items, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	prefix := filepath.Base(abs) + ".bak."
+	names := make([]string, 0, len(items))
+	for _, it := range items {
+		if strings.HasPrefix(it.Name(), prefix) {
+			names = append(names, it.Name())
 		}
 	}
-
-	dst, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, fileMode)
-	if err != nil {
-		return "", err
+	if len(names) <= maxFileBackups {
+		return
 	}
-	if _, err := io.Copy(dst, src); err != nil {
-		dst.Close()
-		_ = os.Remove(name)
-		return "", err
+	// 倒序：最新在前，[maxFileBackups:] 就是待删的旧账。
+	sort.Sort(sort.Reverse(sort.StringSlice(names)))
+	for _, name := range names[maxFileBackups:] {
+		p := filepath.Join(dir, name)
+		info, err := os.Lstat(p)
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		_ = os.Remove(p)
 	}
-	if err := dst.Close(); err != nil {
-		_ = os.Remove(name)
-		return "", err
-	}
-	return name, nil
 }
 
 // Mkdir 新建目录，只建一级（父目录必须已存在）。

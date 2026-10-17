@@ -32,12 +32,14 @@ Hub 与 Agent 是两个独立二进制，同一 module、共享 `internal/protoc
 
 ## 网络与暴露（核心约束）
 
-宿主机有公网/局域网接口，**不能绑 0.0.0.0，不能改防火墙**。做法：容器发布端口时绑定到
-具体 IP（tailscale 网卡或内网网卡），`docker-proxy` 只在该地址监听，其它接口上根本没有监听。
+宿主机有公网/局域网接口，**不能绑 0.0.0.0，不能改防火墙**。容器以 `network_mode: host` 部署（模板见 `deploy/docker-compose.yml`），由**应用自己**
+把监听绑到具体 IP（tailscale 网卡或内网网卡）——`config.Validate` 对 0.0.0.0 一律
+拒绝；桥接网络里容器 IP 运行时分配、写不进启动参数，故不走 `-p IP:port` 发布
+（docker-proxy）而用 host 网络直绑：
 
 ```
--p <BIND_IP>（tailscale 网卡 IP 或内网 IP）:8443:8443     # Hub
--p <TAILNET_IP>:9527:9527     # Agent
+--listen <BIND_IP>:8443     # Hub（也可用 DD_LISTEN 环境变量）
+--listen <BIND_IP>:9527     # Agent（--bind-ifaces tailscale0 校验归属）
 ```
 
 `BIND_IP` 由部署脚本现取（`tailscale ip -4` 或指定内网 IP），写进 `.env`，不硬编码进仓库。

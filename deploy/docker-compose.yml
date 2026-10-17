@@ -1,0 +1,103 @@
+# ============================================================================
+# DockDeck 部署模板（S9.3）——Hub / Agent 双角色，按 profile 择一启动。
+#
+#   Hub   控制面：Web UI、鉴权、审计、聚合。数据落命名卷，不碰 docker.sock。
+#   Agent 每台被管主机一个：代理本机 Docker Engine，socket 以 :ro 挂载。
+#
+# 用法（在 deploy/ 目录下）：
+#   cp .env.example .env            # 填 DD_BIND_IP（两个角色都必填）
+#   Agent 机另备：install -m 600 /dev/null secrets/agent.token 后写入令牌
+#   docker compose --profile hub   up -d     # Hub 机
+#   docker compose --profile agent up -d     # Agent 机
+#   docker compose --profile hub --profile agent up -d   # 单机双角色
+#   docker compose --profile hub --profile agent config   # 自检（渲染+插值，不需守护进程）
+#
+# 设计要点与取舍（详见 docs/ARCHITECTURE.md「网络与暴露」）：
+#   * network_mode: host + 应用层绑 IP——Hub 禁绑 0.0.0.0（config.Validate），
+#     桥接网络里容器 IP 运行时分配、写不进启动参数；host 下 tailscale0 直接
+#     可见，暴露面仍由应用自己的绑定白名单把守。故无 ports: 发布（host 模式下
+#     ports 本就被忽略），端口绑定由 --listen ${DD_BIND_IP}:<端口> 完成。
+#   * Agent 的 token 走 --token-file 文件挂载而非环境变量：docker inspect
+#     看不到挂载文件内容；文件权限 600，路径在 .gitignore 内。
+#   * socket 只读（:ro）；Agent 以 root 跑（socket 属主 root:docker），
+#     边界 = :ro + 自我保护名单；Hub 非 root（uid 10000）且不挂 socket。
+#   * 不带 --profile 启动 = 什么都不起（防误起）；容器名固定，Agent 的
+#     --self-container 与 container_name 联动，「不动自己」跨重建稳定。
+# ============================================================================
+
+name: dockdeck
+
+# 共享日志策略：json-file 轮转，10m × 3 份（容器日志不加限会把宿主磁盘吃满）
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  hub:
+    image: "${DD_HUB_IMAGE:-ghcr.io/yy1319hua/dockdeck-hub:latest}"
+    container_name: dockdeck-hub
+    profiles: ["hub"]
+    network_mode: host
+    environment:
+      # 监听地址：必须具体 IP（tailscale / 内网 / 回环），0.0.0.0 会被应用拒绝。
+      # 不填 compose 直接报错，不让错误的配置活到容器里。
+      DD_LISTEN: "${DD_BIND_IP:?必填：在 deploy/.env 设置 DD_BIND_IP（tailscale ip -4 或内网具体 IP，hub/agent 两个角色都用它）}:8443"
+      # TLS：self 自签（指纹见设置页）| none 明文（仅允许回环，反代场景）
+      DD_TLS_MODE: "${DD_HUB_TLS_MODE:-self}"
+    volumes:
+      # SQLite、主密钥、自签证书、整库备份都在这一个卷里；命名卷而非绑定
+      # 宿目录——模板要可移植，也避免数据/密钥意外落进出仓库的路径。
+      - dockdeck-hub-data:/data
+    restart: unless-stopped
+    logging: *logging
+
+  agent:
+    image: "${DD_AGENT_IMAGE:-ghcr.io/yy1319hua/dockdeck-agent:latest}"
+    container_name: dockdeck-agent
+    profiles: ["agent"]
+    network_mode: host
+    # command 覆盖镜像 CMD（exec 形式整体替换），故把镜像 CMD 的
+    # --docker-socket 一并列出；--listen 无对应环境变量，只能走旗标。
+    command:
+      - --listen
+      - "${DD_BIND_IP:?必填：在 deploy/.env 设置 DD_BIND_IP（tailscale ip -4 或内网具体 IP，hub/agent 两个角色都用它）}:9527"
+      - --docker-socket
+      - /var/run/docker.sock
+      # 与 container_name 联动：hostname 默认是容器短 ID（重建即变），
+      # 固定名才能让 guard 的「不碰自身容器」跨重建稳定（双向前缀匹配）。
+      - --self-container
+      - dockdeck-agent
+      # 令牌从文件读：内容不进环境变量（docker inspect 不可见）、不进命令行。
+      - --token-file
+      - /run/secrets/agent.token
+    volumes:
+      # 只读挂载 Engine socket：Agent 只需要读+发命令，:ro 是第二道边界
+      # （第一道是应用侧自我保护名单）。Hub 不挂 socket。
+      # create_host_path: false——宿主机没有 socket 就启动失败，而不是被
+      # docker 悄悄建个目录/空文件顶替（那是把配置错误藏成运行期怪事）。
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+        read_only: true
+        bind:
+          create_host_path: false
+      # 宿主机 ./secrets/agent.token（相对本文件目录，权限 600）→ 容器内只读。
+      # 同样不代建：文件没备好就当场失败（见 README 第 2 步）。
+      - type: bind
+        source: ./secrets/agent.token
+        target: /run/secrets/agent.token
+        read_only: true
+        bind:
+          create_host_path: false
+    restart: unless-stopped
+    logging: *logging
+    # 可选：启动时向 Hub 自注册纳管（S5.8）。取消下面 environment 注释并在
+    # .env 填 DD_HUB_URL / DD_AGENT_JOIN_SECRET；不填 = 不自注册。
+    # environment:
+    #   DD_HUB_URL: "${DD_HUB_URL}"
+    #   DD_AGENT_JOIN_SECRET: "${DD_AGENT_JOIN_SECRET}"
+
+volumes:
+  dockdeck-hub-data:

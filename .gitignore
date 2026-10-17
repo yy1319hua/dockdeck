@@ -57,3 +57,7 @@ PROGRESS.md
 .DS_Store
 nohup.out
 *.log
+
+# Compose 部署模板的本地凭据：deploy/.env 由上面的 .env 规则覆盖，
+# 这里是 Agent 令牌文件的挂载源目录（compose 从 ./secrets 绑定挂载）。
+deploy/secrets/

@@ -6,6 +6,16 @@
 
 ## 快速开始
 
+镜像默认 `ghcr.io/yy1319hua/dockdeck-{hub,agent}:latest`，随私有库发布故为**私有镜像**，
+部署宿主机首次拉取前需登录（用有 `read:packages` 的 GitHub PAT）：
+
+```bash
+docker login ghcr.io   # 用户名 = GitHub 用户名，密码 = PAT
+```
+
+镜像由 `.github/workflows/ci.yml` 在打 `v*` tag 时经 GitHub Actions 构建并推送
+（双架构、免 QEMU；tag 名与 `latest` 两个 tag）。
+
 ```bash
 # 1. 环境文件（.env 不入库；.gitignore 已覆盖）
 cp .env.example .env

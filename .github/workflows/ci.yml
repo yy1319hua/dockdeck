@@ -1,0 +1,97 @@
+# DockDeck CI —— 测试门禁 + tag 发布镜像（S9.6）。
+#
+# 设计口径（2026-10-17 立项时定）：
+#   * 触发面分离：push main / PR → 只跑测试门禁（vet + test）；打 v* tag →
+#     先过测试门禁，再构建双架构镜像推 ghcr.io。发布动作只由 tag 触发，
+#     main 每次 push 都构建镜像是浪费（私有库 Actions 2,000 分钟/月额度）。
+#   * 门禁范围：make vet + make test（Go 侧全量）。长行 lint 是工作区工具
+#     （依赖 <工作区> 结构），不进 CI；hadolint 在 S9.4 已本地全绿，镜像
+#     构建前另有 make dist + make verify-dist 产物自检（架构/大小/静态性/
+#     版本注入，负向用例见 tools/verify_dist.py 头注）。
+#   * 镜像 tag：<git tag> + latest 两个（latest 供 compose 默认值直接拉；
+#     需要固定版本时用 tag）。与 deploy/docker-compose.yml 的
+#     DD_HUB_IMAGE/DD_AGENT_IMAGE 默认值（ghcr.io/yy1319hua/dockdeck-
+#     {hub,agent}:latest）对应——改这里记得同步 compose 默认值。
+#   * registry 用 ghcr.io + Actions 自带 GITHUB_TOKEN（permissions:
+#     packages: write），不落任何额外 secret。私有库镜像默认私有，部署
+#     宿主机需 docker login ghcr.io（PAT read:packages）——见
+#     deploy/README.md。
+#   * 多架构免 QEMU：Dockerfile 构建阶段全钉 BUILDPLATFORM、Go 侧
+#     GOARCH=$TARGETARCH 交叉编译，没有「构建期运行目标架构二进制」的
+#     步骤，故不装 docker/setup-qemu-action（理由同 deploy/Dockerfile.hub
+#     头注；万一将来 Dockerfile 加了需要模拟的步骤，把该 action 加回来）。
+#   * GO=go 覆盖：Makefile 默认 GO=/usr/local/go/bin/go 是沙箱口径，
+#     runner 上显式用 PATH 里的 go（setup-go 装的 1.24），避免撞 runner
+#     镜像预装的其他版本。
+#
+# 打 tag 触发发布仍受推送令牌纪律约束：pre-push 对 tag 一律回退 batch
+# （须用户逐次批准），auto 令牌推不了 tag——即「发布必须人按头」。
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: vet + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - run: GO=go make vet
+      - run: GO=go make test
+
+  release:
+    name: build & push images
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      # 发布前产物自检（与 make dist 同源；tag 检出即该 tag 的 commit，
+      # COMMIT 注入串对账天然成立）
+      - run: GO=go make dist
+      - run: GO=go make verify-dist
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: build & push hub
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile.hub
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/yy1319hua/dockdeck-hub:${{ github.ref_name }}
+            ghcr.io/yy1319hua/dockdeck-hub:latest
+      - name: build & push agent
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile.agent
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/yy1319hua/dockdeck-agent:${{ github.ref_name }}
+            ghcr.io/yy1319hua/dockdeck-agent:latest

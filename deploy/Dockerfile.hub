@@ -64,7 +64,8 @@ RUN adduser -D -u 10000 dockdeck \
  && mkdir -p /data/secrets \
  && chown -R dockdeck:dockdeck /data
 COPY --from=builder /out/dockdeck-hub /usr/local/bin/dockdeck-hub
-USER dockdeck
+# 数字 UID 而非用户名：宿主 bind mount 场景 /etc/passwd 解析不到名字（hadolint DL3066）
+USER 10000
 # SQLite 主库、自签证书、主密钥、整库备份（S7.8）都落 /data
 VOLUME /data
 EXPOSE 8443

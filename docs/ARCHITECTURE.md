@@ -382,9 +382,16 @@ Vue 3 + Vite + TS，`vue-router` + `pinia`，图表 uPlot，无重型 UI 框架�
 
 ## 构建与交付
 
-`make build` 产出 `linux/arm64` 与 `linux/amd64` 各一套 hub+agent，加 `docker/Dockerfile.hub`、
-`Dockerfile.agent`（多阶段、`FROM --platform=$BUILDPLATFORM` 交叉编译）。
-镜像 `--platform linux/arm64,linux/amd64` buildx 推送。开发机沙箱无 docker，
+`make dist` 产出 `linux/arm64` 与 `linux/amd64` 各一套 hub+agent（`bin/dockdeck-<cmd>-<os>-<arch>`；
+当前平台单编走 `make hub` / `make agent`），Dockerfile 在 `deploy/Dockerfile.hub`、`deploy/Dockerfile.agent`
+（多阶段、`FROM --platform=$BUILDPLATFORM` 交叉编译，见 S9.2）。镜像 `--platform linux/arm64,linux/amd64` buildx 推送。
+
+产物校验 `make verify-dist`（`tools/verify_dist.py`，stdlib-only 机读 ELF 头，不依赖 file/binutils），
+每产物五项：**架构**（e_machine 与文件名对账，挡交叉编译串台）、**静态性**（无 PT_INTERP，
+是构建侧 `CGO_ENABLED=0` + `netgo`/`osusergo` 的二进制侧印证；静态 PIE 同样无 PT_INTERP，予以放行）、
+**大小预算**（hub ≤ 24MiB / agent ≤ 16MiB，当前实际约 2 倍余量，挡依赖回归膨胀）、
+**版本注入**（COMMIT 短串在产物字节内可检——漏 ldflags 时 `internal/version` 回退 unknown/dev，
+运行期无法回嘴自己是哪版）。开发机沙箱无 docker，
 构建验证在 ARM 宿主机上经 SSH 转发其 docker socket 完成；Go 侧用 `httptest` 模拟 Docker Engine API 跑单测。
 
 ## 备份与恢复

@@ -5,6 +5,7 @@ SHELL := /bin/bash
 #   make all / make   # hub + agent，当前平台
 #   make dist         # hub + agent × linux/amd64 + linux/arm64（生产交付矩阵）
 #   make openapi OUT=docs   # 重新生成 docs/openapi.json 与 docs/openapi.yaml
+#   make verify-dist       # dist 后产物校验：架构/大小/静态性/版本注入（tools/verify_dist.py）
 #   make test / vet / clean
 #
 #   GO=... 覆盖 go 二进制路径（沙箱里 go 在 /usr/local/go/bin/go）。
@@ -29,7 +30,7 @@ BIN       := bin
 CMDS      := hub agent
 PLATFORMS := linux/amd64 linux/arm64
 
-.PHONY: all hub agent dist openapi test vet clean info $(CMDS)
+.PHONY: all hub agent dist openapi verify-dist test vet clean info $(CMDS)
 
 all: $(CMDS)
 
@@ -51,6 +52,12 @@ dist:
 	    echo "built: dockdeck-$$cmd-$$os-$$arch"; \
 	  done; \
 	done
+
+# --- 产物校验（dist 之后跑）：架构 / 大小 / 静态性 / 版本注入 ---
+# tools/verify_dist.py：stdlib-only 机读 ELF 头（不依赖 file/binutils）。
+# 检查项与预算见脚本头注；--commit 默认取本文件的 COMMIT（与 dist 同源 ldflags）。
+verify-dist:
+	python3 tools/verify_dist.py --bin $(BIN) --commit $(COMMIT)
 
 # --- 重生成 OpenAPI 产物（同源，与实装同一份路由登记表） ---
 # 必须用「无制品版本的默认 binary」生成：仓库内 docs/openapi.json(yaml) 的 info.version

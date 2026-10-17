@@ -93,11 +93,12 @@ services:
           create_host_path: false
     restart: unless-stopped
     logging: *logging
-    # 可选：启动时向 Hub 自注册纳管（S5.8）。取消下面 environment 注释并在
-    # .env 填 DD_HUB_URL / DD_AGENT_JOIN_SECRET；不填 = 不自注册。
-    # environment:
-    #   DD_HUB_URL: "${DD_HUB_URL}"
-    #   DD_AGENT_JOIN_SECRET: "${DD_AGENT_JOIN_SECRET}"
+    # 启动时向 Hub 自注册纳管（S5.8）：在 .env 填 DD_HUB_URL / DD_AGENT_JOIN_SECRET
+    # 即生效，留空 = 不自注册（应用判空关闭）。给空默认值而非整块注释，是为了让
+    # install-agent.sh 只管写 .env，不必再回来改 compose（S10.1）。
+    environment:
+      DD_HUB_URL: "${DD_HUB_URL:-}"
+      DD_AGENT_JOIN_SECRET: "${DD_AGENT_JOIN_SECRET:-}"
 
 volumes:
   dockdeck-hub-data:

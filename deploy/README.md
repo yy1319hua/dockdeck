@@ -4,7 +4,31 @@
 双角色部署模板：**Hub**（控制面，一台）与 **Agent**（每台被管主机一个）。两者通常
 不在同一台机器；单机双角色（Hub + 本机 Agent）也受支持。
 
-## 快速开始
+## 用安装脚本（推荐）
+
+`install-hub.sh` / `install-agent.sh` 把下面的手工四步收敛成一条命令，可重复执行：
+
+```bash
+# Hub 机
+sudo ./install-hub.sh --bind-ip 100.64.0.1
+
+# 每台 Agent 机（join_secret 在 Hub「添加服务器」里生成，30 分钟内有效）
+sudo ./install-agent.sh --hub-url https://100.64.0.1:8443 --server-name node2
+```
+
+脚本做的事：预检（docker / compose v2 / socket / 端口占用）→ 取绑定 IP（默认
+`tailscale ip -4`）→ 交互式登录 GHCR（`read -s` + `--password-stdin`，token 不进
+命令行也不落盘）→ 拉镜像（失败即停并提示重新登录）→ 写 `.env` 与
+`secrets/agent.token`（均 600）→ `compose up -d` → 端点探活。
+
+探活口径不同：Hub 探 `/api/v1/health`（恒 200，只证明进程与 TLS 起来了）；Agent
+没有免鉴权健康端点，故探 `/api/v1/info` 并**期望 401**——401 恰好证明「端口已听 +
+TLS 已起 + 鉴权生效」，且不必把 token 放上命令行。
+
+在装不了 docker 守护进程的机器上可以只做渲染自检：`./install-hub.sh --check`。
+重跑不会覆盖已有 `.env`（要重写加 `--force`）；完整参数见 `--help`。
+
+## 手工步骤（脚本不可用时）
 
 镜像默认 `ghcr.io/yy1319hua/dockdeck-{hub,agent}:latest`，随私有库发布故为**私有镜像**，
 部署宿主机首次拉取前需登录（用有 `read:packages` 的 GitHub PAT）：
@@ -59,6 +83,8 @@ Hub 数据（SQLite / 主密钥 / 自签证书 / 整库备份）在命名卷 `do
 | 文件 | 说明 |
 | --- | --- |
 | `docker-compose.yml` | 模板本体（入库） |
+| `install-hub.sh` | Hub 一键安装（S10.1，入库） |
+| `install-agent.sh` | Agent 一键安装（S10.1，入库） |
 | `.env.example` | 环境变量样例（入库）；实用时复制为 `.env`（**不入库**） |
 | `README.md` | 本文件 |
 | `.env` / `secrets/` | 本地凭据，`.gitignore` 覆盖，**永不入库** |

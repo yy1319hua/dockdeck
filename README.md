@@ -88,7 +88,7 @@ cd web && npm ci && npm run build          # 产物 web/dist 由 go:embed 吸收
 make build                                 # hub/agent × arm64/amd64
 ```
 
-开发沙箱内**没有 docker、没有 tailscale**；需要真实引擎验证时在 ARM 宿主机上做，
+开发沙箱内**没有 docker、没有 tailscale**；需要真实引擎验证时在 node1 或 Agent 节点上做，
 或转发宿主机的 docker socket。多 AI 接力的协作与自检约定见 `docs/ARCHITECTURE.md`。
 
 ## 许可

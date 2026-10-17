@@ -1,15 +1,21 @@
-# DockDeck CI —— 测试门禁 + tag 发布镜像（S9.6）。
+# DockDeck CI —— 测试门禁 + 发布镜像（tag 自动 / 网页手动双入口）。
 #
-# 设计口径（2026-10-17 立项时定）：
-#   * 触发面分离：push main / PR → 只跑测试门禁（vet + test）；打 v* tag →
-#     先过测试门禁，再构建双架构镜像推 ghcr.io。发布动作只由 tag 触发，
-#     main 每次 push 都构建镜像是浪费（私有库 Actions 2,000 分钟/月额度）。
+# 设计口径（2026-10-17 立项时定；2026-10-18 增手动入口）：
+#   * 触发面分离：push main / PR → 只跑测试门禁（vet + test）；镜像构建
+#     只在「打 v* tag」或「网页手动点按钮」时发生——main 每次 push 都
+#     构建镜像是浪费（私有库 Actions 2,000 分钟/月额度）。
+#   * **手动入口（2026-10-18 用户选 A）**：在仓库 Actions 页点
+#     "Run workflow" 即可发布，发布时机完全由人掌控；同时保留 tag 触发
+#     的自动化路径（想走自动就打 tag）。手动时可填版本号，留空回落短
+#     sha——任何一条路径都留下可追溯的版本痕迹。门禁（test job）在手动
+#     触发时照跑（needs: test），发布前必过，不会绕开质量闸门。
+#     前提：workflow 文件须在默认分支才显示按钮（ci.yml 在 main，成立）。
 #   * 门禁范围：make vet + make test（Go 侧全量）。长行 lint 是工作区工具
 #     （依赖 <工作区> 结构），不进 CI；hadolint 在 S9.4 已本地全绿，镜像
 #     构建前另有 make dist + make verify-dist 产物自检（架构/大小/静态性/
 #     版本注入，负向用例见 tools/verify_dist.py 头注）。
-#   * 镜像 tag：<git tag> + latest 两个（latest 供 compose 默认值直接拉；
-#     需要固定版本时用 tag）。与 deploy/docker-compose.yml 的
+#   * 镜像 tag：<版本号> + latest 两个（latest 供 compose 默认值直接拉；
+#     需要固定版本时用版本号）。与 deploy/docker-compose.yml 的
 #     DD_HUB_IMAGE/DD_AGENT_IMAGE 默认值（ghcr.io/yy1319hua/dockdeck-
 #     {hub,agent}:latest）对应——改这里记得同步 compose 默认值。
 #   * registry 用 ghcr.io + Actions 自带 GITHUB_TOKEN（permissions:
@@ -23,9 +29,16 @@
 #   * GO=go 覆盖：Makefile 默认 GO=/usr/local/go/bin/go 是沙箱口径，
 #     runner 上显式用 PATH 里的 go（setup-go 装的 1.24），避免撞 runner
 #     镜像预装的其他版本。
+#   * 手动触发表单里的 version 是**不可信输入**：一律经 env 传入脚本，
+#     再叠字符白名单 + 长度上限，绝不直接插值进 run（否则手滑或被塞入
+#     shell 元字符就变成命令注入）。
+#   * 同版本号重复发布会覆盖 ghcr.io 上同名 tag（GHCR 未开不可变标签），
+#     发布前确认版本号未占用；或改用不重名的短 sha 命名。
 #
 # 打 tag 触发发布仍受推送令牌纪律约束：pre-push 对 tag 一律回退 batch
 # （须用户逐次批准），auto 令牌推不了 tag——即「发布必须人按头」。
+# 手动入口走网页按钮，不经过本地 push，但也因此少了本地钩子那道闸：
+# 按钮按下去就直接构建发布，务必确认选中的 ref 与版本号无误。
 
 name: CI
 
@@ -35,6 +48,12 @@ on:
     tags: ['v*']
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '镜像版本号（如 v0.1.0）；留空则自动用短 sha 命名'
+        required: false
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -55,7 +74,7 @@ jobs:
   release:
     name: build & push images
     needs: test
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -65,8 +84,41 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.24'
-      # 发布前产物自检（与 make dist 同源；tag 检出即该 tag 的 commit，
-      # COMMIT 注入串对账天然成立）
+      # 算出本次构建的镜像 tag：ref 指向 tag 就用 tag 名（覆盖「push tag
+      # 触发」与「手动时选中某个 tag」两种情况）；手动且跑在分支上时，
+      # 用表单填的版本号，留空回落短 sha。
+      - name: 计算镜像 tag
+        id: imagetag
+        env:
+          REF_FULL: ${{ github.ref }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -eu
+          case "$REF_FULL" in
+            refs/tags/*)
+              v="${REF_FULL#refs/tags/}"
+              ;;
+            *)
+              v="${INPUT_VERSION:-}"
+              if [ -z "$v" ]; then
+                v="sha-$(git rev-parse --short HEAD)"
+              fi
+              ;;
+          esac
+          case "$v" in
+            *[!A-Za-z0-9._-]*)
+              echo "非法的镜像 tag「$v」：只允许字母、数字、点、下划线、连字符" >&2
+              exit 1
+              ;;
+          esac
+          if [ "${#v}" -gt 128 ]; then
+            echo "镜像 tag 过长（${#v} 字符 > 128）" >&2
+            exit 1
+          fi
+          echo "本次镜像 tag：$v"
+          echo "tag=$v" >> "$GITHUB_OUTPUT"
+      # 发布前产物自检（与 make dist 同源；COMMIT 串由 Makefile 现算，
+      # 与产物注入值对账天然成立）
       - run: GO=go make dist
       - run: GO=go make verify-dist
       - uses: docker/setup-buildx-action@v3
@@ -83,7 +135,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ghcr.io/yy1319hua/dockdeck-hub:${{ github.ref_name }}
+            ghcr.io/yy1319hua/dockdeck-hub:${{ steps.imagetag.outputs.tag }}
             ghcr.io/yy1319hua/dockdeck-hub:latest
       - name: build & push agent
         uses: docker/build-push-action@v6
@@ -93,5 +145,5 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ghcr.io/yy1319hua/dockdeck-agent:${{ github.ref_name }}
+            ghcr.io/yy1319hua/dockdeck-agent:${{ steps.imagetag.outputs.tag }}
             ghcr.io/yy1319hua/dockdeck-agent:latest

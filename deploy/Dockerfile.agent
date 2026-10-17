@@ -1,0 +1,50 @@
+# DockDeck Agent 镜像（多架构：linux/amd64 + linux/arm64）。
+# 与 deploy/Dockerfile.hub 共享的口径（BUILDPLATFORM 交叉编译免 QEMU、host
+# 网络、基础镜像浮动 tag、版本经 build-arg 注入）不在此重复，见 Hub 文件头。
+#
+# 构建（在仓库根执行）：
+#   docker buildx build --load -f deploy/Dockerfile.agent -t dockdeck-agent:local .
+#   docker buildx build --platform linux/amd64,linux/arm64 --push \
+#     -f deploy/Dockerfile.agent -t <registry>/dockdeck-agent:<tag> .
+#
+# 运行（host 网络 + docker.sock 只读挂载；compose 模板见 S9.3）：
+#   docker run --network host \
+#     -v /var/run/docker.sock:/var/run/docker.sock:ro \
+#     <img> --listen <TAILNET_IP>:9527
+#
+# 为什么以 root 跑：Agent 要读写 /var/run/docker.sock（属主 root:docker），
+# 非 root 用户除非加入宿主 docker 组（GID 逐宿主机不同、运行时才知）否则摸不到
+# socket。边界靠两道：socket 以 :ro 挂载 + Agent 侧自我保护名单（不碰自身
+# 容器，S3.2 起就有）。Hub 镜像做了同样分析后选非 root——Hub 不碰 docker.sock，
+# 收紧没有代价；Agent 有代价，故不跟。
+#
+# 无 VOLUME：Agent 无持久状态（token 走 DD_AGENT_TOKEN 环境变量或
+# --token-file；纳管 join_secret 同理），采集数据全部上行 Hub。
+
+ARG GO_IMAGE=golang:1.24-alpine
+ARG RUN_IMAGE=alpine:3
+
+# --- 阶段 1：Go 交叉编译（无前端阶段——web/dist 只进 Hub 二进制） ---
+FROM --platform=$BUILDPLATFORM ${GO_IMAGE} AS builder
+ARG TARGETARCH
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG DATE=unknown
+WORKDIR /src
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build \
+      -trimpath -tags 'netgo,osusergo' \
+      -ldflags "-s -w -extldflags \"-static\" \
+        -X github.com/yy1319hua/dockdeck/internal/version.Version=${VERSION} \
+        -X github.com/yy1319hua/dockdeck/internal/version.Commit=${COMMIT} \
+        -X github.com/yy1319hua/dockdeck/internal/version.Date=${DATE}" \
+      -o /out/dockdeck-agent ./cmd/agent
+
+# --- 阶段 2：运行时 ---
+FROM ${RUN_IMAGE}
+COPY --from=builder /out/dockdeck-agent /usr/local/bin/dockdeck-agent
+EXPOSE 9527
+ENTRYPOINT ["dockdeck-agent"]
+# 默认回环 + 只绑 tailscale0；生产用 --listen <TAILNET_IP>:9527 覆盖。
+# docker.sock 路径显式声明（与默认值一致，写出来防呆）
+CMD ["--docker-socket", "/var/run/docker.sock"]

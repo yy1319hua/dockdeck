@@ -1,0 +1,20 @@
+# 构建上下文瘦身 + 镜像内容可复现——只保留 Dockerfile 真正 COPY 的东西。
+# 上下文以仓库根为准（deploy/Dockerfile.* 里的 COPY . . 全仓拷贝）。
+
+# 版本控制与钩子：版本号经 build-arg 注入，不靠容器内 git describe
+.git/
+.githooks/
+
+# 构建产物：镜像内重新构建，不带宿主机残留
+bin/
+node_modules/
+web/node_modules/
+web/dist/
+
+# 文档与说明：运行时不需要（go:embed 只吃 web/dist、internal/assets/static、
+# internal/db/migrations，均不涉及 *.md；已逐一核实无 .md 嵌入）
+docs/
+*.md
+
+# 本地环境残留
+.codebuddy/

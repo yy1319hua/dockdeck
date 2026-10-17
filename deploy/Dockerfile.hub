@@ -1,0 +1,73 @@
+# DockDeck Hub 镜像（多架构：linux/amd64 + linux/arm64）。
+#
+# 构建（在仓库根执行）：
+#   # 本地单架构验证（--load 只支持单平台）：
+#   docker buildx build --load -f deploy/Dockerfile.hub -t dockdeck-hub:local .
+#   # 多架构推送（两平台一次构建）：
+#   docker buildx build --platform linux/amd64,linux/arm64 --push \
+#     -f deploy/Dockerfile.hub -t <registry>/dockdeck-hub:<tag> .
+#
+# 为什么不需要 QEMU / binfmt_misc：两个构建阶段都钉在 BUILDPLATFORM（本机
+# 架构）上运行——Go 侧交叉编译（GOARCH=$TARGETARCH），npm 产物是静态文件、
+# 与架构无关。只有「构建期运行目标架构的二进制」才需要模拟，本管线没有这一步。
+#
+# 运行（按 host 网络设计，理由见下）：
+#   docker run --network host <img> --listen <TAILNET_IP>:8443 --data-dir /data
+#
+# 为什么按 host 网络设计：Hub 禁止绑定 0.0.0.0（config.Validate 只放行
+# tailnet / 内网 / 回环的具体 IP），桥接网络里容器 IP 是运行时分配的、
+# 写不进 CMD；host 网络下容器直接看到宿主的 tailscale0 等网卡。暴露面由
+# 应用自己的绑定白名单把守，不因 host 网络放大（见 docs/ARCHITECTURE.md）。
+#
+# 基础镜像策略：按 minor 浮动 tag 引用（golang:1.24 / node:22 / alpine:3）。
+# 否决「钉 digest」：当前网络取不到 registry digest（auth.docker.io 不通），
+# 且钉死后需主动 bump 才能收到安全更新；digest 钉死留待 S9.4 产物校验时
+# 在能访问 registry 的环境里补。
+
+ARG GO_IMAGE=golang:1.24-alpine
+ARG NODE_IMAGE=node:22-alpine
+ARG RUN_IMAGE=alpine:3
+
+# --- 阶段 1：前端构建（架构无关，BUILDPLATFORM 上跑一次） ---
+FROM --platform=$BUILDPLATFORM ${NODE_IMAGE} AS web
+WORKDIR /build
+# 先只拷清单两文件：npm ci 的缓存层才稳定，web/ 源码改动不会触发重装依赖
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web/ ./
+RUN npm run build
+
+# --- 阶段 2：Go 交叉编译到目标架构 ---
+FROM --platform=$BUILDPLATFORM ${GO_IMAGE} AS builder
+ARG TARGETARCH
+# 版本元数据经 build-arg 注入（与 Makefile 同口径；否决容器内 git describe：
+# 那需要把 .git 拖进上下文，且 dirty 状态会漏进制品，破坏可复现性）
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG DATE=unknown
+WORKDIR /src
+COPY . .
+# web/dist 是 go:embed 的输入，必须来自刚构建的前端产物——仓库里只有
+# .gitkeep 占位（GAP-8），直接 COPY 会嵌进空目录
+COPY --from=web /build/dist ./web/dist
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build \
+      -trimpath -tags 'netgo,osusergo' \
+      -ldflags "-s -w -extldflags \"-static\" \
+        -X github.com/yy1319hua/dockdeck/internal/version.Version=${VERSION} \
+        -X github.com/yy1319hua/dockdeck/internal/version.Commit=${COMMIT} \
+        -X github.com/yy1319hua/dockdeck/internal/version.Date=${DATE}" \
+      -o /out/dockdeck-hub ./cmd/hub
+
+# --- 阶段 3：运行时（非 root；数据卷预建属主） ---
+FROM ${RUN_IMAGE}
+RUN adduser -D -u 10000 dockdeck \
+ && mkdir -p /data/secrets \
+ && chown -R dockdeck:dockdeck /data
+COPY --from=builder /out/dockdeck-hub /usr/local/bin/dockdeck-hub
+USER dockdeck
+# SQLite 主库、自签证书、主密钥、整库备份（S7.8）都落 /data
+VOLUME /data
+EXPOSE 8443
+ENTRYPOINT ["dockdeck-hub"]
+# 默认回环 + TLS self：开箱可本地冒烟；生产用 --listen <TAILNET_IP>:8443 覆盖
+CMD ["--data-dir", "/data", "--master-key", "/data/secrets/master.key"]

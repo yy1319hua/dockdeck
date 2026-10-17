@@ -19,10 +19,11 @@
 # 写不进 CMD；host 网络下容器直接看到宿主的 tailscale0 等网卡。暴露面由
 # 应用自己的绑定白名单把守，不因 host 网络放大（见 docs/ARCHITECTURE.md）。
 #
-# 基础镜像策略：按 minor 浮动 tag 引用（golang:1.24 / node:22 / alpine:3）。
-# 否决「钉 digest」：当前网络取不到 registry digest（auth.docker.io 不通），
-# 且钉死后需主动 bump 才能收到安全更新；digest 钉死留待 S9.4 产物校验时
-# 在能访问 registry 的环境里补。
+# 基础镜像策略：按 minor 浮动 tag 引用（golang:1.24-alpine / node:22-alpine / alpine:3），
+# 自动收安全更新；否决「钉 digest」的理由是钉死后需主动 bump（本项目无自动
+# bump 机制）。2026-10-17 勘误：S9.2 曾记「当前网络取不到 digest」——系跳板
+# 沙箱 DNS 污染致的误判，sanbox 实测 registry 可达；当前实测 digest 值与构建
+# 路线（GitHub Actions，S9.6）见 docs/ARCHITECTURE.md「构建与交付」。
 
 ARG GO_IMAGE=golang:1.24-alpine
 ARG NODE_IMAGE=node:22-alpine

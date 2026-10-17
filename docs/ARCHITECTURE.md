@@ -391,8 +391,15 @@ Vue 3 + Vite + TS，`vue-router` + `pinia`，图表 uPlot，无重型 UI 框架�
 是构建侧 `CGO_ENABLED=0` + `netgo`/`osusergo` 的二进制侧印证；静态 PIE 同样无 PT_INTERP，予以放行）、
 **大小预算**（hub ≤ 24MiB / agent ≤ 16MiB，当前实际约 2 倍余量，挡依赖回归膨胀）、
 **版本注入**（COMMIT 短串在产物字节内可检——漏 ldflags 时 `internal/version` 回退 unknown/dev，
-运行期无法回嘴自己是哪版）。开发机沙箱无 docker，
-构建验证在 ARM 宿主机上经 SSH 转发其 docker socket 完成；Go 侧用 `httptest` 模拟 Docker Engine API 跑单测。
+运行期无法回嘴自己是哪版）。
+
+**镜像构建路线：GitHub Actions**（S9.6 立项落地：打 tag 触发 → buildx 多架构 → 推送 `ghcr.io/yy1319hua/dockdeck-{hub,agent}`，即 compose 默认镜像地址）。私有库免费额度（2026-10 核实）：Actions 2,000 Linux 分钟/月、超额默认花费上限 $0（停跑不赊账）；GHCR 容器镜像存储与带宽当前免费（GitHub 文档原话 currently free、变更前提前通知，且不占 500MB Packages 配额）；workflow 用自带 `GITHUB_TOKEN`（`permissions: packages: write`）即可，无需额外 secret。**registry 可达性勘误**：S9.4 曾记「auth.docker.io 本网络不通」——系跳板沙箱 DNS 污染（对 docker.io 答 Meta IPv6 段且无路由）致的误判；sanbox 实测可达（`registry-1.docker.io/v2/` 返 401 即通），Actions runner 更无此问题。**基础镜像维持浮动 minor tag**（golang:1.24-alpine / node:22-alpine / alpine:3，自动收安全更新；否决钉 digest 的理由是需要主动 bump——S9.2 的「取不到 digest」理由已作废）。当前实测 digest（2026-10-17 取，备查/将来钉死用）：
+
+- `golang:1.24-alpine` → `sha256:8bee1901f1e530bfb4a7850aa7a479d17ae3a18beb6e09064ed54cfd245b7191`
+- `node:22-alpine` → `sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402`
+- `alpine:3` → `sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6`
+
+开发机沙箱无 docker，Go 侧单测用 `httptest` 模拟 Docker Engine API 跑。
 
 ## 备份与恢复
 

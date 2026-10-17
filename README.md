@@ -85,7 +85,7 @@ scripts/verify.sh          # API 冒烟 + 部署前后 docker ps 快照 diff（�
 export PATH=$PATH:/usr/local/go/bin        # 沙箱里 Go 不在默认 PATH
 TZ=Asia/Shanghai go test ./...             # 固定时区，防时间类用例假红
 cd web && npm ci && npm run build          # 产物 web/dist 由 go:embed 吸收
-make build                                 # hub/agent × arm64/amd64
+make dist                                  # hub/agent × linux/amd64、linux/arm64
 ```
 
 开发沙箱内**没有 docker、没有 tailscale**；需要真实引擎验证时在 node1 或 Agent 节点上做，

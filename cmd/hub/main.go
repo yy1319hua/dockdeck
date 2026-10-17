@@ -626,9 +626,9 @@ func (s *server) routes() http.Handler {
 	tbl.Add(route.Entry{
 		Method: "GET", Path: "/api/v1/servers/{id}/compose/{project}/backups", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadContainers,
 		Summary: "Compose 写前备份清单", Tags: []string{"Compose"},
-		Desc: "列出该 compose 文件的写前备份（<文件>.bak.<RFC3339>），按时间倒序（最新在前）。" +
+		Desc: "列出该 compose 文件的写前备份（<文件>.bak.<定宽奈秒时间戳>），按时间倒序（最新在前）。" +
 			"只回文件名/大小/时间，**不回宿主机绝对路径**（与文件管理模块同口径）。" +
-			"备份由每次 PUT 写 YAML 自动生成；本模块不提供删除——备份只增不减，清理走宿主机。",
+			"备份由每次 PUT 写 YAML 自动生成；系统自动轮转——每个 compose 文件只保留最近 20 份，更旧的自动删除（用户侧无删除入口）。",
 		Params: []route.Param{
 			{Name: "id", Desc: "服务器 ID", Required: true, Example: "1", SchemaType: "integer", SchemaFmt: "int64"},
 			{Name: "project", Desc: "compose 项目名（白名单内目录名）", Required: true, Example: "web"},
@@ -649,7 +649,7 @@ func (s *server) routes() http.Handler {
 		Params: []route.Param{
 			{Name: "id", Desc: "服务器 ID", Required: true, Example: "1", SchemaType: "integer", SchemaFmt: "int64"},
 			{Name: "project", Desc: "compose 项目名", Required: true, Example: "web"},
-			{Name: "file", Desc: "备份文件名（须以 <compose 文件名>.bak. 开头）", Required: true, Example: "docker-compose.yml.bak.2026-10-16T21:13:00+08:00"},
+			{Name: "file", Desc: "备份文件名（须以 <compose 文件名>.bak. 开头）", Required: true, Example: "docker-compose.yml.bak.2026-10-17T10:00:00.000000001+08:00"},
 		},
 		Responses: []route.Response{
 			{Status: 400, Desc: "缺少 file 参数，或备份名不合法/越界"},
@@ -663,7 +663,7 @@ func (s *server) routes() http.Handler {
 		Method: "POST", Path: "/api/v1/servers/{id}/compose/{project}/backups/restore", AuthMode: route.AuthScope, Scope: apitoken.ScopeWriteContainers,
 		Summary: "用备份覆盖当前 Compose 文件", Tags: []string{"Compose"},
 		Desc: "请求体的 file 字段填备份文件名。恢复**本身就是一次覆盖写**，故 Agent 侧" +
-			"会先把「恢复前的当前内容」备份成新的 .bak.<RFC3339> 再覆盖——否则回滚是单向门：" +
+			"会先把「恢复前的当前内容」备份成新的 .bak.<定宽奈秒时间戳> 再覆盖——否则回滚是单向门：" +
 			"恢复到旧版本后就回不去了。响应回传那份新备份的文件名（仅文件名，不含目录）。" +
 			"注意：改 YAML 不会直接改动运行中的容器，需再执行 compose up 才生效。",
 		Params: []route.Param{

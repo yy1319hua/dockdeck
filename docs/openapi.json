@@ -1365,7 +1365,7 @@
       "get": {
         "operationId": "getApiV1ServersIdComposeProjectBackups",
         "summary": "Compose 写前备份清单",
-        "description": "列出该 compose 文件的写前备份（\u003c文件\u003e.bak.\u003cRFC3339\u003e），按时间倒序（最新在前）。只回文件名/大小/时间，**不回宿主机绝对路径**（与文件管理模块同口径）。备份由每次 PUT 写 YAML 自动生成；本模块不提供删除——备份只增不减，清理走宿主机。\n\nAPI Token 须具备 scope `read:containers`；浏览器会话不受此限制。",
+        "description": "列出该 compose 文件的写前备份（\u003c文件\u003e.bak.\u003c定宽奈秒时间戳\u003e），按时间倒序（最新在前）。只回文件名/大小/时间，**不回宿主机绝对路径**（与文件管理模块同口径）。备份由每次 PUT 写 YAML 自动生成；系统自动轮转——每个 compose 文件只保留最近 20 份，更旧的自动删除（用户侧无删除入口）。\n\nAPI Token 须具备 scope `read:containers`；浏览器会话不受此限制。",
         "tags": [
           "Compose"
         ],
@@ -1499,7 +1499,7 @@
             "in": "query",
             "required": true,
             "description": "备份文件名（须以 \u003ccompose 文件名\u003e.bak. 开头）",
-            "example": "docker-compose.yml.bak.2026-10-16T21:13:00+08:00",
+            "example": "docker-compose.yml.bak.2026-10-17T10:00:00.000000001+08:00",
             "schema": {
               "type": "string"
             }
@@ -1581,7 +1581,7 @@
       "post": {
         "operationId": "postApiV1ServersIdComposeProjectBackupsRestore",
         "summary": "用备份覆盖当前 Compose 文件",
-        "description": "请求体的 file 字段填备份文件名。恢复**本身就是一次覆盖写**，故 Agent 侧会先把「恢复前的当前内容」备份成新的 .bak.\u003cRFC3339\u003e 再覆盖——否则回滚是单向门：恢复到旧版本后就回不去了。响应回传那份新备份的文件名（仅文件名，不含目录）。注意：改 YAML 不会直接改动运行中的容器，需再执行 compose up 才生效。\n\nAPI Token 须具备 scope `write:containers`；浏览器会话不受此限制。",
+        "description": "请求体的 file 字段填备份文件名。恢复**本身就是一次覆盖写**，故 Agent 侧会先把「恢复前的当前内容」备份成新的 .bak.\u003c定宽奈秒时间戳\u003e 再覆盖——否则回滚是单向门：恢复到旧版本后就回不去了。响应回传那份新备份的文件名（仅文件名，不含目录）。注意：改 YAML 不会直接改动运行中的容器，需再执行 compose up 才生效。\n\nAPI Token 须具备 scope `write:containers`；浏览器会话不受此限制。",
         "tags": [
           "Compose"
         ],

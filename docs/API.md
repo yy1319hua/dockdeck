@@ -435,7 +435,7 @@ curl -sS -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application
   --data-binary "$(jq -Rs '{content: .}' < compose.draft)" \
   "$HUB/api/v1/servers/1/compose/web/diff" | jq -r '.data.diff'
 
-# 确认写：Agent 侧先落 <file>.bak.<RFC3339> 再覆盖，响应回传备份路径
+# 确认写：Agent 侧先落 <file>.bak.<定宽奈秒时间戳> 再覆盖，响应回传备份路径
 curl -sS -X PUT -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   --data-binary "$(jq -Rs '{content: .}' < compose.draft)" \
   "$HUB/api/v1/servers/1/compose/web/file" | jq '.data.backup_file'
@@ -447,10 +447,10 @@ curl -sS -X POST -H "Authorization: Bearer $TOKEN" "$HUB/api/v1/servers/1/compos
 # 备份：列 / 读 / 恢复（恢复是覆盖写，会再产生一份新备份——回滚不是单向门）
 curl -sS -H "Authorization: Bearer $TOKEN" "$HUB/api/v1/servers/1/compose/web/backups" | jq '.data.backups'
 curl -sS -G -H "Authorization: Bearer $TOKEN" \
-  --data-urlencode 'file=docker-compose.yml.bak.2026-10-16T21:13:00+08:00' \
+  --data-urlencode 'file=docker-compose.yml.bak.2026-10-17T10:00:00.000000001+08:00' \
   "$HUB/api/v1/servers/1/compose/web/backups/content" | jq -r '.data.content'
 curl -sS -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{"file":"docker-compose.yml.bak.2026-10-16T21:13:00+08:00"}' \
+  -d '{"file":"docker-compose.yml.bak.2026-10-17T10:00:00.000000001+08:00"}' \
   "$HUB/api/v1/servers/1/compose/web/backups/restore" | jq
 ```
 

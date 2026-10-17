@@ -4,6 +4,7 @@
 # 安装：git config core.hooksPath <本文件所在目录>
 #
 # 校验项：
+#   0. 持证工作区（.SHADOW_WORKSPACE 封条即拒 / 无 .CANONICAL_WORKSPACE 授权书即拒）
 #   1. user.name 匹配 ^[a-z][a-z0-9-]*-agent$
 #   2. user.name == <工作区>/CURRENT_AI 的内容（防忘记签到 / 上一位的签到仍在生效）
 #   3. user.email == <user.name>@local
@@ -21,6 +22,29 @@ email=$(git config user.email || true)
 root=$(git rev-parse --show-toplevel)
 WS="${WORKSPACE:-$(dirname "$root")}"
 ca_path="$WS/CURRENT_AI"
+
+# ---------- 0) 持证工作区检查（2026-10-17 增设，对所有 agent 身份生效） ----------
+# dockdeck 正牌工作区唯一：远程主机 sanbox。判据不靠 hostname/路径/身份
+# （都会变、会同构、各不相同），只认工作区根的显式持证文件：
+#   .SHADOW_WORKSPACE    存在 → 影子副本，一律拒（封条）
+#   .CANONICAL_WORKSPACE 不存在 → 无证场所，一律拒（clone 到任何机器都无证，
+#                              未来的影子副本自动免疫）
+# 被拒时去正牌工作区：ssh sanbox && cd /srv/work/dockdeck/dockdeck
+CANON="$WS/.CANONICAL_WORKSPACE"
+SHADOW="$WS/.SHADOW_WORKSPACE"
+if [[ -f "$SHADOW" ]]; then
+  echo "pre-commit 拒：此工作区已被标记为影子副本（$SHADOW）" >&2
+  echo "  → dockdeck 正牌工作区唯一：远程主机 sanbox。" >&2
+  echo "    ssh sanbox && cd /srv/work/dockdeck/dockdeck 后再提交。" >&2
+  exit 1
+fi
+if [[ ! -f "$CANON" ]]; then
+  echo "pre-commit 拒：此工作区无 .CANONICAL_WORKSPACE 授权书（无证场所不得提交）" >&2
+  echo "  → 若你正在某个克隆/副本里：这是影子副本，去正牌工作区——" >&2
+  echo "    ssh sanbox && cd /srv/work/dockdeck/dockdeck" >&2
+  echo "  → 若你确信此处就是合法工作地：报用户放置授权书后重试（显式持证，勿自行创建）。" >&2
+  exit 1
+fi
 
 if [[ ! -f "$ca_path" ]]; then
   echo "pre-commit 拒：未找到 CURRENT_AI 于 $ca_path" >&2

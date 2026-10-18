@@ -127,6 +127,9 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: 设置构建元数据
+        id: meta
+        run: echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
       - name: build & push hub
         uses: docker/build-push-action@v6
         with:
@@ -134,6 +137,10 @@ jobs:
           file: deploy/Dockerfile.hub
           platforms: linux/amd64,linux/arm64
           push: true
+          build-args: |
+            VERSION=${{ steps.imagetag.outputs.tag }}
+            COMMIT=${{ github.sha }}
+            DATE=${{ steps.meta.outputs.date }}
           tags: |
             ghcr.io/yy1319hua/dockdeck-hub:${{ steps.imagetag.outputs.tag }}
             ghcr.io/yy1319hua/dockdeck-hub:latest
@@ -144,6 +151,10 @@ jobs:
           file: deploy/Dockerfile.agent
           platforms: linux/amd64,linux/arm64
           push: true
+          build-args: |
+            VERSION=${{ steps.imagetag.outputs.tag }}
+            COMMIT=${{ github.sha }}
+            DATE=${{ steps.meta.outputs.date }}
           tags: |
             ghcr.io/yy1319hua/dockdeck-agent:${{ steps.imagetag.outputs.tag }}
             ghcr.io/yy1319hua/dockdeck-agent:latest

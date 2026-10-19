@@ -41,9 +41,10 @@ services:
     profiles: ["hub"]
     network_mode: host
     environment:
-      # 监听地址：必须具体 IP（tailscale / 内网 / 回环），0.0.0.0 会被应用拒绝。
+      # 监听地址：默认取 DD_BIND_IP；可用 DD_HUB_BIND_IP 单独覆盖（如 0.0.0.0）。
+      # 绑 0.0.0.0 必须同时设 DD_ALLOW_INSECURE_BIND=1，否则应用层硬拒。
       # 不填 compose 直接报错，不让错误的配置活到容器里。
-      DD_LISTEN: "${DD_BIND_IP:?必填：在 deploy/.env 设置 DD_BIND_IP（tailscale ip -4 或内网具体 IP，hub/agent 两个角色都用它）}:8443"
+      DD_LISTEN: "${DD_HUB_BIND_IP:-${DD_BIND_IP:?必填：在 deploy/.env 设置 DD_BIND_IP}}:8443"
       # TLS：self 自签（指纹见设置页）| none 明文（仅允许回环，反代场景）
       DD_TLS_MODE: "${DD_HUB_TLS_MODE:-self}"
       # 危险开关：允许 DD_LISTEN 绑 0.0.0.0（监听所有网卡）。默认空 = 拒绝。
@@ -64,7 +65,7 @@ services:
     # --docker-socket 一并列出；--listen 无对应环境变量，只能走旗标。
     command:
       - --listen
-      - "${DD_BIND_IP:?必填：在 deploy/.env 设置 DD_BIND_IP（tailscale ip -4 或内网具体 IP，hub/agent 两个角色都用它）}:9527"
+      - "${DD_AGENT_BIND_IP:-${DD_BIND_IP:?必填：在 deploy/.env 设置 DD_BIND_IP}}:9527"
       - --docker-socket
       - /var/run/docker.sock
       # 与 container_name 联动：hostname 默认是容器短 ID（重建即变），

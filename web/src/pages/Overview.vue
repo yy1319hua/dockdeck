@@ -184,4 +184,16 @@ async function onRefresh() {
     grid-template-columns: 1fr;
   }
 }
+
+/* 手机态（<768px，PLAN-MOBILE M3）：服务器卡片严格单列，
+   顶部统计条同步单列——拇指纵向滚动是唯一动线。 */
+@media (max-width: 767px) {
+  .ov__grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ov__stats {
+    grid-template-columns: 1fr;
+  }
+}
 </style>

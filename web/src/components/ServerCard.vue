@@ -39,7 +39,7 @@
     </div>
 
     <div class="host__chart">
-      <MetricChart :points="points" metric="cpu" :height="56" />
+      <MetricChart :points="points" metric="cpu" :height="chartH" />
     </div>
 
     <p v-if="live.error" class="host__err" :title="live.error">{{ live.error }}</p>
@@ -57,6 +57,19 @@ import { formatAgo, formatBytes, formatPercent, formatRate } from '@/utils/forma
 
 const props = defineProps<{ live: ServerLive }>()
 const router = useRouter()
+
+// 曲线高度随断点：手机态 72px（拇指可视性），桌面保持 56px（M3）。
+const chartH = ref(56)
+let mq: MediaQueryList | null = null
+function onMQ(e: MediaQueryList | MediaQueryListEvent) {
+  chartH.value = e.matches ? 72 : 56
+}
+onMounted(() => {
+  mq = window.matchMedia('(max-width: 767px)')
+  onMQ(mq)
+  mq.addEventListener('change', onMQ)
+})
+onBeforeUnmount(() => mq?.removeEventListener('change', onMQ))
 
 // 整卡可点进详情；标题本身也是真链接，键盘用户不必依赖点击。
 function goDetail() {

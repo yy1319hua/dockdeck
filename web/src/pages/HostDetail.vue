@@ -68,10 +68,10 @@
       </div>
 
       <div class="host__grid">
-        <MetricChart :points="h.points" metric="cpu" />
-        <MetricChart :points="h.points" metric="mem" />
-        <MetricChart :points="h.points" metric="disk" />
-        <MetricChart :points="h.points" metric="net" />
+        <MetricChart :points="h.points" metric="cpu" interactive />
+        <MetricChart :points="h.points" metric="mem" interactive />
+        <MetricChart :points="h.points" metric="disk" interactive />
+        <MetricChart :points="h.points" metric="net" interactive />
       </div>
     </section>
 
@@ -389,22 +389,11 @@ const procText = computed(() => {
   padding: var(--space-2) var(--space-3);
 }
 
-/* 手机态（<768px，用户 2026-10-19 需求）：四图横向滑轨——
-   scroll-snap 吸附逐卡切换，卡宽 86% 露出下一张边缘示意可滑；
-   图表卡自带当前值表头，滑动即可看数。 */
+/* 手机态（<768px，用户 2026-10-19 改判）：布局保持竖摞单列不变；
+   滑轨做在每张图内部——时间轴横向加宽 + 触摸读值（见 MetricChart interactive）。 */
 @media (max-width: 767px) {
   .host__grid {
-    display: flex;
-    gap: var(--space-3);
-    overflow-x: auto;
-    scroll-snap-type: x mandatory;
-    -webkit-overflow-scrolling: touch;
-    padding-bottom: var(--space-2);
-  }
-
-  .host__grid > * {
-    flex: 0 0 86%;
-    scroll-snap-align: start;
+    grid-template-columns: 1fr;
   }
 }
 </style>

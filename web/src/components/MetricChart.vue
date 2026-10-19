@@ -14,7 +14,9 @@
       <span class="chart__title">{{ title }}</span>
       <span class="chart__now">{{ nowText }}</span>
     </figcaption>
-    <div v-if="ready" ref="host" class="chart__canvas" :style="{ height: height + 'px' }" />
+    <div v-if="ready" class="chart__scroll">
+      <div ref="host" class="chart__canvas" :style="{ height: height + 'px' }" />
+    </div>
     <p v-else class="chart__empty">暂无历史数据</p>
   </figure>
 </template>
@@ -29,8 +31,13 @@ import { formatBytes, formatPercent, formatRate } from '@/utils/format'
 export type ChartMetric = 'cpu' | 'mem' | 'disk' | 'net'
 
 const props = withDefaults(
-  defineProps<{ points: HostPointWire[]; metric: ChartMetric; height?: number }>(),
-  { height: 120 },
+  defineProps<{
+    points: HostPointWire[]
+    metric: ChartMetric
+    height?: number
+    interactive?: boolean
+  }>(),
+  { height: 120, interactive: false },
 )
 
 const TITLES: Record<ChartMetric, string> = {
@@ -41,6 +48,15 @@ const TITLES: Record<ChartMetric, string> = {
 }
 
 const host = ref<HTMLDivElement | null>(null)
+// 手机态判定：图内滑轨与触摸读值只在 <768px 生效（用户 2026-10-19 需求；桌面零变化）。
+const isMobile = ref(false)
+let mqChart: MediaQueryList | null = null
+function onMQChart(e: MediaQueryList | MediaQueryListEvent) {
+  const was = isMobile.value
+  isMobile.value = e.matches
+  if (was !== isMobile.value) draw()
+}
+
 let chart: uPlot | null = null
 let ro: ResizeObserver | undefined
 
@@ -170,8 +186,9 @@ function draw() {
       width: el.clientWidth || 320,
       height: props.height,
       padding: [4, 0, 0, 0],
-      legend: { show: false },
-      cursor: { show: false },
+      // 触摸读值：仅 interactive 且手机态开启光标+图例（uPlot 触摸即出读数）。
+      cursor: { show: props.interactive && isMobile.value },
+      legend: { show: props.interactive && isMobile.value },
       scales: { x: { time: true }, y: { range: yRange } },
       axes: [
         { stroke: axis, grid: { stroke: grid, width: 1 }, ticks: { stroke: grid }, font: '10px sans-serif' },
@@ -211,7 +228,14 @@ onMounted(() => {
 // 图表首屏就丢了。'post' 保证本次更新里 DOM 挂好后才画。
 watch(() => [props.points, props.metric], draw, { flush: 'post' })
 
+onMounted(() => {
+  mqChart = window.matchMedia('(max-width: 767px)')
+  onMQChart(mqChart)
+  mqChart.addEventListener('change', onMQChart)
+})
+
 onBeforeUnmount(() => {
+  mqChart?.removeEventListener('change', onMQChart)
   ro?.disconnect()
   destroy()
 })
@@ -260,5 +284,19 @@ onBeforeUnmount(() => {
 .chart :deep(.uplot),
 .chart :deep(.u-wrap) {
   background: transparent;
+}
+.chart__scroll {
+  width: 100%;
+}
+
+@media (max-width: 767px) {
+  .chart__scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .chart__scroll .chart__canvas {
+    min-width: 180%;
+  }
 }
 </style>

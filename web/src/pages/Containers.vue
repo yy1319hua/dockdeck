@@ -89,7 +89,7 @@
     </table>
 
     <!-- 手机态（<768px，PLAN-MOBILE M4）：表格退役转卡片列表，动作收进「···」底部面板。 -->
-    <div v-else-if="ct.rows.length > 0" class="ct__cards">
+    <div v-if="!ct.loading && !ct.error && ct.rows.length > 0" class="ct__cards">
       <article v-for="row in ct.rows" :key="row.container.id" class="ccard">
         <header class="ccard__head">
           <span class="ccard__name" :title="row.container.name">{{ row.container.name }}</span>
@@ -126,7 +126,7 @@
       </div>
     </div>
 
-    <div v-else-if="!ct.loading && !ct.error" class="ct__empty">
+    <div v-if="!ct.loading && !ct.error && ct.rows.length === 0" class="ct__empty">
       <template v-if="ct.servers.length === 0">
         <p class="ct__empty-title">还没有纳管的主机</p>
         <p class="ct__empty-hint">纳管方式见 S5.8：Hub 签发 join_secret，Agent 启动时自注册。</p>

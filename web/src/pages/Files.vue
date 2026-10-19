@@ -132,7 +132,7 @@
       </table>
 
     <!-- 手机态（<768px，PLAN-MOBILE M6）：表格退役转卡片；目录名可点进层。 -->
-      <div v-else-if="fs.entries.length > 0" class="fl__cards">
+      <div v-if="!fs.loading && !fs.error && fs.entries.length > 0" class="fl__cards">
         <article v-for="e in fs.entries" :key="e.path" class="fcard">
           <header class="fcard__head">
             <button v-if="e.isDir" type="button" class="link fl__dir fcard__name" @click="fs.enterDir(e.path)">{{ e.name }}/</button>

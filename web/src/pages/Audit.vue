@@ -118,7 +118,7 @@
     </table>
 
     <!-- 手机态（<768px，PLAN-MOBILE M7）：表格退役转卡片；展开复用同一 detail 区块。 -->
-    <div v-else-if="au.logs.length > 0" class="au__cards">
+    <div v-if="!au.loading && !au.error && au.logs.length > 0" class="au__cards">
       <article v-for="l in au.logs" :key="l.id" class="acard">
         <header class="acard__head">
           <span class="acard__action" :title="l.action">{{ l.action }}</span>

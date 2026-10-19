@@ -106,7 +106,7 @@
     </table>
 
     <!-- 手机态（<768px，PLAN-MOBILE M5）：表格退役转卡片；动作只有删除，直接行内放，不必收面板。 -->
-    <div v-else-if="im.images.length > 0" class="im__cards">
+    <div v-if="!im.loading && !im.error && im.images.length > 0" class="im__cards">
       <article v-for="img in im.images" :key="img.id" class="icard">
         <header class="icard__head">
           <span v-if="img.dangling" class="im__none">&lt;none&gt;</span>

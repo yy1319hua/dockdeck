@@ -90,13 +90,14 @@ type Response struct {
 }
 
 type Schema struct {
-	Type        string             `json:"type,omitempty"`
-	Format      string             `json:"format,omitempty"`
-	Description string             `json:"description,omitempty"`
-	Ref         string             `json:"$ref,omitempty"`
-	Properties  map[string]*Schema `json:"properties,omitempty"`
-	Items       *Schema            `json:"items,omitempty"`
-	Enum        []string           `json:"enum,omitempty"`
+	Type                 string             `json:"type,omitempty"`
+	Format               string             `json:"format,omitempty"`
+	Description          string             `json:"description,omitempty"`
+	Ref                  string             `json:"$ref,omitempty"`
+	Properties           map[string]*Schema `json:"properties,omitempty"`
+	Items                *Schema            `json:"items,omitempty"`
+	AdditionalProperties *Schema            `json:"additionalProperties,omitempty"`
+	Enum                 []string           `json:"enum,omitempty"`
 }
 
 type Components struct {
@@ -142,8 +143,11 @@ func Generate(info Info, entries []route.Entry) *Doc {
 	d := &Doc{
 		OpenAPI: "3.0.3",
 		Info:    info,
-		Servers: []Server{{URL: "/", Description: "同域：本 spec 由运行中的 Hub 自身提供"}},
-		Paths:   map[string]PathItem{},
+		Servers: []Server{
+			{URL: "https://hub.example.com", Description: "生产入口（Cloudflare Tunnel，公网）"},
+			{URL: "/", Description: "同域：本 spec 由运行中的 Hub 自身提供（tailnet 直连时用）"},
+		},
+		Paths: map[string]PathItem{},
 		Components: &Components{
 			SecuritySchemes: map[string]SecurityScheme{
 				SchemeCookie: {
@@ -238,6 +242,11 @@ func operation(e route.Entry) *Operation {
 	}
 	okSchema := &Schema{Ref: EnvelopeRef}
 	okCT := "application/json"
+	// 端点声明了具体响应 schema 时优先用它：Envelope.data 是无类型 object，
+	// 生成 SDK 时只能得到 Any，等于把「怎么做类型」推给调用方。
+	if e.OKSchema != "" {
+		okSchema = schemaRef(e.OKSchema)
+	}
 	if e.NoEnvelope {
 		okSchema = &Schema{Type: "object"}
 		// 裸流端点（日志等）声明真实内容类型：文档对实装说谎比没有文档更糟。
@@ -404,6 +413,241 @@ func schemas() map[string]*Schema {
 				"message": {Type: "string"},
 			},
 		},
+		"ServerSummary": {
+			Type:        "object",
+			Description: "受管主机。不含任何令牌字段。",
+			Properties: map[string]*Schema{
+				"ID":        {Type: "integer", Format: "int64"},
+				"Name":      {Type: "string"},
+				"BaseURL":   {Type: "string", Description: "HTTP 模式为 Agent 根地址；反向模式为 reverse://<host>"},
+				"Arch":      {Type: "string"},
+				"DockVer":   {Type: "string"},
+				"Enabled":   {Type: "boolean"},
+				"LastSeen":  {Type: "string", Description: "RFC3339；从未心跳时为空串"},
+				"LastError": {Type: "string"},
+			},
+		},
+		"ServerList": {
+			Type:        "object",
+			Description: "GET /api/v1/servers 的完整响应。",
+			Properties: map[string]*Schema{
+				"data": {Type: "array", Items: schemaRef("ServerSummary")},
+			},
+		},
+		"ContainerSummary": {
+			Type:        "object",
+			Description: "docker ps 的一行（Engine 字段名大小写原样保留）。",
+			Properties: map[string]*Schema{
+				"Id":      {Type: "string"},
+				"Names":   {Type: "array", Items: &Schema{Type: "string"}},
+				"Image":   {Type: "string"},
+				"ImageID": {Type: "string"},
+				"Command": {Type: "string"},
+				"Created": {Type: "integer", Format: "int64"},
+				"State":   {Type: "string", Description: "running / exited / paused …"},
+				"Status":  {Type: "string"},
+				"Labels":  {Type: "object", AdditionalProperties: &Schema{Type: "string"}},
+			},
+		},
+		"ContainerList": {
+			Type:       "object",
+			Properties: map[string]*Schema{"data": {Type: "array", Items: schemaRef("ContainerSummary")}},
+		},
+		"ImageSummary": {
+			Type:        "object",
+			Description: "本地镜像（Engine 字段名原样）。",
+			Properties: map[string]*Schema{
+				"Id":           {Type: "string"},
+				"RepoTags":     {Type: "array", Items: &Schema{Type: "string"}},
+				"RepoDigests":  {Type: "array", Items: &Schema{Type: "string"}},
+				"Created":      {Type: "integer", Format: "int64"},
+				"Size":         {Type: "integer", Format: "int64", Description: "字节"},
+				"Architecture": {Type: "string"},
+				"Os":           {Type: "string"},
+				"Labels":       {Type: "object", AdditionalProperties: &Schema{Type: "string"}},
+			},
+		},
+		"ImageList": {
+			Type:       "object",
+			Properties: map[string]*Schema{"data": {Type: "array", Items: schemaRef("ImageSummary")}},
+		},
+		"ComposeService": {
+			Type: "object",
+			Properties: map[string]*Schema{
+				"name":  {Type: "string"},
+				"state": {Type: "string", Description: "running / exited / paused …"},
+				"image": {Type: "string"},
+			},
+		},
+		"ComposeProject": {
+			Type: "object",
+			Properties: map[string]*Schema{
+				"name":        {Type: "string", Description: "目录名（白名单内唯一）"},
+				"path":        {Type: "string", Description: "项目目录绝对路径"},
+				"config_file": {Type: "string", Description: "compose 文件绝对路径"},
+				"status":      {Type: "string", Description: "running / partial / stopped / unknown"},
+				"services":    {Type: "array", Items: schemaRef("ComposeService")},
+			},
+		},
+		"ComposeList": {
+			Type:       "object",
+			Properties: map[string]*Schema{"data": {Type: "array", Items: schemaRef("ComposeProject")}},
+		},
+		"FileEntry": {
+			Type: "object",
+			Properties: map[string]*Schema{
+				"name":     {Type: "string"},
+				"path":     {Type: "string"},
+				"is_dir":   {Type: "boolean"},
+				"size":     {Type: "integer", Format: "int64", Description: "目录恒为 0"},
+				"mode":     {Type: "string", Description: "八进制字符串，如 0644"},
+				"mod_time": {Type: "string", Format: "date-time"},
+			},
+		},
+		"FilesList": {
+			Type: "object",
+			Description: "GET /files 的 data。truncated=true 时 entries 只是前 N 条，" +
+				"客户端必须提示「还有更多」，不能当成完整清单。",
+			Properties: map[string]*Schema{
+				"path":      {Type: "string"},
+				"entries":   {Type: "array", Items: schemaRef("FileEntry")},
+				"truncated": {Type: "boolean"},
+			},
+		},
+		"AuditLog": {
+			Type: "object",
+			Properties: map[string]*Schema{
+				"id":         {Type: "integer", Format: "int64"},
+				"ts":         {Type: "string"},
+				"user_id":    {Type: "integer", Format: "int64"},
+				"username":   {Type: "string"},
+				"server_id":  {Type: "integer", Format: "int64"},
+				"action":     {Type: "string"},
+				"target":     {Type: "string"},
+				"detail":     {Type: "string"},
+				"result":     {Type: "string", Description: "ok | error"},
+				"error":      {Type: "string"},
+				"ip":         {Type: "string"},
+				"request_id": {Type: "string"},
+			},
+		},
+		"AuditLogsPage": {
+			Type: "object",
+			Properties: map[string]*Schema{
+				"logs":        {Type: "array", Items: schemaRef("AuditLog")},
+				"next_before": {Type: "integer", Format: "int64", Description: "下一页游标；0 表示没有更多"},
+			},
+		},
+		"AuditLogsPageEnvelope": {
+			Type:       "object",
+			Properties: map[string]*Schema{"data": schemaRef("AuditLogsPage")},
+		},
+		"CPUStat": {
+			Type: "object",
+			Properties: map[string]*Schema{
+				"cores":         {Type: "integer"},
+				"usage_percent": {Type: "number", Description: "0–100，含 user/system/iowait/steal"},
+				"user":          {Type: "integer", Format: "int64"},
+				"system":        {Type: "integer", Format: "int64"},
+				"iowait":        {Type: "integer", Format: "int64"},
+				"steal":         {Type: "integer", Format: "int64"},
+				"idle":          {Type: "integer", Format: "int64"},
+			},
+		},
+		"MemoryStat": {
+			Type:        "object",
+			Description: "单位 byte。used = total - available（available 已含可回收 cache）。",
+			Properties: map[string]*Schema{
+				"total":      {Type: "integer", Format: "int64"},
+				"used":       {Type: "integer", Format: "int64"},
+				"available":  {Type: "integer", Format: "int64"},
+				"free":       {Type: "integer", Format: "int64"},
+				"buffers":    {Type: "integer", Format: "int64"},
+				"cached":     {Type: "integer", Format: "int64"},
+				"swap_total": {Type: "integer", Format: "int64"},
+				"swap_used":  {Type: "integer", Format: "int64"},
+			},
+		},
+		"DiskStat": {
+			Type: "object",
+			Properties: map[string]*Schema{
+				"mount":        {Type: "string"},
+				"fs_type":      {Type: "string"},
+				"total":        {Type: "integer", Format: "int64"},
+				"used":         {Type: "integer", Format: "int64"},
+				"free":         {Type: "integer", Format: "int64"},
+				"used_percent": {Type: "number"},
+			},
+		},
+		"NetStat": {
+			Type:        "object",
+			Description: "累计值，不是速率；速率由 Hub 按两次快照时间差计算。",
+			Properties: map[string]*Schema{
+				"interface":  {Type: "string"},
+				"rx_bytes":   {Type: "integer", Format: "int64"},
+				"tx_bytes":   {Type: "integer", Format: "int64"},
+				"rx_packets": {Type: "integer", Format: "int64"},
+				"tx_packets": {Type: "integer", Format: "int64"},
+				"rx_errors":  {Type: "integer", Format: "int64"},
+				"tx_errors":  {Type: "integer", Format: "int64"},
+			},
+		},
+		"LoadStat": {
+			Type: "object",
+			Properties: map[string]*Schema{
+				"one": {Type: "number"}, "five": {Type: "number"}, "fifteen": {Type: "number"},
+			},
+		},
+		"HostMetrics": {
+			Type:        "object",
+			Description: "主机实时指标快照。CPU 由 Agent 对 /proc/stat 两次采样取差值。",
+			Properties: map[string]*Schema{
+				"collected_at": {Type: "string", Format: "date-time"},
+				"cpu":          schemaRef("CPUStat"),
+				"memory":       schemaRef("MemoryStat"),
+				"disks":        {Type: "array", Items: schemaRef("DiskStat")},
+				"network":      {Type: "array", Items: schemaRef("NetStat")},
+				"load":         schemaRef("LoadStat"),
+				"processes":    {Type: "integer"},
+				"uptime_sec":   {Type: "integer", Format: "int64"},
+			},
+		},
+		"ContainerStat": {
+			Type:        "object",
+			Description: "单容器实时占用（Agent 采集）。",
+			Properties: map[string]*Schema{
+				"id":          {Type: "string"},
+				"name":        {Type: "string"},
+				"cpu_percent": {Type: "number"},
+				"mem_usage":   {Type: "integer", Format: "int64"},
+				"mem_limit":   {Type: "integer", Format: "int64"},
+				"mem_percent": {Type: "number"},
+				"net_rx":      {Type: "integer", Format: "int64"},
+				"net_tx":      {Type: "integer", Format: "int64"},
+				"pids":        {Type: "integer", Format: "int64"},
+			},
+		},
+		"MetricsSnapshot": {
+			Type:        "object",
+			Description: "GET /servers/{id}/metrics 的 data：主机指标 + 每容器占用。",
+			Properties: map[string]*Schema{
+				"server_id": {Type: "integer", Format: "int64"},
+				"ts":        {Type: "string", Format: "date-time"},
+				"metrics":   schemaRef("HostMetrics"),
+				"containers": {Type: "array", Items: schemaRef("ContainerStat"),
+					Description: "null 表示该机没有容器指标（Agent 未接 Docker），与空数组语义不同"},
+			},
+		},
+		"MetricsEnvelope": {
+			Type:       "object",
+			Properties: map[string]*Schema{"data": schemaRef("MetricsSnapshot")},
+		},
+		"ScopeList": {
+			Type: "object",
+			Properties: map[string]*Schema{
+				"data": {Type: "array", Items: schemaRef("Scope")},
+			},
+		},
 		"Scope": {
 			Type:        "string",
 			Description: "API Token 权限项。",
@@ -411,6 +655,9 @@ func schemas() map[string]*Schema {
 		},
 	}
 }
+
+// schemaRef 是 $ref 的简写，避免 map 字面量里到处拼长串。
+func schemaRef(name string) *Schema { return &Schema{Ref: "#/components/schemas/" + name} }
 
 // JSON 输出缩进 spec。map 键序由 encoding/json 保证（按字典序），因此字节稳定。
 func (d *Doc) JSON() ([]byte, error) { return json.MarshalIndent(d, "", "  ") }

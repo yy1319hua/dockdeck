@@ -42,9 +42,25 @@ func TestGenerateStructure(t *testing.T) {
 	if len(d.Paths) != 6 {
 		t.Fatalf("应 6 个路径，得 %d：%v", len(d.Paths), keys(d.Paths))
 	}
-	// servers 不得含具体主机，避免把 tailnet 地址带进公开 spec。
-	if len(d.Servers) != 1 || d.Servers[0].URL != "/" {
-		t.Fatalf("servers 应为同域根，得 %+v", d.Servers)
+	// servers 第一条是公开生产入口，且必须保留同域根作为回退；
+	// 但不得出现 tailnet / 内网地址——那属于内部拓扑，绝不进公开 spec。
+	if len(d.Servers) < 2 {
+		t.Fatalf("servers 应含生产入口与同域根两条，得 %+v", d.Servers)
+	}
+	if d.Servers[0].URL != "https://hub.example.com" {
+		t.Fatalf("第一条应为生产入口，得 %+v", d.Servers)
+	}
+	hasRoot := false
+	for _, s := range d.Servers {
+		if s.URL == "/" {
+			hasRoot = true
+		}
+		if strings.Contains(s.URL, "100.") || strings.Contains(s.URL, "10.") || strings.Contains(s.URL, "192.168.") {
+			t.Errorf("spec 不得含内网/tailnet 地址: %s", s.URL)
+		}
+	}
+	if !hasRoot {
+		t.Fatalf("必须保留同域根 / 作为回退，得 %+v", d.Servers)
 	}
 
 	// scope 端点：两种身份并列 + 描述里点名 scope。

@@ -17,8 +17,11 @@ info:
     url: "https://polyformproject.org/licenses/noncommercial/1.0.0"
 servers:
   -
+    url: "https://hub.example.com"
+    description: "生产入口（Cloudflare Tunnel，公网）"
+  -
     url: "/"
-    description: "同域：本 spec 由运行中的 Hub 自身提供"
+    description: "同域：本 spec 由运行中的 Hub 自身提供（tailnet 直连时用）"
 paths:
   "/api/openapi.json":
     get:
@@ -321,7 +324,7 @@ paths:
           content:
             "application/json":
               schema:
-                "$ref": "#/components/schemas/Envelope"
+                "$ref": "#/components/schemas/AuditLogsPageEnvelope"
         "400":
           description: "参数非法（时间格式 / limit 非正整数 / action 字符集 / result 取值）"
           content:
@@ -624,7 +627,7 @@ paths:
           content:
             "application/json":
               schema:
-                "$ref": "#/components/schemas/Envelope"
+                "$ref": "#/components/schemas/ScopeList"
         "400":
           description: "请求体或参数不合法"
           content:
@@ -667,7 +670,7 @@ paths:
           content:
             "application/json":
               schema:
-                "$ref": "#/components/schemas/Envelope"
+                "$ref": "#/components/schemas/ServerList"
         "400":
           description: "请求体或参数不合法"
           content:
@@ -838,7 +841,7 @@ paths:
           content:
             "application/json":
               schema:
-                "$ref": "#/components/schemas/Envelope"
+                "$ref": "#/components/schemas/ComposeList"
         "400":
           description: "请求体或参数不合法"
           content:
@@ -1508,7 +1511,7 @@ paths:
           content:
             "application/json":
               schema:
-                "$ref": "#/components/schemas/Envelope"
+                "$ref": "#/components/schemas/ContainerList"
         "400":
           description: "请求体或参数不合法"
           content:
@@ -1995,7 +1998,7 @@ paths:
           content:
             "application/json":
               schema:
-                "$ref": "#/components/schemas/Envelope"
+                "$ref": "#/components/schemas/FilesList"
         "400":
           description: "请求体或参数不合法"
           content:
@@ -2410,7 +2413,7 @@ paths:
           content:
             "application/json":
               schema:
-                "$ref": "#/components/schemas/Envelope"
+                "$ref": "#/components/schemas/ImageList"
         "400":
           description: "请求体或参数不合法"
           content:
@@ -2672,7 +2675,7 @@ paths:
           content:
             "application/json":
               schema:
-                "$ref": "#/components/schemas/Envelope"
+                "$ref": "#/components/schemas/MetricsEnvelope"
         "400":
           description: "非法服务器 ID"
           content:
@@ -3049,6 +3052,192 @@ components:
       name: "dd_session"
       description: "浏览器会话 cookie，由 POST /api/v1/auth/login 签发。"
   schemas:
+    AuditLog:
+      type: "object"
+      properties:
+        action:
+          type: "string"
+        detail:
+          type: "string"
+        error:
+          type: "string"
+        id:
+          type: "integer"
+          format: "int64"
+        ip:
+          type: "string"
+        request_id:
+          type: "string"
+        result:
+          type: "string"
+          description: "ok | error"
+        server_id:
+          type: "integer"
+          format: "int64"
+        target:
+          type: "string"
+        ts:
+          type: "string"
+        user_id:
+          type: "integer"
+          format: "int64"
+        username:
+          type: "string"
+    AuditLogsPage:
+      type: "object"
+      properties:
+        logs:
+          type: "array"
+          items:
+            "$ref": "#/components/schemas/AuditLog"
+        next_before:
+          type: "integer"
+          format: "int64"
+          description: "下一页游标；0 表示没有更多"
+    AuditLogsPageEnvelope:
+      type: "object"
+      properties:
+        data:
+          "$ref": "#/components/schemas/AuditLogsPage"
+    CPUStat:
+      type: "object"
+      properties:
+        cores:
+          type: "integer"
+        idle:
+          type: "integer"
+          format: "int64"
+        iowait:
+          type: "integer"
+          format: "int64"
+        steal:
+          type: "integer"
+          format: "int64"
+        system:
+          type: "integer"
+          format: "int64"
+        usage_percent:
+          type: "number"
+          description: "0–100，含 user/system/iowait/steal"
+        user:
+          type: "integer"
+          format: "int64"
+    ComposeList:
+      type: "object"
+      properties:
+        data:
+          type: "array"
+          items:
+            "$ref": "#/components/schemas/ComposeProject"
+    ComposeProject:
+      type: "object"
+      properties:
+        config_file:
+          type: "string"
+          description: "compose 文件绝对路径"
+        name:
+          type: "string"
+          description: "目录名（白名单内唯一）"
+        path:
+          type: "string"
+          description: "项目目录绝对路径"
+        services:
+          type: "array"
+          items:
+            "$ref": "#/components/schemas/ComposeService"
+        status:
+          type: "string"
+          description: "running / partial / stopped / unknown"
+    ComposeService:
+      type: "object"
+      properties:
+        image:
+          type: "string"
+        name:
+          type: "string"
+        state:
+          type: "string"
+          description: "running / exited / paused …"
+    ContainerList:
+      type: "object"
+      properties:
+        data:
+          type: "array"
+          items:
+            "$ref": "#/components/schemas/ContainerSummary"
+    ContainerStat:
+      type: "object"
+      description: "单容器实时占用（Agent 采集）。"
+      properties:
+        cpu_percent:
+          type: "number"
+        id:
+          type: "string"
+        mem_limit:
+          type: "integer"
+          format: "int64"
+        mem_percent:
+          type: "number"
+        mem_usage:
+          type: "integer"
+          format: "int64"
+        name:
+          type: "string"
+        net_rx:
+          type: "integer"
+          format: "int64"
+        net_tx:
+          type: "integer"
+          format: "int64"
+        pids:
+          type: "integer"
+          format: "int64"
+    ContainerSummary:
+      type: "object"
+      description: "docker ps 的一行（Engine 字段名大小写原样保留）。"
+      properties:
+        Command:
+          type: "string"
+        Created:
+          type: "integer"
+          format: "int64"
+        Id:
+          type: "string"
+        Image:
+          type: "string"
+        ImageID:
+          type: "string"
+        Labels:
+          type: "object"
+          additionalProperties:
+            type: "string"
+        Names:
+          type: "array"
+          items:
+            type: "string"
+        State:
+          type: "string"
+          description: "running / exited / paused …"
+        Status:
+          type: "string"
+    DiskStat:
+      type: "object"
+      properties:
+        free:
+          type: "integer"
+          format: "int64"
+        fs_type:
+          type: "string"
+        mount:
+          type: "string"
+        total:
+          type: "integer"
+          format: "int64"
+        used:
+          type: "integer"
+          format: "int64"
+        used_percent:
+          type: "number"
     Envelope:
       type: "object"
       description: "统一响应信封：成功只有 data，失败只有 error。客户端先看 HTTP 码再看 code。"
@@ -3066,6 +3255,182 @@ components:
           description: "如 invalid_credentials / scope_denied / not_found"
         message:
           type: "string"
+    FileEntry:
+      type: "object"
+      properties:
+        is_dir:
+          type: "boolean"
+        mod_time:
+          type: "string"
+          format: "date-time"
+        mode:
+          type: "string"
+          description: "八进制字符串，如 0644"
+        name:
+          type: "string"
+        path:
+          type: "string"
+        size:
+          type: "integer"
+          format: "int64"
+          description: "目录恒为 0"
+    FilesList:
+      type: "object"
+      description: "GET /files 的 data。truncated=true 时 entries 只是前 N 条，客户端必须提示「还有更多」，不能当成完整清单。"
+      properties:
+        entries:
+          type: "array"
+          items:
+            "$ref": "#/components/schemas/FileEntry"
+        path:
+          type: "string"
+        truncated:
+          type: "boolean"
+    HostMetrics:
+      type: "object"
+      description: "主机实时指标快照。CPU 由 Agent 对 /proc/stat 两次采样取差值。"
+      properties:
+        collected_at:
+          type: "string"
+          format: "date-time"
+        cpu:
+          "$ref": "#/components/schemas/CPUStat"
+        disks:
+          type: "array"
+          items:
+            "$ref": "#/components/schemas/DiskStat"
+        load:
+          "$ref": "#/components/schemas/LoadStat"
+        memory:
+          "$ref": "#/components/schemas/MemoryStat"
+        network:
+          type: "array"
+          items:
+            "$ref": "#/components/schemas/NetStat"
+        processes:
+          type: "integer"
+        uptime_sec:
+          type: "integer"
+          format: "int64"
+    ImageList:
+      type: "object"
+      properties:
+        data:
+          type: "array"
+          items:
+            "$ref": "#/components/schemas/ImageSummary"
+    ImageSummary:
+      type: "object"
+      description: "本地镜像（Engine 字段名原样）。"
+      properties:
+        Architecture:
+          type: "string"
+        Created:
+          type: "integer"
+          format: "int64"
+        Id:
+          type: "string"
+        Labels:
+          type: "object"
+          additionalProperties:
+            type: "string"
+        Os:
+          type: "string"
+        RepoDigests:
+          type: "array"
+          items:
+            type: "string"
+        RepoTags:
+          type: "array"
+          items:
+            type: "string"
+        Size:
+          type: "integer"
+          format: "int64"
+          description: "字节"
+    LoadStat:
+      type: "object"
+      properties:
+        fifteen:
+          type: "number"
+        five:
+          type: "number"
+        one:
+          type: "number"
+    MemoryStat:
+      type: "object"
+      description: "单位 byte。used = total - available（available 已含可回收 cache）。"
+      properties:
+        available:
+          type: "integer"
+          format: "int64"
+        buffers:
+          type: "integer"
+          format: "int64"
+        cached:
+          type: "integer"
+          format: "int64"
+        free:
+          type: "integer"
+          format: "int64"
+        swap_total:
+          type: "integer"
+          format: "int64"
+        swap_used:
+          type: "integer"
+          format: "int64"
+        total:
+          type: "integer"
+          format: "int64"
+        used:
+          type: "integer"
+          format: "int64"
+    MetricsEnvelope:
+      type: "object"
+      properties:
+        data:
+          "$ref": "#/components/schemas/MetricsSnapshot"
+    MetricsSnapshot:
+      type: "object"
+      description: "GET /servers/{id}/metrics 的 data：主机指标 + 每容器占用。"
+      properties:
+        containers:
+          type: "array"
+          description: "null 表示该机没有容器指标（Agent 未接 Docker），与空数组语义不同"
+          items:
+            "$ref": "#/components/schemas/ContainerStat"
+        metrics:
+          "$ref": "#/components/schemas/HostMetrics"
+        server_id:
+          type: "integer"
+          format: "int64"
+        ts:
+          type: "string"
+          format: "date-time"
+    NetStat:
+      type: "object"
+      description: "累计值，不是速率；速率由 Hub 按两次快照时间差计算。"
+      properties:
+        interface:
+          type: "string"
+        rx_bytes:
+          type: "integer"
+          format: "int64"
+        rx_errors:
+          type: "integer"
+          format: "int64"
+        rx_packets:
+          type: "integer"
+          format: "int64"
+        tx_bytes:
+          type: "integer"
+          format: "int64"
+        tx_errors:
+          type: "integer"
+          format: "int64"
+        tx_packets:
+          type: "integer"
+          format: "int64"
     Scope:
       type: "string"
       description: "API Token 权限项。"
@@ -3076,6 +3441,44 @@ components:
         - "read:files"
         - "write:files"
         - "read:audit"
+    ScopeList:
+      type: "object"
+      properties:
+        data:
+          type: "array"
+          items:
+            "$ref": "#/components/schemas/Scope"
+    ServerList:
+      type: "object"
+      description: "GET /api/v1/servers 的完整响应。"
+      properties:
+        data:
+          type: "array"
+          items:
+            "$ref": "#/components/schemas/ServerSummary"
+    ServerSummary:
+      type: "object"
+      description: "受管主机。不含任何令牌字段。"
+      properties:
+        Arch:
+          type: "string"
+        BaseURL:
+          type: "string"
+          description: "HTTP 模式为 Agent 根地址；反向模式为 reverse://\u003chost\u003e"
+        DockVer:
+          type: "string"
+        Enabled:
+          type: "boolean"
+        ID:
+          type: "integer"
+          format: "int64"
+        LastError:
+          type: "string"
+        LastSeen:
+          type: "string"
+          description: "RFC3339；从未心跳时为空串"
+        Name:
+          type: "string"
 tags:
   -
     name: "Audit"

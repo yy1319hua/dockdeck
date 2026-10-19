@@ -233,7 +233,7 @@ func (s *server) routes() http.Handler {
 	})
 
 	tbl.Add(route.Entry{
-		Method: "GET", Path: "/api/v1/scopes", AuthMode: route.AuthNone,
+		Method: "GET", Path: "/api/v1/scopes", OKSchema: "ScopeList", AuthMode: route.AuthNone,
 		Summary: "API Token 权限项字典", Tags: []string{"Meta"},
 		Desc: "列出全部可申请的 scope 及说明。公开：它不含任何本机信息，只是权限名词表。",
 	}, apitoken.ScopesHandler)
@@ -292,7 +292,7 @@ func (s *server) routes() http.Handler {
 
 	// ---- S2.7 监控查询 ----
 	tbl.Add(route.Entry{
-		Method: "GET", Path: "/api/v1/servers/{id}/metrics", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadMetrics,
+		Method: "GET", Path: "/api/v1/servers/{id}/metrics", OKSchema: "MetricsEnvelope", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadMetrics,
 		Summary: "实时指标快照", Tags: []string{"Servers"},
 		Desc:   "返回最近一次采集的主机指标与每容器占用。服务器不存在或从未采集时 404。",
 		Params: []route.Param{{Name: "id", Desc: "服务器 ID", Required: true, Example: "1", SchemaType: "integer", SchemaFmt: "int64"}},
@@ -325,7 +325,7 @@ func (s *server) routes() http.Handler {
 	// 与上面指标端点的分工：那些读 Hub 自己的库，这些实时转发。
 	// 失败的 502 一律来自 Agent 侧（不可达/异常），Hub 自身故障是 500。
 	tbl.Add(route.Entry{
-		Method: "GET", Path: "/api/v1/servers/{id}/containers", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadContainers,
+		Method: "GET", Path: "/api/v1/servers/{id}/containers", OKSchema: "ContainerList", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadContainers,
 		Summary: "容器清单", Tags: []string{"Containers"},
 		Desc: "实时取自 Agent 的 Engine 原生清单（未停止的默认不含，all=true 含已停止）。" +
 			"空清单编码为 [] 而非 null。",
@@ -429,7 +429,7 @@ func (s *server) routes() http.Handler {
 
 	// ---- S4.1 镜像转发（实时到 Agent，scope 复用容器 scope）----
 	tbl.Add(route.Entry{
-		Method: "GET", Path: "/api/v1/servers/{id}/images", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadContainers,
+		Method: "GET", Path: "/api/v1/servers/{id}/images", OKSchema: "ImageList", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadContainers,
 		Summary: "镜像清单", Tags: []string{"Images"},
 		Desc: "实时取自 Agent 的 Engine 原生清单（all=true 含中间层）。" +
 			"dangling=true 只列悬空镜像（无 tag），是 prune dry-run 两段式的第一段。",
@@ -530,7 +530,7 @@ func (s *server) routes() http.Handler {
 
 	// ---- S4.7 Compose 转发（Agent 侧 S4.2 已落地，Hub 侧补齐转发）----
 	tbl.Add(route.Entry{
-		Method: "GET", Path: "/api/v1/servers/{id}/compose", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadContainers,
+		Method: "GET", Path: "/api/v1/servers/{id}/compose", OKSchema: "ComposeList", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadContainers,
 		Summary: "Compose 项目清单", Tags: []string{"Compose"},
 		Desc: "实时取自 Agent：在 Agent 配置的白名单目录（DD_AGENT_COMPOSE_DIRS）内递归发现 compose 文件，" +
 			"并逐个查运行状态。白名单外的项目一律不可见（项目名只经白名单解析，不进 shell）。",
@@ -701,7 +701,7 @@ func (s *server) routes() http.Handler {
 	// ---- S5.5 文件管理转发（Agent 侧 S5.1–S5.4/S5.6 已落地，Hub 侧补齐转发+审计）----
 	// read:files 覆盖 list/stat/content（读）；write:files 覆盖 content 写与动作（写）。
 	tbl.Add(route.Entry{
-		Method: "GET", Path: "/api/v1/servers/{id}/files", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadFiles,
+		Method: "GET", Path: "/api/v1/servers/{id}/files", OKSchema: "FilesList", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadFiles,
 		Summary: "文件清单", Tags: []string{"Files"},
 		Desc: "实时取自 Agent：在配置的根白名单内递归列举目录内容；空清单编码为 [] 而非 null。" +
 			"root 缺省 0（首个根），path 缺省根自身，depth 缺省 1（只列直接子项）。",
@@ -802,7 +802,7 @@ func (s *server) routes() http.Handler {
 	// 见 internal/auth），API Token 必须勾 read:audit，否则 403 scope_denied。
 	// 刻意不包 middleware.Audit：高频读留痕会淹掉真操作记录（方案 Q4）。
 	tbl.Add(route.Entry{
-		Method: "GET", Path: "/api/v1/audit_logs", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadAudit,
+		Method: "GET", Path: "/api/v1/audit_logs", OKSchema: "AuditLogsPageEnvelope", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadAudit,
 		Summary: "审计日志查询", Tags: []string{"Audit"},
 		Desc: "倒序（最新在前）+ before_id 游标分页：limit 缺省 100、上限 1000；" +
 			"响应 next_before=0 表示没有更多，否则作为下一次请求的 before_id。" +
@@ -884,7 +884,7 @@ func (s *server) routes() http.Handler {
 	// 受管主机清单：直接读 servers 表，不做实时探测（在线状态以 last_seen 为准）。
 	// 列表只投影管理所需字段，绝不回带 Agent 令牌等秘密；纳管（写入 servers）机制见 `docs/ARCHITECTURE.md` 的纳管设计裁定。
 	tbl.Add(route.Entry{
-		Method: "GET", Path: "/api/v1/servers", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadMetrics,
+		Method: "GET", Path: "/api/v1/servers", OKSchema: "ServerList", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadMetrics,
 		Summary: "受管主机清单", Tags: []string{"Servers"},
 		Desc: "返回全部受管主机（含已禁用）。列表不暴露 Agent 令牌等秘密字段；在线状态以 last_seen 为准。" +
 			"纳管（写入 servers 表）机制见 `docs/ARCHITECTURE.md` 的纳管设计裁定。",

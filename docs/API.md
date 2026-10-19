@@ -11,15 +11,37 @@
 
 ## 1. 访问方式与暴露面
 
-服务只绑 tailnet / 内网的具体 IP，**不监听 `0.0.0.0`、不在公网监听**。因此 API 没有 CORS 问题，
-暴露面由网络层负责：能连上 Hub 的地址，就等于能调这套 API。
+Hub 进程本身只绑 tailnet / 内网的具体 IP，**不监听 `0.0.0.0`**；公网入口由 **Cloudflare Tunnel**
+承担——`cloudflared` 主动出站连 Cloudflare，**不开放任何入站端口**。两种入口：
+
+| 入口 | 基址 | 适用场景 |
+| --- | --- | --- |
+| 公网（生产） | `https://hub.example.com` | App、外部脚本、第三方集成 |
+| tailnet 直连 | `https://<hub-tailnet-ip>:8443` | 内网运维；CF 故障/限流时的备用入口 |
 
 ```bash
-HUB="${HUB:?把 Hub 的 tailnet/内网基址填进环境变量}"   # 形如 https://<hub-host>:8443
+HUB="${HUB:-https://hub.example.com}"
 ```
 
-自签证书场景下浏览器要人工比对指纹（设置页 `GET /settings/tls-fingerprint`）；
-命令行加 `-k` 会让 TLS 校验形同虚设，不如把 Hub 的证书装进信任链。
+**TLS 说明**：自签证书只存在于 `cloudflared → Hub` 这一段（Tunnel 侧已开 `No TLS Verify`）；
+公网侧是 Cloudflare 的受信证书，**App 不需要信任任何自签证书**。只有走 tailnet 直连时才需要
+人工比对指纹（设置页 `GET /settings/tls-fingerprint`）。
+
+### 1.1 生成客户端 SDK
+
+核心只读端点（servers / containers / images / compose / files / metrics / audit / scopes）的
+200 响应都指向**具体 schema**（`ServerList`、`ContainerList`、`MetricsEnvelope` …），不是泛型
+`object`，可以直接生成带类型的客户端：
+
+```bash
+openapi-generator-cli generate \
+  -i https://hub.example.com/api/openapi.json \
+  -g typescript-fetch     # 或 swift5 / kotlin / dart
+  -o ./sdk
+```
+
+生成后只需配两样：**base URL** 与 **Bearer 拦截器**（`Authorization: Bearer ddk_...`）。
+建议按最小权限签发 Token：只读 App 只需 `read:metrics` + `read:containers`（见 §5、§6）。
 
 ---
 

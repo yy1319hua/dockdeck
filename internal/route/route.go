@@ -43,16 +43,20 @@ type Response struct {
 
 // Entry 是一个 API 端点的完整声明。
 type Entry struct {
-	Method      string   // GET / POST / PUT / DELETE
-	Path        string   // 必须以 /api/ 开头，可含 {param} 通配
-	Summary     string   // 一句话说明（进 OpenAPI summary）
-	Desc        string   // 补充说明，可省
-	Scope       string   // AuthScope 时所需的 API Token scope
-	AuthMode    string   // AuthNone | AuthSession | AuthScope
-	Tags        []string // OpenAPI 分组
-	Params      []Param  // 查询参数
-	Body        *Body    // nil = 无请求体
-	Responses   []Response
+	Method    string   // GET / POST / PUT / DELETE
+	Path      string   // 必须以 /api/ 开头，可含 {param} 通配
+	Summary   string   // 一句话说明（进 OpenAPI summary）
+	Desc      string   // 补充说明，可省
+	Scope     string   // AuthScope 时所需的 API Token scope
+	AuthMode  string   // AuthNone | AuthSession | AuthScope
+	Tags      []string // OpenAPI 分组
+	Params    []Param  // 查询参数
+	Body      *Body    // nil = 无请求体
+	Responses []Response
+	// OKSchema 是成功响应的具体 schema 名（在 openapi 包里定义）。
+	// 留空 = 泛型 Envelope（data 为无类型 object）；填了则生成 $ref，
+	// 客户端 SDK 才能拿到真实类型而不是 Any。
+	OKSchema    string
 	Status      int    // 成功状态码，默认 200
 	NoEnvelope  bool   // true = 响应不是 {data,error} 信封
 	ContentType string // NoEnvelope 时成功响应的内容类型（如 text/plain）；空 = application/json

@@ -86,10 +86,33 @@ func (s *server) agentFor(w http.ResponseWriter, r *http.Request) (*agentcli.Cli
 func writeAgentError(w http.ResponseWriter, err error) {
 	var pe *protocol.Error
 	if errors.As(err, &pe) {
-		httpx.WriteError(w, protocol.StatusForCode(pe.Code), pe.Code, pe.Message)
+		httpx.WriteError(w, protocol.StatusForCode(pe.Code), pe.Code, humanizeAgentMessage(pe.Message))
 		return
 	}
-	httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, err.Error())
+	httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, humanizeAgentMessage(err.Error()))
+}
+
+// humanizeAgentMessage 剥掉错误文案里的内部包名前缀与重复段（v0.2.2 #6）：
+// Agent 侧各包直接透出 "fsapi: …" / "dockercli: …"，hub 再叠一层动作名，
+// toast 上就成了 "compose up 失败: dockercli: compose up 失败: exec: …"。
+// 规则：按 ": " 分段，丢弃内部包名段与相邻重复段，只留人话。
+func humanizeAgentMessage(msg string) string {
+	internal := map[string]bool{
+		"fsapi": true, "dockercli": true, "agentcli": true, "guard": true,
+		"httpx": true, "exec": true, "crypto": true, "store": true, "metricsync": true,
+	}
+	segs := strings.Split(msg, ": ")
+	out := make([]string, 0, len(segs))
+	for _, s := range segs {
+		if internal[s] {
+			continue
+		}
+		if len(out) > 0 && out[len(out)-1] == s {
+			continue
+		}
+		out = append(out, s)
+	}
+	return strings.Join(out, ": ")
 }
 
 // parseAll 解析 ?all=。严格口径：只认 ""/false/0 与 true/1——

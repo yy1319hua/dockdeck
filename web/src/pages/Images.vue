@@ -124,7 +124,7 @@
     <AppConfirm
       :open="deleting !== null"
       :title="`删除镜像 ${deleting ? refOf(deleting) : ''}`"
-      message="删除后不可恢复。若该镜像正被容器使用，引擎会拒绝并返回冲突。"
+      message="删除后不可恢复。若该镜像正被容器使用，引擎会拒绝并返回冲突。镜像可随时重新拉取，故不需输入名称确认。"
       danger
       confirm-label="删除"
       @confirm="onConfirmDelete"

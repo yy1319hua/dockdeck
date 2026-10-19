@@ -185,7 +185,7 @@ const confirming = ref<{ kind: ConfirmKind; row: ContainerRow } | null>(null)
 const removeForce = ref(false)
 const removeVolumes = ref(false)
 const stopTimeout = ref('')
-const killSignal = ref('SIGTERM')
+const killSignal = ref('SIGKILL')
 const logTarget = ref<ContainerRow | null>(null)
 
 const confirmMessage = computed(() => {
@@ -196,7 +196,9 @@ const confirmMessage = computed(() => {
     case 'stop':
       return `将向 ${name} 发送停止信号，正在处理中的请求会中断。`
     case 'kill':
-      return `将立即向 ${name} 发送信号，不给优雅退出的机会。`
+      return killSignal.value === 'SIGTERM'
+        ? `将向 ${name} 发送 SIGTERM，容器可优雅退出。`
+        : `将立即向 ${name} 发送 ${killSignal.value}，不给优雅退出的机会。`
     default:
       return ''
   }
@@ -255,7 +257,7 @@ function askStop(row: ContainerRow) {
 }
 
 function askKill(row: ContainerRow) {
-  killSignal.value = 'SIGTERM'
+  killSignal.value = 'SIGKILL'
   confirming.value = { kind: 'kill', row }
 }
 

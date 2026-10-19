@@ -150,7 +150,7 @@
     <!-- 删除：输名确认（Q3=A——文件删除无备份、不可恢复，对齐删容器房规） -->
     <AppConfirm
       :open="deleteAsk !== null"
-      :title="`删除 ${deleteAsk ? deleteAsk.name : ''}${deleteAsk && deleteAsk.isDir ? '（空目录）' : ''}`"
+      :title="`删除 ${deleteAsk ? deleteAsk.name : ''}`"
       message="删除后不可恢复——文件管理没有回收站，删除操作也不产生备份。输入名称以确认："
       danger
       :require-name="deleteAsk ? deleteAsk.name : ''"

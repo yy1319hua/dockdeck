@@ -1,4 +1,4 @@
-// Package crypto 汇集 DockDeck 的口令哈希、令牌加密与请求签名原语。
+// Package crypto 汇集 DockDeck 的密码哈希、令牌加密与请求签名原语。
 // 全部基于标准库 + golang.org/x/crypto，无 CGO 依赖。
 package crypto
 
@@ -38,7 +38,7 @@ func RandomToken(n int) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-// ---- Argon2id 口令哈希 ----
+// ---- Argon2id 密码哈希 ----
 
 // ArgonParams 记录一次哈希所用参数，校验时原样从编码串取回，避免参数漂移。
 type ArgonParams struct {
@@ -68,7 +68,7 @@ func HashPassword(password string, p ArgonParams) (string, error) {
 func VerifyPassword(password, encoded string) (bool, error) {
 	parts := strings.Split(encoded, "$")
 	if len(parts) != 5 || parts[0] != "argon2id" {
-		return false, errors.New("crypto: 口令编码格式非法")
+		return false, errors.New("crypto: 密码编码格式非法")
 	}
 	if parts[1] != "v=19" {
 		return false, fmt.Errorf("crypto: 不支持的 argon2 版本 %q", parts[1])

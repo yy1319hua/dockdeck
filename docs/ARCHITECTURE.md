@@ -67,7 +67,7 @@ Agent ──出站 wss──> Hub /api/v1/agent/link ──复用同一条 WS─
 
 两套并存、互不越权的鉴权，均通过同一 `/api/*` 端点组：
 
-- **cookie 会话（浏览器 UI）**：用户名 + 口令，**Argon2id**（口令永不入库，只存 hash+参数）。
+- **cookie 会话（浏览器 UI）**：用户名 + 密码，**Argon2id**（密码永不入库，只存 hash+参数）。
   会话为服务端签发的随机 token，库里存 SHA-256，HttpOnly + SameSite=Strict cookie，
   空闲 8h / 绝对 72h 过期；改密、登出、失败超阈值即撤销。
 - **Bearer API Token（App / 自动化）**：仅接受 `Authorization: Bearer <token>`。
@@ -381,7 +381,7 @@ Vue 3 + Vite + TS，`vue-router` + `pinia`，图表 uPlot，无重型 UI 框架�
 | 布局 | 主界面由 `AppShell` / `AppSidebar` / `AppTopbar` 三件套承载。**套壳与否取决于路由层级，不是 CSS 开关**：`/` 及其子路由的父组件是 AppShell，`/login`·`/setup` 是顶层裸路由（居中单卡）——改布局时改路由结构，不要在 `App.vue` 里堆 if。响应式**先定手机**：`<1024px` 侧栏为 fixed 抽屉 + 遮罩（点遮罩 / Esc / 路由切换即关），`≥1024px` 才常驻成网格列并可折叠成图标条。`sidebarOpen`（抽屉）与 `sidebarCollapsed`（折叠）是两个独立状态：前者随路由关闭，后者是长期偏好，**路由切换不得重置** |
 | 导航与图标 | 侧栏菜单单一数据源 `src/config/nav.ts`：无 `to` 的项渲染为置灰不可点并带「待实现」，让布局先于功能页定型，S7 只需往里填页面。图标一律走 `AppIcon`（自制 24×24 描边 path，**不引图标库**），与「无重型 UI 框架」同一原则 |
 | 表单控件 | `src/styles/forms.css` 提供 `.field` / `.field__input` / `.btn` / `.btn--primary` / `.card` 等基础块，**任何页面写表单都用它们**，不得各写各的输入框——S7 设置页（改密、保护名单、API Token）全是表单，不统一迟早长出几种不一样的输入框 |
-| 认证错误语义 | 登录失败后端**统一回 `invalid_credentials`**（「用户不存在」与「口令错」刻意不区分，避免泄漏用户名是否存在），前端**不得**自作主张提示「用户名不存在」；`account_locked`(429)、`account_disabled`(403)、`already_initialized`(409) 的语义由后端 message 直接呈现。建号唯一硬规则是口令 ≥ 8 位（后端 `weak_password`），前端先拦一次省往返，后端仍复查 |
+| 认证错误语义 | 登录失败后端**统一回 `invalid_credentials`**（「用户不存在」与「密码错」刻意不区分，避免泄漏用户名是否存在），前端**不得**自作主张提示「用户名不存在」；`account_locked`(429)、`account_disabled`(403)、`already_initialized`(409) 的语义由后端 message 直接呈现。建号唯一硬规则是密码 ≥ 8 位（后端 `weak_password`），前端先拦一次省往返，后端仍复查 |
 | 跳转安全 | 登录后 `redirect` 参数**只接受站内路径**：必须以单个 `/` 开头且不以 `//` 开头——后者是协议相对地址，会把用户送到外站（开放重定向） |
 | 总览页的三条硬约束 | ①**在线以后端 `servers.last_seen` 为准**：轮询器成败都更新它（只在成功时写会让掉线机器永远显示在线）。②**网络速率不能从实时快照算**：后端 `NetStat` 是开机累计值，前端只有最新一次快照，故用历史曲线最后两点求差；点数不足时显示累计值并标注，不许编造速率。③**uPlot 是 canvas，不解析 CSS 变量**：配色在运行时从 `:root` 读 `--chart-*`（值仍出自 tokens.css）。刷新周期 30s 与采集对齐，页面卸载必须停表 |
 | servers 列表的字段口径 | 后端 `ServerSummary` 无 json tag，线上字段是 Go 导出名（**`ID`/`Name`/`BaseURL`/`Enabled`/`LastSeen`/`LastError`**）。前端在 `api/servers.ts` 用 `toServer` 单点映射成 camelCase——后端若补 json tag，改这一处即可 |

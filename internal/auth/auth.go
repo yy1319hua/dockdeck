@@ -51,7 +51,7 @@ type loginReq struct {
 	Password string `json:"password"`
 }
 
-// Login 校验口令，成功则签发会话 cookie。
+// Login 校验密码，成功则签发会话 cookie。
 func (m *Manager) Login(w http.ResponseWriter, r *http.Request) {
 	var body loginReq
 	if err := httpx.DecodeJSON(w, r, &body); err != nil {
@@ -63,7 +63,7 @@ func (m *Manager) Login(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, store.ErrNotFound) {
 			// 不回显用户名是否存在，统一失败信息。
 			m.audit(r, 0, body.Username, "auth.login", "error", "user_not_found")
-			httpx.WriteError(w, http.StatusUnauthorized, "invalid_credentials", "用户名或口令错误")
+			httpx.WriteError(w, http.StatusUnauthorized, "invalid_credentials", "用户名或密码错误")
 			return
 		}
 		m.audit(r, 0, body.Username, "auth.login", "error", "internal")
@@ -84,11 +84,11 @@ func (m *Manager) Login(w http.ResponseWriter, r *http.Request) {
 
 	ok, err := crypto.VerifyPassword(body.Password, u.PwHash)
 	if err != nil || !ok {
-		if err == nil { // 口令不匹配
+		if err == nil { // 密码不匹配
 			_, _ = m.st.MarkLoginFailure(r.Context(), u.ID, m.opt.MaxFails, m.opt.LockDur)
 		}
 		m.audit(r, u.ID, u.Username, "auth.login", "error", "bad_password")
-		httpx.WriteError(w, http.StatusUnauthorized, "invalid_credentials", "用户名或口令错误")
+		httpx.WriteError(w, http.StatusUnauthorized, "invalid_credentials", "用户名或密码错误")
 		return
 	}
 
@@ -156,7 +156,7 @@ func (m *Manager) Setup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(body.Password) < 8 {
-		httpx.WriteError(w, http.StatusBadRequest, "weak_password", "口令至少 8 位")
+		httpx.WriteError(w, http.StatusBadRequest, "weak_password", "密码至少 8 位")
 		return
 	}
 	id, err := m.st.CreateUser(r.Context(), body.Username, body.Password)
@@ -180,7 +180,7 @@ type changePwReq struct {
 	NewPassword string `json:"new_password"`
 }
 
-// ChangePassword 校验旧口令后改密，并撤销该用户全部会话（含当前）。
+// ChangePassword 校验旧密码后改密，并撤销该用户全部会话（含当前）。
 func (m *Manager) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	p, ok := httpx.CurrentUser(r)
 	if !ok {
@@ -200,11 +200,11 @@ func (m *Manager) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	okp, err := crypto.VerifyPassword(body.OldPassword, u.PwHash)
 	if err != nil || !okp {
 		m.audit(r, p.UserID, p.Username, "auth.change_password", "error", "bad_old_password")
-		httpx.WriteError(w, http.StatusUnauthorized, "invalid_credentials", "旧口令错误")
+		httpx.WriteError(w, http.StatusUnauthorized, "invalid_credentials", "旧密码错误")
 		return
 	}
 	if len(body.NewPassword) < 8 {
-		httpx.WriteError(w, http.StatusBadRequest, "weak_password", "新口令至少 8 位")
+		httpx.WriteError(w, http.StatusBadRequest, "weak_password", "新密码至少 8 位")
 		return
 	}
 	if err := m.st.UpdatePassword(r.Context(), u.ID, body.NewPassword); err != nil {

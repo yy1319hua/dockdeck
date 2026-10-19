@@ -39,26 +39,26 @@
     <section class="card st__zone">
       <h2 class="st__zone-title">账号安全</h2>
       <p class="st__zone-desc">
-        修改 <b>{{ auth.username || '当前账户' }}</b> 的登录口令。保存成功后全部会话（含当前）立即注销，需重新登录。
+        修改 <b>{{ auth.username || '当前账户' }}</b> 的登录密码。保存成功后全部会话（含当前）立即注销，需重新登录。
       </p>
       <form class="st__form" @submit.prevent="onChangePassword">
         <label class="field">
-          <span class="field__label">当前口令</span>
+          <span class="field__label">当前密码</span>
           <input v-model="oldPw" class="field__input" type="password" autocomplete="current-password" required />
         </label>
         <label class="field">
-          <span class="field__label">新口令</span>
+          <span class="field__label">新密码</span>
           <input v-model="newPw" class="field__input" type="password" autocomplete="new-password" required />
-          <span v-if="newPw && newPw.length < 8" class="field__hint field__hint--warn">新口令至少 8 位</span>
+          <span v-if="newPw && newPw.length < 8" class="field__hint field__hint--warn">新密码至少 8 位</span>
         </label>
         <label class="field">
-          <span class="field__label">确认新口令</span>
+          <span class="field__label">确认新密码</span>
           <input v-model="confirmPw" class="field__input" type="password" autocomplete="new-password" required />
           <span v-if="confirmPw && confirmPw !== newPw" class="field__hint field__hint--warn">两次输入不一致</span>
         </label>
         <div class="st__acts">
           <button type="submit" class="btn btn--primary" :disabled="!pwValid || changing">
-            {{ changing ? '提交中…' : '修改口令' }}
+            {{ changing ? '提交中…' : '修改密码' }}
           </button>
         </div>
       </form>
@@ -237,7 +237,7 @@ const newPw = ref('')
 const confirmPw = ref('')
 const changing = ref(false)
 
-/** 与后端弱口令判定同口径（至少 8 位）+ 两次一致 + 旧口令非空。 */
+/** 与后端弱密码判定同口径（至少 8 位）+ 两次一致 + 旧密码非空。 */
 const pwValid = computed(
   () => oldPw.value.length > 0 && newPw.value.length >= 8 && confirmPw.value === newPw.value,
 )
@@ -249,13 +249,13 @@ async function onChangePassword(): Promise<void> {
   changing.value = true
   try {
     await changePassword(oldPw.value, newPw.value)
-    ui.notifyNotice('口令已修改，全部会话已注销——请用新口令重新登录')
+    ui.notifyNotice('密码已修改，全部会话已注销——请用新密码重新登录')
     // 后端已撤销全部会话（含当前）：先清前端态再回登录页。
     // apiLogout 此时多半 401，auth store 的 logout 失败也重置本地态。
     await auth.logout()
     await router.push({ name: 'login' })
   } catch (e) {
-    // invalid_credentials（旧口令错）/ weak_password 的 message 直接透出。
+    // invalid_credentials（旧密码错）/ weak_password 的 message 直接透出。
     ui.notifyError(e)
   } finally {
     changing.value = false

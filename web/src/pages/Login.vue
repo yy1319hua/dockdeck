@@ -3,7 +3,7 @@
   免得同一条错误出现两处。
 
   刻意不做的几件事：
-    * 不校验用户名/口令格式——后端对「用户不存在」与「口令错」统一回 invalid_credentials
+    * 不校验用户名/密码格式——后端对「用户不存在」与「密码错」统一回 invalid_credentials
       以免泄漏用户名是否存在，前端若再提示「用户名不存在」等于把后端的设计抹掉。
     * 不在本页显示 AccountLocked / AccountDisabled 的差异化文案——这些语义由后端 message 承载。
 -->
@@ -30,14 +30,14 @@
       </label>
 
       <label class="field">
-        <span class="field__label">口令</span>
+        <span class="field__label">密码</span>
         <input
           v-model="password"
           class="field__input"
           type="password"
           name="password"
           autocomplete="current-password"
-          placeholder="请输入口令"
+          placeholder="请输入密码"
           :disabled="auth.pending"
           required
         />

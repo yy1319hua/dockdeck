@@ -2,7 +2,7 @@
   首启建号页：系统尚无任何账户时（GET /auth/me 返回 setup_required=true），
   守卫会把用户送到这里；也可手工访问。
 
-  前端唯一复用的硬规则是「口令至少 8 位」——这是后端 Setup 里唯一的长度约束
+  前端唯一复用的硬规则是「密码至少 8 位」——这是后端 Setup 里唯一的长度约束
   （< 8 位报 weak_password）。本地先拦一次，省掉一次往返；后端仍会复查。
 -->
 <template>
@@ -28,7 +28,7 @@
       </label>
 
       <label class="field">
-        <span class="field__label">口令</span>
+        <span class="field__label">密码</span>
         <input
           v-model="password"
           class="field__input"
@@ -39,11 +39,11 @@
           :disabled="auth.pending"
           required
         />
-        <span v-if="tooShort" class="field__hint field__hint--warn">口令至少 8 位</span>
+        <span v-if="tooShort" class="field__hint field__hint--warn">密码至少 8 位</span>
       </label>
 
       <label class="field">
-        <span class="field__label">确认口令</span>
+        <span class="field__label">确认密码</span>
         <input
           v-model="confirm"
           class="field__input"
@@ -54,7 +54,7 @@
           :disabled="auth.pending"
           required
         />
-        <span v-if="mismatch" class="field__hint field__hint--warn">两次输入的口令不一致</span>
+        <span v-if="mismatch" class="field__hint field__hint--warn">两次输入的密码不一致</span>
       </label>
 
       <button

@@ -87,10 +87,10 @@ func TestSetupThenLoginFlow(t *testing.T) {
 		t.Fatal("空库应 setup_required=true")
 	}
 
-	// 2) 建号（弱口令应被拒）
+	// 2) 建号（弱密码应被拒）
 	resp = doReq(m, "POST", "/api/v1/auth/setup", map[string]string{"username": "admin", "password": "short"}, nil)
 	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("弱口令应 400，得 %d", resp.StatusCode)
+		t.Fatalf("弱密码应 400，得 %d", resp.StatusCode)
 	}
 	resp = doReq(m, "POST", "/api/v1/auth/setup", map[string]string{"username": "admin", "password": "longenough123"}, jar)
 	if resp.StatusCode != http.StatusOK {
@@ -112,21 +112,21 @@ func TestSetupThenLoginFlow(t *testing.T) {
 		t.Fatalf("已登录访问受保护端点应 200，得 %d", resp.StatusCode)
 	}
 
-	// 5) 错误口令登录 401，不产生会话
+	// 5) 错误密码登录 401，不产生会话
 	bad := &cookieJar{}
 	resp = doReq(m, "POST", "/api/v1/auth/login", map[string]string{"username": "admin", "password": "wrongpass"}, bad)
 	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("错误口令应 401，得 %d", resp.StatusCode)
+		t.Fatalf("错误密码应 401，得 %d", resp.StatusCode)
 	}
 	if bad.value != "" {
-		t.Fatal("错误口令不应下发 cookie")
+		t.Fatal("错误密码不应下发 cookie")
 	}
 
-	// 6) 正确口令登录 200
+	// 6) 正确密码登录 200
 	ok := &cookieJar{}
 	resp = doReq(m, "POST", "/api/v1/auth/login", map[string]string{"username": "admin", "password": "longenough123"}, ok)
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("正确口令应 200，得 %d", resp.StatusCode)
+		t.Fatalf("正确密码应 200，得 %d", resp.StatusCode)
 	}
 
 	// 7) 审计应有记录
@@ -157,11 +157,11 @@ func TestChangePasswordRevokesSessions(t *testing.T) {
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("改密后旧会话应失效，得 %d", resp.StatusCode)
 	}
-	// 新口令可登录
+	// 新密码可登录
 	njar := &cookieJar{}
 	resp = doReq(m, "POST", "/api/v1/auth/login", map[string]string{"username": "admin", "password": "brandnewpass456"}, njar)
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("新口令应可登录，得 %d", resp.StatusCode)
+		t.Fatalf("新密码应可登录，得 %d", resp.StatusCode)
 	}
 }
 

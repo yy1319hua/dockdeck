@@ -94,14 +94,14 @@ Hub 层错误码（鉴权与业务入口）：
 | --- | --- | --- |
 | `unauthenticated` | 401 | 无 cookie 打「仅会话」端点；带 Bearer 打这些端点也是这个 |
 | `session_invalid` | 401 | cookie 会话过期/被撤销（改密与登出会撤销会话） |
-| `invalid_credentials` | 401 | 用户名或口令错（不区分「用户不存在」与「口令错」，避免枚举账号） |
+| `invalid_credentials` | 401 | 用户名或密码错（不区分「用户不存在」与「密码错」，避免枚举账号） |
 | `token_invalid` | 401 / 403 | 401=Token 无效、已撤销、已过期；403=Token 的创建者被禁用或已删除 |
 | `scope_denied` | 403 | Token 缺少该端点所需 scope（`message` 里直说缺哪个） |
 | `account_disabled` | 403 | 账户被禁用 |
 | `account_locked` | 429 | 连续失败 5 次，锁 15 分钟 |
 | `rate_limited` | 429 | 触发 IP 限流：登录/建号/纳管注册突发 10 次、每 30s 补 1 |
 | `already_initialized` | 409 | 已有账户后再调 `/auth/setup` |
-| `weak_password` | 400 | 口令短于 8 位 |
+| `weak_password` | 400 | 密码短于 8 位 |
 | `name_taken` | 409 | Token 名称已被占用 |
 | `bad_ttl` | 400 | `ttl` 不在白名单（见 §5） |
 | `bad_pattern` | 400 | 保护名单里第 N 条正则编译失败（`message` 指出第几条） |
@@ -153,9 +153,9 @@ curl -sS "$HUB/api/v1/auth/me" | jq .data          # {"username":"","setup_requi
 
 # ② 建号（仅首次可用，成功即登录）或登录
 curl -sS -c "$JAR" -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"<口令，至少 8 位>"}' "$HUB/api/v1/auth/setup"
+  -d '{"username":"admin","password":"<密码，至少 8 位>"}' "$HUB/api/v1/auth/setup"
 curl -sS -c "$JAR" -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"<口令>"}' "$HUB/api/v1/auth/login"
+  -d '{"username":"admin","password":"<密码>"}' "$HUB/api/v1/auth/login"
 
 # ③ 签发：给 iPad 上的 App 只读监控 + 容器只读，90 天有效
 TOKEN=$(curl -sS -b "$JAR" -H 'Content-Type: application/json' \

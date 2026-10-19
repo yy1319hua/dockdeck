@@ -18,14 +18,14 @@ func TestArgon2_HashVerify(t *testing.T) {
 	}
 	ok, err := VerifyPassword(pw, enc)
 	if err != nil || !ok {
-		t.Fatalf("正确口令校验失败 ok=%v err=%v", ok, err)
+		t.Fatalf("正确密码校验失败 ok=%v err=%v", ok, err)
 	}
 	ok, err = VerifyPassword("wrong", enc)
 	if err != nil {
 		t.Fatalf("VerifyPassword(wrong): %v", err)
 	}
 	if ok {
-		t.Fatal("错误口令却校验通过")
+		t.Fatal("错误密码却校验通过")
 	}
 }
 

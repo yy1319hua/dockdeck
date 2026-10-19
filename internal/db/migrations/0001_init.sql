@@ -1,6 +1,6 @@
 -- 0001_init.sql —— DockDeck 基础表
 -- 说明：所有时间以 UTC RFC3339 文本存储（strftime 生成），避免时区歧义。
--- 口令仅存 argon2id 编码串；会话仅存 token 的 SHA-256；服务器 token 以主密钥 AES-GCM 密文存储。
+-- 密码仅存 argon2id 编码串；会话仅存 token 的 SHA-256；服务器 token 以主密钥 AES-GCM 密文存储。
 
 PRAGMA foreign_keys = ON;
 

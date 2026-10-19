@@ -39,7 +39,7 @@ func (s *Store) CreateUser(ctx context.Context, username, password string) (int6
 		return 0, errors.New("store: 用户名不能为空")
 	}
 	if len(password) < 8 {
-		return 0, errors.New("store: 口令至少 8 位")
+		return 0, errors.New("store: 密码至少 8 位")
 	}
 	hash, err := crypto.HashPassword(password, crypto.DefaultArgon)
 	if err != nil {
@@ -71,7 +71,7 @@ func (s *Store) HasAnyUser(ctx context.Context) (bool, error) {
 
 func (s *Store) UpdatePassword(ctx context.Context, userID int64, password string) error {
 	if len(password) < 8 {
-		return errors.New("store: 口令至少 8 位")
+		return errors.New("store: 密码至少 8 位")
 	}
 	hash, err := crypto.HashPassword(password, crypto.DefaultArgon)
 	if err != nil {

@@ -37,8 +37,8 @@ export function logout(): Promise<null> {
  * 继续跑只会在下一个请求 401。
  *
  * 失败按后端 code 原样抛 ApiError，页面据此提示：
- *   invalid_credentials —— 旧口令错误（401）；
- *   weak_password       —— 新口令不足 8 位（400）。
+ *   invalid_credentials —— 旧密码错误（401）；
+ *   weak_password       —— 新密码不足 8 位（400）。
  */
 export function changePassword(oldPassword: string, newPassword: string): Promise<{ reloginRequired: boolean }> {
   return postJSON<{ ok?: boolean; relogin_required?: boolean }>('/auth/password', {

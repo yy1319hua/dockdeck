@@ -42,6 +42,11 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build \
 
 # --- 阶段 2：运行时 ---
 FROM ${RUN_IMAGE}
+# Compose 没有 daemon API：容器/镜像走 Engine socket，Compose 全靠宿主侧
+#  v2 CLI（exec.Command("docker","compose",...)）。不装的话
+# Compose 全系端点永远「compose 未知」。v0.2.2 #5：镜像内置 docker-cli +
+# compose 插件（+60MB，用户已接受——功能正确优先于镜像体积）。
+RUN apk add --no-cache docker-cli docker-cli-compose
 COPY --from=builder /out/dockdeck-agent /usr/local/bin/dockdeck-agent
 EXPOSE 9527
 ENTRYPOINT ["dockdeck-agent"]

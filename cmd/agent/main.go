@@ -5,6 +5,7 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"log"
 	"net/http"
@@ -42,8 +43,11 @@ func run(args []string) error {
 	// 所以后台自注册只服务正常模式。
 	if cfg.HubURL != "" && cfg.JoinSecret != "" && !cfg.Reverse {
 		go func() {
-			if err := enrollToHub(cfg); err != nil {
-				log.Printf("agent: ⚠️ 纳管自注册失败（将在下次重启重试）：%v", err)
+			// 有限重试：Hub 与 Agent 常在同一份 compose 里一起拉起，
+			// Agent 先就绪时 Hub 可能还没监听——几秒退避就能自愈，不该等到下次重启。
+			// 12 次（约 4 分钟）仍失败才放弃：Agent 本身仍在正常服务，纳管只是加分项。
+			if err := enrollWithRetry(context.Background(), cfg, 12); err != nil {
+				log.Printf("agent: ⚠️ 纳管自注册失败（Agent 服务不受影响，重启可再试）：%v", err)
 			}
 		}()
 	}
@@ -61,7 +65,10 @@ func run(args []string) error {
 	// 反向模式：不监听、不自签，主动连 Hub；本地 mux 仍是唯一入口，
 	// 帧会被合成为 http.Request 后回到这个 handler，路由/鉴权与 HTTP 模式完全一致。
 	if cfg.Reverse {
-		if err := enrollToHub(cfg); err != nil {
+		// 反向模式下「能连上 Hub」就是 Agent 的命脉：Hub 未就绪时无限重试
+		// （退避上限 30s），只有凭据/邀请类永久失败才退出——
+		// 那种情况重试一万次也不会好，早退出能让运维直接看到原因。
+		if err := enrollWithRetry(context.Background(), cfg, 0); err != nil {
 			log.Printf("agent: ⚠️ 反向模式纳管失败（Hub 里没有本机记录就无法握手）：%v", err)
 			return err
 		}

@@ -932,6 +932,12 @@ func (s *server) routes() http.Handler {
 		},
 	}, s.serverEnroll)
 
+	// ---- PLAN-NODE-DOCS B：文档三件套（公开只读，从同一份 spec 动态生成）----
+	// 见 cmd/hub/docs.go 顶部注释：为什么挂 /docs 而不走 route.Table。
+	mux.HandleFunc("GET /docs/openapi.json", s.docsSpec)
+	mux.HandleFunc("GET /docs/llms.txt", s.docsLLMS)
+	mux.HandleFunc("GET /docs/api.md", s.docsAPIMD)
+
 	// 前端 SPA 兜底：非 /api 路径交静态资源，未命中回 index.html。
 	static := assets.Handler()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -951,7 +957,9 @@ func (s *server) spec() *openapi.Doc {
 		Title:   "DockDeck Hub API",
 		Version: version.Version,
 		Description: "自研多主机监控与 Docker 管理面板的服务端接口。\n\n" +
-			"**访问方式**：服务绑定 tailnet / 内网的具体 IP（不绑 0.0.0.0），不在公网监听；" +
+			"**访问方式**：默认绑定 tailnet / 内网的具体 IP；确需监听所有网卡必须显式开启 " +
+			"`--allow-insecure-bind`（默认拒绝 0.0.0.0）。公网入口由 Cloudflare Tunnel 提供——" +
+			"cloudflared 主动出站，不开放任何入站端口。" +
 			"浏览器用 cookie 会话，App / 脚本用 `Authorization: Bearer ddk_...`。\n\n" +
 			"**两套身份互不信任**：带 Bearer 时只看 Token（即便同时带了 cookie），" +
 			"Token 权限由签发时勾选的 scope 决定，scope 不足返回 403；" +

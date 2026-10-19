@@ -9,6 +9,7 @@ import VolumesNetworks from '@/pages/VolumesNetworks.vue'
 import Files from '@/pages/Files.vue'
 import Audit from '@/pages/Audit.vue'
 import AddNode from '@/pages/AddNode.vue'
+import DocView from '@/pages/DocView.vue'
 import Settings from '@/pages/Settings.vue'
 import DesignTokens from '@/pages/DesignTokens.vue'
 import Login from '@/pages/Login.vue'
@@ -121,6 +122,15 @@ const routes: RouteRecordRaw[] = [
         meta: { title: 'Design Tokens · DockDeck' },
       },
     ],
+  },
+  {
+    // PLAN-NODE-DOCS B：API 文档页。**不加 requiresAuth**——文档公开只读，
+    // 未登录也能看（且它是给外部接入方查的，登录墙挡在那里没意义）。
+    // 数据来自同源 /docs/openapi.json，页面本身零外链。
+    path: '/docs',
+    name: 'docs',
+    component: DocView,
+    meta: { title: 'API 文档 · DockDeck' },
   },
   {
     path: '/login',

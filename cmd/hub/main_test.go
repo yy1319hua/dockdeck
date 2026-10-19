@@ -345,21 +345,23 @@ func TestNoRoutesBypassingTable(t *testing.T) {
 		}
 		registered = append(registered, stmt)
 	}
-	// 白名单只放两类：
+	// 白名单只放三类，且每类都有明确理由：
 	//   1) SPA 兜底 "/"（前端静态资源，不是 API）
 	//   2) Agent 反向长连接握手（101 升级，OpenAPI 无法描述 WebSocket）
+	//   3) 文档三件套 /docs/*（公开只读文本，进 spec 只会自引用；响应不是信封 JSON）
 	// 其余任何直接注册都视为绕过登记表。
 	var others []string
 	for _, stmt := range registered {
 		switch {
 		case strings.Contains(stmt, `("/", `):
 		case strings.Contains(stmt, "agentlink.LinkPath"):
+		case strings.Contains(stmt, "/docs/"):
 		default:
 			others = append(others, stmt)
 		}
 	}
 	if len(others) != 0 {
-		t.Errorf("发现绕过登记表的注册（只允许 SPA 兜底与 WS 握手）：%v", others)
+		t.Errorf("发现绕过登记表的注册（只允许 SPA 兜底、WS 握手与 /docs 三件套）：%v", others)
 	}
 	// WS 握手路径本身也是 API 前缀，需豁免；其余 "/api 字面量一律拒绝。
 	for _, l := range registered {

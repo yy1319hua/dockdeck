@@ -116,6 +116,13 @@
   font-weight: var(--weight-medium);
 }
 
+/* 小号按钮（PLAN-MOBILE M4）：卡片行内动作用，触区仍 >= 32px。 */
+.btn--sm {
+  height: 32px;
+  padding: 0 var(--space-3);
+  font-size: var(--text-xs);
+}
+
 .btn--danger:hover:not(:disabled) {
   background: var(--danger);
   border-color: var(--danger);

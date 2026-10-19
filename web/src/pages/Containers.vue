@@ -88,6 +88,44 @@
       </tbody>
     </table>
 
+    <!-- 手机态（<768px，PLAN-MOBILE M4）：表格退役转卡片列表，动作收进「···」底部面板。 -->
+    <div v-else-if="ct.rows.length > 0" class="ct__cards">
+      <article v-for="row in ct.rows" :key="row.container.id" class="ccard">
+        <header class="ccard__head">
+          <span class="ccard__name" :title="row.container.name">{{ row.container.name }}</span>
+          <span class="badge" :class="badgeClass(row.container.state)">{{ row.container.status || row.container.state }}</span>
+        </header>
+        <p class="ccard__image" :title="row.container.image">{{ row.container.image }}</p>
+        <p class="ccard__stats">
+          <span>CPU {{ row.stat ? formatPercent(row.stat.cpu_percent) : '—' }}</span>
+          <span>内存 {{ memText(row) }}</span>
+        </p>
+        <footer class="ccard__acts">
+          <button type="button" class="btn btn--sm" :disabled="acting" @click="openLogs(row)">日志</button>
+          <button type="button" class="btn btn--sm ccard__more" :disabled="acting" aria-label="更多操作" @click="openSheet(row)">···</button>
+        </footer>
+      </article>
+    </div>
+
+    <!-- 「···」动作底部面板：48px 触区行，遮罩点击关闭，锁 body 滚动。 -->
+    <div v-if="sheetRow" class="sheet" @click.self="sheetRow = null">
+      <div class="sheet__panel" role="dialog" aria-modal="true" :aria-label="`${sheetRow.container.name} 操作`">
+        <p class="sheet__title">{{ sheetRow.container.name }}</p>
+        <button
+          v-for="a in sheetActions"
+          :key="a.label"
+          type="button"
+          class="sheet__act"
+          :class="{ 'sheet__act--danger': a.danger }"
+          :disabled="acting"
+          @click="a.run()"
+        >
+          {{ a.label }}
+        </button>
+        <button type="button" class="sheet__act sheet__act--cancel" @click="sheetRow = null">取消</button>
+      </div>
+    </div>
+
     <div v-else-if="!ct.loading && !ct.error" class="ct__empty">
       <template v-if="ct.servers.length === 0">
         <p class="ct__empty-title">还没有纳管的主机</p>
@@ -162,7 +200,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import AppConfirm from '@/components/AppConfirm.vue'
 import ContainerLogs from '@/components/ContainerLogs.vue'
 import { containerAction, removeContainer } from '@/api/containers'
@@ -187,6 +225,53 @@ const removeVolumes = ref(false)
 const stopTimeout = ref('')
 const killSignal = ref('SIGKILL')
 const logTarget = ref<ContainerRow | null>(null)
+
+// 「···」动作面板（M4）：手机态行内只留高频「日志」，其余收进底部面板。
+const sheetRow = ref<ContainerRow | null>(null)
+
+function openSheet(row: ContainerRow) {
+  sheetRow.value = row
+}
+
+interface SheetAction {
+  label: string
+  danger?: boolean
+  run: () => void
+}
+
+const sheetActions = computed<SheetAction[]>(() => {
+  const row = sheetRow.value
+  if (!row) return []
+  const st = row.container.state
+  const acts: SheetAction[] = []
+  const wrap = (fn: () => void): (() => void) => () => {
+    sheetRow.value = null
+    fn()
+  }
+  if (st === 'running') {
+    acts.push({ label: '重启', run: wrap(() => direct(row, 'restart', '重启')) })
+    acts.push({ label: '暂停', run: wrap(() => direct(row, 'pause', '暂停')) })
+    acts.push({ label: '停止…', run: wrap(() => askStop(row)) })
+    acts.push({ label: '杀死…', danger: true, run: wrap(() => askKill(row)) })
+  } else if (st === 'paused') {
+    acts.push({ label: '恢复', run: wrap(() => direct(row, 'unpause', '恢复')) })
+    acts.push({ label: '停止…', run: wrap(() => askStop(row)) })
+    acts.push({ label: '杀死…', danger: true, run: wrap(() => askKill(row)) })
+  } else {
+    acts.push({ label: '启动', run: wrap(() => direct(row, 'start', '启动')) })
+  }
+  acts.push({ label: '日志', run: wrap(() => openLogs(row)) })
+  acts.push({ label: '删除…', danger: true, run: wrap(() => askRemove(row)) })
+  return acts
+})
+
+// 面板开着时锁 body 滚动（#12 口径）。
+watch(sheetRow, (v) => {
+  document.body.style.overflow = v ? 'hidden' : ''
+})
+onUnmounted(() => {
+  document.body.style.overflow = ''
+})
 
 const confirmMessage = computed(() => {
   const name = confirming.value?.row.container.name ?? ''
@@ -370,6 +455,127 @@ async function onConfirmAction() {
   width: 100%;
   border-collapse: collapse;
   font-size: var(--text-sm);
+}
+
+/* 手机态互斥（M4）：桌面只见表格，手机只见卡片。 */
+.ct__cards {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  .ct__table {
+    display: none;
+  }
+
+  .ct__cards {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+}
+
+.ccard {
+  background: var(--bg-elev-1);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+}
+
+.ccard__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.ccard__name {
+  font-weight: var(--weight-medium);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ccard__image {
+  margin-top: var(--space-1);
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ccard__stats {
+  margin-top: var(--space-2);
+  display: flex;
+  gap: var(--space-4);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.ccard__acts {
+  margin-top: var(--space-3);
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.ccard__more {
+  min-width: 48px;
+}
+
+.sheet {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  background: rgb(0 0 0 / 50%);
+  display: flex;
+  align-items: flex-end;
+}
+
+.sheet__panel {
+  width: 100%;
+  background: var(--bg-elev-1);
+  border-top: 1px solid var(--border-default);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  padding: var(--space-3) var(--space-3) calc(var(--space-3) + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+}
+
+.sheet__title {
+  color: var(--fg-subtle);
+  font-size: var(--text-xs);
+  text-align: center;
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sheet__act {
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--fg-default);
+  font-size: var(--text-base);
+  text-align: center;
+  padding: var(--space-3);
+  min-height: 48px;
+  cursor: pointer;
+}
+
+.sheet__act:disabled {
+  color: var(--fg-subtle);
+}
+
+.sheet__act--danger {
+  color: var(--danger);
+}
+
+.sheet__act--cancel {
+  color: var(--fg-muted);
+  border-bottom: none;
 }
 
 .ct__table th {

@@ -389,10 +389,22 @@ const procText = computed(() => {
   padding: var(--space-2) var(--space-3);
 }
 
-/* 手机态（<768px，PLAN-MOBILE M8）：四图严格单列，拇指纵向浏览。 */
+/* 手机态（<768px，用户 2026-10-19 需求）：四图横向滑轨——
+   scroll-snap 吸附逐卡切换，卡宽 86% 露出下一张边缘示意可滑；
+   图表卡自带当前值表头，滑动即可看数。 */
 @media (max-width: 767px) {
   .host__grid {
-    grid-template-columns: 1fr;
+    display: flex;
+    gap: var(--space-3);
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: var(--space-2);
+  }
+
+  .host__grid > * {
+    flex: 0 0 86%;
+    scroll-snap-align: start;
   }
 }
 </style>

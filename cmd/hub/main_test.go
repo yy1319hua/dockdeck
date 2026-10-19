@@ -345,15 +345,25 @@ func TestNoRoutesBypassingTable(t *testing.T) {
 		}
 		registered = append(registered, stmt)
 	}
-	// 只允许 SPA 兜底那一处。
-	if len(registered) != 1 {
-		t.Errorf("main.go 有 %d 处 mux.Handle*，应为 1（仅 SPA 兜底）；API 端点请走 tbl.Add：%v",
-			len(registered), registered)
-	} else if !strings.Contains(registered[0], `("/", `) {
-		t.Errorf("唯一的直接注册不是 SPA 兜底：%s", registered[0])
+	// 白名单只放两类：
+	//   1) SPA 兜底 "/"（前端静态资源，不是 API）
+	//   2) Agent 反向长连接握手（101 升级，OpenAPI 无法描述 WebSocket）
+	// 其余任何直接注册都视为绕过登记表。
+	var others []string
+	for _, stmt := range registered {
+		switch {
+		case strings.Contains(stmt, `("/", `):
+		case strings.Contains(stmt, "agentlink.LinkPath"):
+		default:
+			others = append(others, stmt)
+		}
 	}
+	if len(others) != 0 {
+		t.Errorf("发现绕过登记表的注册（只允许 SPA 兜底与 WS 握手）：%v", others)
+	}
+	// WS 握手路径本身也是 API 前缀，需豁免；其余 "/api 字面量一律拒绝。
 	for _, l := range registered {
-		if strings.Contains(l, `"/api`) {
+		if strings.Contains(l, `"/api`) && !strings.Contains(l, "agentlink.LinkPath") {
 			t.Errorf("绕过登记表注册了 API 路由：%s", l)
 		}
 	}

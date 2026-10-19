@@ -38,7 +38,9 @@ func run(args []string) error {
 
 	// GAP-1 纳管：配了 Hub 与 join_secret 时，启动即自注册。幂等、best-effort，
 	// 失败只告警不阻断服务（登记可在此后重启时重试）。放后台，避免拖慢监听就绪。
-	if cfg.HubURL != "" && cfg.JoinSecret != "" {
+	// 反向模式下 enroll 必须同步（握手前 servers 表里必须已有本机记录），
+	// 所以后台自注册只服务正常模式。
+	if cfg.HubURL != "" && cfg.JoinSecret != "" && !cfg.Reverse {
 		go func() {
 			if err := enrollToHub(cfg); err != nil {
 				log.Printf("agent: ⚠️ 纳管自注册失败（将在下次重启重试）：%v", err)
@@ -52,11 +54,24 @@ func run(args []string) error {
 		return err
 	}
 
+	handler := buildHandler(cfg.Token, collector.New(cfg.DiskMounts), collector.NilStatsSource{},
+		newContainersAPI(cfg.DockerSocket, cfg.SelfContainer), newImagesAPI(cfg.DockerSocket),
+		newComposeAPI(cfg.ComposeDirs), fapi, newResourcesAPI(cfg.DockerSocket))
+
+	// 反向模式：不监听、不自签，主动连 Hub；本地 mux 仍是唯一入口，
+	// 帧会被合成为 http.Request 后回到这个 handler，路由/鉴权与 HTTP 模式完全一致。
+	if cfg.Reverse {
+		if err := enrollToHub(cfg); err != nil {
+			log.Printf("agent: ⚠️ 反向模式纳管失败（Hub 里没有本机记录就无法握手）：%v", err)
+			return err
+		}
+		log.Printf("agent: 反向模式，主动连接 Hub %s", cfg.HubURL)
+		return runReverse(cfg, handler)
+	}
+
 	srv := &http.Server{
-		Addr: cfg.ListenAddr,
-		Handler: buildHandler(cfg.Token, collector.New(cfg.DiskMounts), collector.NilStatsSource{},
-			newContainersAPI(cfg.DockerSocket, cfg.SelfContainer), newImagesAPI(cfg.DockerSocket),
-			newComposeAPI(cfg.ComposeDirs), fapi, newResourcesAPI(cfg.DockerSocket)),
+		Addr:              cfg.ListenAddr,
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,

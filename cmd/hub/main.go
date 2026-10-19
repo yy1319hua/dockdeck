@@ -15,6 +15,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/yy1319hua/dockdeck/internal/agentcli"
+	"github.com/yy1319hua/dockdeck/internal/agentlink"
 	"github.com/yy1319hua/dockdeck/internal/apitoken"
 	"github.com/yy1319hua/dockdeck/internal/assets"
 	"github.com/yy1319hua/dockdeck/internal/auth"
@@ -77,6 +79,8 @@ func run(args []string) error {
 		rl: middleware.NewRateLimit(10, 30*time.Second),
 		// S7.8：备份下载的临时目录与 TLS 指纹回显都从这里取。
 		dataDir: cfg.DataDir,
+		// 反向长连接：上限 512，超出握手直接 503。
+		links: agentlink.NewRegistry(512),
 	}
 	handler := middleware.RequestCtx(httpx.SecurityHeaders(srv.routes()))
 
@@ -126,6 +130,13 @@ func run(args []string) error {
 		time.Duration(cfg.MetricsIntervalSec)*time.Second,
 		time.Duration(cfg.MetricsRetentionDays)*24*time.Hour,
 		log.Printf,
+		// 采集也走同一条链路：有反向连接就用，没有回落 HTTP。
+		metricsync.WithLink(func(id int64) agentcli.Doer {
+			if c := srv.links.Conn(id); c != nil {
+				return c
+			}
+			return nil
+		}),
 	)
 	go poller.Run(pollCtx)
 
@@ -147,6 +158,7 @@ func run(args []string) error {
 		}
 	case <-stop:
 	}
+	srv.links.CloseAll()
 	log.Printf("hub 已优雅关闭")
 	return nil
 }
@@ -163,6 +175,9 @@ type server struct {
 	// tlsFingerprint 供指纹端点回显（仅自签模式有值，其余模式空串）。
 	dataDir        string
 	tlsFingerprint string
+
+	// links 是反向长连接注册表：有活跃连接时 agentFor 优先走它，没有则回落 HTTP。
+	links *agentlink.Registry
 }
 
 // routes 用 route.Table 声明端点：注册与 OpenAPI 生成共用同一份声明。
@@ -187,6 +202,11 @@ func (s *server) routes() http.Handler {
 		return wrapped
 	})
 	s.table = tbl
+
+	// 反向长连接握手（101 升级）：不进 route.Table——
+	// OpenAPI 无法正确描述 WebSocket，硬塞进去只会让生成器与一致性测试都变复杂。
+	// 鉴权在 handler 内自做（Bearer + HMAC + 时间窗）。
+	mux.Handle("GET "+agentlink.LinkPath, &agentlink.Handler{Store: s.st, Reg: s.links})
 
 	// ---- 公开 ----
 	tbl.Add(route.Entry{

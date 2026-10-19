@@ -3,6 +3,7 @@ module github.com/yy1319hua/dockdeck
 go 1.24.1
 
 require (
+	github.com/coder/websocket v1.8.15
 	golang.org/x/crypto v0.27.0
 	modernc.org/sqlite v1.34.1
 )

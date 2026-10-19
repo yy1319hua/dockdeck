@@ -4,6 +4,7 @@ package store
 
 import (
 	"context"
+	"crypto/subtle"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -124,4 +125,55 @@ func (s *Store) TouchServer(ctx context.Context, id int64, ts time.Time, errText
 		`UPDATE servers SET last_seen=?, last_error=? WHERE id=?`,
 		ts.UTC().Format(time.RFC3339), lastErr, id)
 	return err
+}
+
+// ServerConnByToken 按明文 Agent 令牌反查服务器，供反向长连接握手使用。
+//
+// 为什么遍历而不建索引：token_cipher 是密文，索引值也只能是密文，帮不上忙。
+// 受管服务器是个位到几十台，O(n) 解密完全可接受。
+//
+// 语义与 ServerConn 对齐：不存在 → ErrNotFound；禁用 → ErrServerDisabled；
+// 单条密文损坏跳过（不能因为一台机器的密文坏了就拒绝所有 Agent 连接）。
+func (s *Store) ServerConnByToken(ctx context.Context, token string) (*ServerConn, error) {
+	if token == "" {
+		return nil, ErrNotFound
+	}
+	rows, err := s.DB.QueryContext(ctx,
+		`SELECT id, name, base_url, token_cipher, enabled FROM servers`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var found *ServerConn
+	for rows.Next() {
+		var (
+			c      ServerConn
+			cipher string
+			on     int
+		)
+		if err := rows.Scan(&c.ID, &c.Name, &c.BaseURL, &cipher, &on); err != nil {
+			return nil, err
+		}
+		plain, err := crypto.OpenSecret(s.Key, cipher)
+		if err != nil {
+			continue
+		}
+		if subtle.ConstantTimeCompare(plain, []byte(token)) != 1 {
+			continue
+		}
+		if on == 0 {
+			return nil, ErrServerDisabled
+		}
+		c.Token = string(plain)
+		found = &c
+		// 不 break：命中位置不该通过响应时间泄漏。
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if found == nil {
+		return nil, ErrNotFound
+	}
+	return found, nil
 }

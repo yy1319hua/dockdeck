@@ -49,6 +49,12 @@ type envelope struct {
 }
 
 // Client 是单台 Agent 的客户端。零值不可用，须用 New 构造。
+// Doer 是请求传输抽象：*http.Client 与 agentlink.Conn 都满足它。
+// 抽出来是为了让 HTTP 直连与反向长连接共用同一套请求构造、重试与解信封逻辑。
+type Doer interface {
+	Do(req *http.Request) (*http.Response, error)
+}
+
 type Client struct {
 	// BaseURL 是 Agent 根地址（如 https://100.x.y.z:9527），不带尾斜杠。
 	BaseURL string
@@ -71,6 +77,10 @@ type Client struct {
 	// HTTP 是传输层，可注入自定 TLS（Agent 用自签证书，Hub 纳管时按指纹信任）。
 	// nil 时使用标准传输并跳过证书校验——指纹信任是 Hub 上层职责，客户端不越权。
 	HTTP *http.Client
+
+	// Link 非 nil 时优先走反向长连接（Agent 主动连 Hub 的 WS）。
+	// nil = 当前没有活跃连接，全部请求走 HTTP——这就是「HTTP 回落」的落点。
+	Link Doer
 
 	// Now 可注入，测试签名时间戳用。
 	Now func() time.Time
@@ -322,7 +332,10 @@ func (c *Client) now() time.Time {
 }
 
 // transport 返回传输层，懒初始化（New 之外手工构造 Client 的兜底）。
-func (c *Client) transport() *http.Client {
+func (c *Client) transport() Doer {
+	if c.Link != nil {
+		return c.Link
+	}
 	if c.HTTP != nil {
 		return c.HTTP
 	}

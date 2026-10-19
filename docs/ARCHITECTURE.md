@@ -45,6 +45,24 @@ Hub 与 Agent 是两个独立二进制，同一 module、共享 `internal/protoc
 `BIND_IP` 由部署脚本现取（`tailscale ip -4` 或指定内网 IP），写进 `.env`，不硬编码进仓库。
 Agent 启动时校验绑定地址属于 tailscale0，否则拒绝启动（`--allow-insecure-bind` 例外）。
 
+### 反向长连接（Agent 主动连 Hub，2026-10-19 起）
+
+上面的「Hub 拨号到 Agent」在 NAT 后或纯内网（无公网入口）的机器上不成立。
+为此新增反向模式（`--reverse` / `DD_AGENT_REVERSE=1`）：
+
+```
+Agent ──出站 wss──> Hub /api/v1/agent/link ──复用同一条 WS──> 下发原 HTTP 请求
+```
+
+- 连接由 **Agent 主动拨出**，Hub 从不反连；握手复用现有 Bearer + HMAC（±120s 时间窗），
+  连接绑定 `servers.id`；同 ID 新连接顶替旧连接（旧连接收 `goaway` 后关闭）。
+- Hub 侧 `internal/agentlink` 维护 `server_id → 连接`；`agentcli` 通过 `Doer` 抽象
+  在有活跃连接时走 WS、没有则**回落 HTTP**——两种模式共用同一套请求构造/重试/解信封逻辑。
+- Agent 侧把帧合成为 `http.Request` 后 `ServeHTTP` 到本地 mux，
+  **路由、鉴权、错误映射与 HTTP 模式完全一致**（不复制 handler）。
+- 心跳 25s（`--link-ping`），必须明显小于反代空闲超时（Cloudflare 约 100s）。
+- M1 只承载非流式请求：请求 ≤1 MiB、响应 ≤8 MiB；流式日志与大文件在 M2。
+
 ## 认证
 
 两套并存、互不越权的鉴权，均通过同一 `/api/*` 端点组：
@@ -412,6 +430,7 @@ Vue 3 + Vite + TS，`vue-router` + `pinia`，图表 uPlot，无重型 UI 框架�
 
 - tailnet：4 台 linux 节点在线且互相 `tailscale ping` 通；跨主机的常规管理端口被阻，
   因此一切通信只能由 Hub 主动发起的 tailnet HTTP 承担，不能指望反向 SSH。
+  （2026-10-19 更新：已新增 Agent 主动反向长连接模式，该约束不再是唯一选项。）
 - 目标宿主机：tailscale 1.102.2、Docker Compose v2 系、运维账号具备 docker 组权限；
   已有多个长期运行容器（面板类、监控 agent 类、开发沙箱类），**这些就是必须保护的存量**。
 - 宿主机防火墙处于激活状态——部署阶段必须先验证 tailscale0 上的入站未被拦截，

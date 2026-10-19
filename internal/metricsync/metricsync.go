@@ -35,11 +35,21 @@ type Poller struct {
 	retention time.Duration
 	logf      func(format string, args ...any)
 	lastPrune time.Time
+	// linkFor 返回某台机器的反向连接；nil = 该机没有活跃长连接，回落 HTTP。
+	linkFor func(int64) agentcli.Doer
+}
+
+// Option 定制 Poller 的可选行为。
+type Option func(*Poller)
+
+// WithLink 让采集优先走反向长连接：linkFor 返回 nil 时自动回落 HTTP。
+func WithLink(linkFor func(int64) agentcli.Doer) Option {
+	return func(p *Poller) { p.linkFor = linkFor }
 }
 
 // New 构造轮询器。logf 为 nil 时落到标准 log（Hub 可换成自己的结构化日志）。
 // interval <= 0 用 DefaultInterval；retention <= 0 用 DefaultRetention。
-func New(st *store.Store, interval, retention time.Duration, logf func(string, ...any)) *Poller {
+func New(st *store.Store, interval, retention time.Duration, logf func(string, ...any), opts ...Option) *Poller {
 	if interval <= 0 {
 		interval = DefaultInterval
 	}
@@ -49,7 +59,11 @@ func New(st *store.Store, interval, retention time.Duration, logf func(string, .
 	if logf == nil {
 		logf = log.Printf
 	}
-	return &Poller{st: st, interval: interval, retention: retention, logf: logf}
+	p := &Poller{st: st, interval: interval, retention: retention, logf: logf}
+	for _, o := range opts {
+		o(p)
+	}
+	return p
 }
 
 // PollOnce 采集一轮，返回成功台数。
@@ -141,6 +155,11 @@ func (p *Poller) collect(ctx context.Context, id int64, name string) error {
 	defer cancel()
 
 	cli := agentcli.New(conn.BaseURL, conn.Token, nil)
+	if p.linkFor != nil {
+		if lc := p.linkFor(id); lc != nil {
+			cli.Link = lc
+		}
+	}
 
 	m, err := cli.Metrics(ctx2)
 	if err != nil {

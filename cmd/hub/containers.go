@@ -21,6 +21,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/yy1319hua/dockdeck/internal/agentcli"
 	"github.com/yy1319hua/dockdeck/internal/guard"
@@ -58,7 +59,20 @@ func (s *server) agentFor(w http.ResponseWriter, r *http.Request) (*agentcli.Cli
 		httpx.WriteError(w, http.StatusInternalServerError, protocol.CodeInternal, "读取服务器连接信息失败")
 		return nil, false
 	}
-	return agentcli.New(conn.BaseURL, conn.Token, nil), true
+	cli := agentcli.New(conn.BaseURL, conn.Token, nil)
+	// 有活跃反向连接就优先走长连接；没有则保持 nil，全部请求回落 HTTP。
+	if s.links != nil {
+		if lc := s.links.Conn(id); lc != nil {
+			cli.Link = lc
+			return cli, true
+		}
+	}
+	if strings.HasPrefix(conn.BaseURL, "reverse://") {
+		// 反向模式的 Agent 没有可拨号地址：无连接即离线，别去撞一个不存在的端口。
+		httpx.WriteError(w, http.StatusBadGateway, protocol.CodeUpstreamUnavailable, "Agent 反向连接不在线")
+		return nil, false
+	}
+	return cli, true
 }
 
 // writeAgentError 把 agentcli 的失败翻译成 Hub 的响应。

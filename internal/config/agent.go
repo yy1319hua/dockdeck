@@ -6,10 +6,12 @@ import (
 	"flag"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/yy1319hua/dockdeck/internal/protocol"
 )
@@ -60,6 +62,15 @@ var DefaultFsDeny = []string{
 type AgentConfig struct {
 	// ListenAddr 形如 host:port。
 	ListenAddr string
+
+	// Reverse 为 true 时进入反向模式：不监听端口，主动连 Hub 的 WebSocket。
+	// 用于 NAT 后 / 无公网 IP 的 Agent——Hub 不再需要拨号到它。
+	Reverse bool
+	// LinkPingInterval 是反向连接的心跳间隔，默认 25s。
+	// 必须明显小于反代（Cloudflare 约 100s）的空闲超时，否则连接会被静默掐断。
+	LinkPingInterval time.Duration
+	// LinkMaxInflight 是单条反向连接的并发请求上限。
+	LinkMaxInflight int
 	// Token 是 Hub→Agent 的共享密钥明文，同时用于 Bearer 校验与 HMAC 签名。
 	// 它只存在于内存里：Hub 侧的库中副本由机器主密钥加密存储。
 	Token string
@@ -147,11 +158,13 @@ func agentDefaults() AgentConfig {
 	}
 	return AgentConfig{
 		// 安全默认值：先绑回环，绝不误绑到所有接口。
-		ListenAddr: "127.0.0.1:9527",
-		CertDir:    filepath.Join(dataDir, "certs"),
-		TLSMode:    TLSModeSelf,
-		BindIfaces: []string{DefaultBindIfaces},
-		DiskMounts: []string{"/"},
+		ListenAddr:       "127.0.0.1:9527",
+		LinkPingInterval: 25 * time.Second,
+		LinkMaxInflight:  64,
+		CertDir:          filepath.Join(dataDir, "certs"),
+		TLSMode:          TLSModeSelf,
+		BindIfaces:       []string{DefaultBindIfaces},
+		DiskMounts:       []string{"/"},
 		// 文件管理的上限与黑名单先落默认值；FsRoots 故意留空——
 		// 「没配根目录」就是要让模块整体关闭。
 		FsMaxFile:    DefaultFsMaxFile,
@@ -207,6 +220,23 @@ func LoadAgent(args []string) (AgentConfig, error) {
 	}
 	if v := os.Getenv("DD_AGENT_COMPOSE_DIRS"); v != "" {
 		c.ComposeDirs = splitList(v)
+	}
+	if envFlag("DD_AGENT_REVERSE") {
+		c.Reverse = true
+	}
+	if v := os.Getenv("DD_AGENT_LINK_PING"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return AgentConfig{}, fmt.Errorf("DD_AGENT_LINK_PING 非法: %w", err)
+		}
+		c.LinkPingInterval = d
+	}
+	if v := os.Getenv("DD_AGENT_LINK_INFLIGHT"); v != "" {
+		n, err := parsePositiveInt64("DD_AGENT_LINK_INFLIGHT", v)
+		if err != nil {
+			return AgentConfig{}, err
+		}
+		c.LinkMaxInflight = int(n)
 	}
 	if v := os.Getenv("DD_AGENT_FS_ROOTS"); v != "" {
 		c.FsRoots = splitList(v)
@@ -266,6 +296,9 @@ func LoadAgent(args []string) (AgentConfig, error) {
 	joinSecretFile := fs.String("join-secret-file", "", "读取纳管 join_secret 的文件（优先用环境变量 DD_AGENT_JOIN_SECRET）")
 	insecureEnroll := fs.Bool("enroll-insecure", c.EnrollInsecure, "自注册调用 Hub 时跳过 TLS 校验（Hub 自签证书场景默认开）")
 	insecure := fs.Bool("allow-insecure-bind", c.AllowInsecureBind, "跳过网卡白名单校验（不安全，仅调试）")
+	fs.BoolVar(&c.Reverse, "reverse", c.Reverse, "反向模式：不监听端口，主动连 Hub 的 WebSocket（NAT 后/无公网 IP 的 Agent 用）")
+	fs.DurationVar(&c.LinkPingInterval, "link-ping", c.LinkPingInterval, "反向连接心跳间隔（默认 25s，须小于反代空闲超时）")
+	fs.IntVar(&c.LinkMaxInflight, "link-inflight", c.LinkMaxInflight, "反向连接并发请求上限")
 	var tlsModeRaw string
 	fs.StringVar(&tlsModeRaw, "tls", string(c.TLSMode), "TLS 模式：self|none")
 	if err := fs.Parse(args); err != nil {
@@ -389,6 +422,21 @@ func (c *AgentConfig) normalizeFs() error {
 func (c AgentConfig) Validate() error {
 	if strings.TrimSpace(c.Token) == "" {
 		return fmt.Errorf("缺少 Agent token：请设置环境变量 DD_AGENT_TOKEN 或用 --token-file 指定")
+	}
+	if c.Reverse {
+		// 反向模式不监听：跳过监听地址与网卡白名单校验——这两条只在「自己开端口」时才有意义。
+		// 但 Hub 地址必须可用，否则连都没法连。
+		if strings.TrimSpace(c.HubURL) == "" {
+			return fmt.Errorf("反向模式必须配置 Hub 地址：--hub-url 或 DD_HUB_URL")
+		}
+		u, err := url.Parse(c.HubURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return fmt.Errorf("反向模式的 Hub 地址必须是 http(s)://host，得到 %q", c.HubURL)
+		}
+		if c.LinkPingInterval <= 0 || c.LinkMaxInflight <= 0 {
+			return fmt.Errorf("反向连接参数非法：link-ping / link-inflight 必须为正")
+		}
+		return nil
 	}
 	host, port, err := net.SplitHostPort(c.ListenAddr)
 	if err != nil {

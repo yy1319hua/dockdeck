@@ -32,8 +32,13 @@ func enrollToHub(cfg config.AgentConfig) error {
 		scheme = "http"
 	}
 	// base_url 用 Agent 实际监听地址：运维已把 DD_AGENT_LISTEN 设为 Hub 可达地址（非回环）。
-	baseURL := scheme + "://" + cfg.ListenAddr
 	name, _ := os.Hostname()
+	baseURL := scheme + "://" + cfg.ListenAddr
+	if cfg.Reverse {
+		// 反向模式没有可被 Hub 拨号的地址：用标记串占位，
+		// 让 Hub 明确「这台只能走长连接」，而不是去撞一个不存在的端口。
+		baseURL = "reverse://" + name
+	}
 
 	payload, _ := json.Marshal(map[string]string{"name": name, "base_url": baseURL})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,

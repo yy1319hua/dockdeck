@@ -12,10 +12,17 @@
   <figure class="chart">
     <figcaption class="chart__cap">
       <span class="chart__title">{{ title }}</span>
-      <span class="chart__now">{{ nowText }}</span>
+      <span v-if="!live" class="chart__now">{{ nowText }}</span>
     </figcaption>
-    <div v-if="ready" class="chart__scroll">
+    <div v-if="ready" class="chart__wrap">
       <div ref="host" class="chart__canvas" :style="{ height: height + 'px' }" />
+      <!-- 触摸读值浮层：手指滑到哪就显示那一刻的值（仅手机态 + interactive） -->
+      <div v-if="live" class="chart__live" aria-hidden="true">
+        <span class="chart__live-time">{{ live.time }}</span>
+        <span v-for="row in live.rows" :key="row.label" class="chart__live-row">
+          <i class="chart__dot" :style="{ background: row.stroke }" />{{ row.label }} {{ row.text }}
+        </span>
+      </div>
     </div>
     <p v-else class="chart__empty">暂无历史数据</p>
   </figure>
@@ -105,6 +112,46 @@ function lastTwoRate(): { rx: number; tx: number } | null {
   }
 }
 
+// ---- 触摸读值 ----
+// uPlot 自带 cursor 只绑鼠标事件，触摸不会触发；这里手动把触摸坐标喂给 setCursor，
+// 再按 cursor.idx 取该时刻各系列的值渲染成浮层（视觉对齐用户给的参考图）。
+const liveIdx = ref<number | null>(null)
+
+function fmtValue(metric: ChartMetric, v: number | null | undefined): string {
+  if (v === null || v === undefined || Number.isNaN(v)) {
+    return '—'
+  }
+  switch (metric) {
+    case 'cpu':
+      return formatPercent(v)
+    case 'mem':
+    case 'disk':
+      return formatBytes(v)
+    case 'net':
+      return formatRate(v)
+  }
+  return '—'
+}
+
+const live = computed(() => {
+  const idx = liveIdx.value
+  if (idx === null || idx < 0 || idx >= props.points.length) {
+    return null
+  }
+  const p = props.points[idx]
+  const d = new Date(p.ts)
+  const hh = String(d.getHours()).padStart(2, '0')
+  const mm = String(d.getMinutes()).padStart(2, '0')
+  return {
+    time: `${hh}:${mm}`,
+    rows: buildSeries().map((s) => ({
+      label: s.label,
+      stroke: s.stroke,
+      text: fmtValue(props.metric, s.values[idx]),
+    })),
+  }
+})
+
 function cssVar(name: string, fallback: string): string {
   const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
   return v || fallback
@@ -186,9 +233,21 @@ function draw() {
       width: el.clientWidth || 320,
       height: props.height,
       padding: [4, 0, 0, 0],
-      // 触摸读值：仅 interactive 且手机态开启光标+图例（uPlot 触摸即出读数）。
-      cursor: { show: props.interactive && isMobile.value },
-      legend: { show: props.interactive && isMobile.value },
+      // 触摸读值：cursor 画竖线 + 数据点；legend 关掉，改用自定义浮层
+      // （uPlot 原生 legend 在图表下方、横向排列，与参考图的右上角样式不一致）。
+      cursor: {
+        show: props.interactive && isMobile.value,
+        y: false,
+        points: { size: 10, width: 2 },
+      },
+      legend: { show: false },
+      hooks: {
+        setCursor: [
+          (u: uPlot) => {
+            liveIdx.value = props.interactive && isMobile.value ? (u.cursor.idx ?? null) : null
+          },
+        ],
+      },
       scales: { x: { time: true }, y: { range: yRange } },
       axes: [
         { stroke: axis, grid: { stroke: grid, width: 1 }, ticks: { stroke: grid }, font: '10px sans-serif' },
@@ -208,6 +267,34 @@ function draw() {
     [xs, ...series.map((s) => s.values)] as uPlot.AlignedData,
     el,
   )
+  bindTouch(props.interactive && isMobile.value)
+}
+
+// uPlot 的 cursor 只认鼠标；手机端要把 touch 坐标手动喂给 setCursor。
+// passive 监听，不阻断页面滚动（图表已全宽，无需横滑）。
+function onTouch(e: TouchEvent) {
+  if (!chart) {
+    return
+  }
+  const t = e.touches[0]
+  if (!t) {
+    return
+  }
+  const rect = chart.over.getBoundingClientRect()
+  chart.setCursor({ left: t.clientX - rect.left, top: t.clientY - rect.top })
+}
+
+function bindTouch(on: boolean) {
+  const over = chart?.over
+  if (!over) {
+    return
+  }
+  over.removeEventListener('touchstart', onTouch)
+  over.removeEventListener('touchmove', onTouch)
+  if (on) {
+    over.addEventListener('touchstart', onTouch, { passive: true })
+    over.addEventListener('touchmove', onTouch, { passive: true })
+  }
 }
 
 onMounted(() => {
@@ -270,6 +357,9 @@ onBeforeUnmount(() => {
 
 .chart__canvas {
   width: 100%;
+  /* 手机态：纵向手势留给页面滚动，横向手势交给图表读值——
+     不加这条，手指一滑先滚页面，光标不跟手（用户 2026-10-19 反馈的核心症状）。 */
+  touch-action: pan-y;
 }
 
 .chart__empty {
@@ -285,18 +375,44 @@ onBeforeUnmount(() => {
 .chart :deep(.u-wrap) {
   background: transparent;
 }
-.chart__scroll {
+.chart__wrap {
+  position: relative;
   width: 100%;
 }
 
-@media (max-width: 767px) {
-  .chart__scroll {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-  }
+/* 读数浮层：右上角，时间在上、各系列值在下（对齐用户参考图）。 */
+.chart__live {
+  position: absolute;
+  top: 0;
+  right: var(--space-1);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  pointer-events: none;
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bg-elev-1) 78%, transparent);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.35;
+}
 
-  .chart__scroll .chart__canvas {
-    min-width: 180%;
-  }
+.chart__live-time {
+  color: var(--fg-subtle);
+}
+
+.chart__live-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--fg-default);
+}
+
+.chart__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
 }
 </style>

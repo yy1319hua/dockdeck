@@ -145,4 +145,12 @@ async function onLogout() {
     display: none;
   }
 }
+
+/* 手机态（<768px，方案 A）：导航沉底为 TabBar，侧栏/抽屉整体退役，
+   汉堡也不该再出现——点了只会拉出被 display:none 的抽屉。 */
+@media (max-width: 767px) {
+  .topbar__menu {
+    display: none;
+  }
+}
 </style>

@@ -388,4 +388,11 @@ const procText = computed(() => {
   text-align: left;
   padding: var(--space-2) var(--space-3);
 }
+
+/* 手机态（<768px，PLAN-MOBILE M8）：四图严格单列，拇指纵向浏览。 */
+@media (max-width: 767px) {
+  .host__grid {
+    grid-template-columns: 1fr;
+  }
+}
 </style>

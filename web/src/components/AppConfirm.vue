@@ -174,4 +174,27 @@ function onCancel() {
 .fade-leave-to {
   opacity: 0;
 }
+
+/* 手机态（<768px，PLAN-MOBILE M8）：确认框沉底全宽，按钮横向铺满、大触区。 */
+@media (max-width: 767px) {
+  .mask {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .dialog {
+    width: 100%;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    padding-bottom: calc(var(--space-5) + env(safe-area-inset-bottom));
+  }
+
+  .dialog__acts {
+    margin-top: var(--space-4);
+  }
+
+  .dialog__acts .btn {
+    flex: 1;
+    min-height: 48px;
+  }
+}
 </style>

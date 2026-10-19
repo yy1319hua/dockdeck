@@ -14,8 +14,6 @@
     <main class="shell__main">
       <RouterView />
     </main>
-    <!-- 手机态主导航（方案 A，PLAN-MOBILE M1/M2）：<768px 显示，桌面 CSS 隐藏。 -->
-    <AppTabBar />
   </div>
 </template>
 
@@ -23,7 +21,6 @@
 import { onMounted, onUnmounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import AppSidebar from './AppSidebar.vue'
-import AppTabBar from './AppTabBar.vue'
 import AppTopbar from './AppTopbar.vue'
 import { useUiStore } from '@/stores/ui'
 
@@ -87,24 +84,11 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   }
 }
 
-/* 手机态（<768px，方案 A）：侧栏整体退役（抽屉也不再出现），主导航沉底。 */
+/* 手机态（<768px，方案 B）：沿用抽屉导航（1024 断点已覆盖），
+   仅收紧内容边距——导航回 B，卡片化等 M3+ 优化保留。 */
 @media (max-width: 767px) {
-  .shell {
-    grid-template-areas:
-      'topbar'
-      'main'
-      'tabbar';
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: 56px minmax(0, 1fr) auto;
-  }
-
-  .sidebar {
-    display: none;
-  }
-
   .shell__main {
-    /* TabBar 吸底不占内容流之外：多留一层底部安全区，长列表最后一行不被盖。 */
-    padding-bottom: calc(var(--space-5) + env(safe-area-inset-bottom));
+    padding: var(--space-3);
   }
 }
 </style>

@@ -51,7 +51,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import MetricChart from '@/components/MetricChart.vue'
-import { fetchOverview, type HostPointWire } from '@/api/metrics'
+import { fetchOverview, type HostMetricsWire, type HostPointWire } from '@/api/metrics'
 import type { ServerLive } from '@/stores/overview'
 import { formatAgo, formatBytes, formatPercent, formatRate } from '@/utils/format'
 
@@ -82,6 +82,36 @@ async function loadPoints() {
 
 onMounted(loadPoints)
 watch(() => props.live.server.id, loadPoints)
+
+// v0.2.2 #10：轮询器每 30s 推来新实时指标，把点 append 到曲线并滑窗——
+// 停留在总览页曲线右端持续前进，不必等重新拉 overview。字段口径与后端
+// SaveMetricsSnapshot 一致（rootDisk / sumNet / cpu.usage_percent / load.one）。
+watch(
+  () => props.live.metrics,
+  (nm) => {
+    if (!nm || disposed) return
+    const p = pointFromLive(nm)
+    const last = points.value[points.value.length - 1]
+    if (last && last.ts === p.ts) return // 与拉到的历史点重叠时不重复
+    points.value = [...points.value, p].slice(-130)
+  },
+)
+
+function pointFromLive(m: HostMetricsWire): HostPointWire {
+  const disk = m.disks.find((d) => d.mount === '/') ?? m.disks[0]
+  return {
+    ts: m.collected_at,
+    cpu_pct: m.cpu.usage_percent,
+    mem_bytes: m.memory.used,
+    mem_total: m.memory.total,
+    disk_bytes: disk?.used ?? 0,
+    disk_total: disk?.total ?? 0,
+    net_rx: m.network.reduce((a, n) => a + n.rx_bytes, 0),
+    net_tx: m.network.reduce((a, n) => a + n.tx_bytes, 0),
+    load1: m.load.one,
+  }
+}
+
 onBeforeUnmount(() => {
   disposed = true
 })

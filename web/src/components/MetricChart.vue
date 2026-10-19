@@ -206,7 +206,10 @@ onMounted(() => {
   }
 })
 
-watch(() => [props.points, props.metric], draw)
+// v0.2.2 #9：flush 'post'——首次数据到达时 ready 才变 true，v-if 的 DOM 要等
+// 渲染后才存在；默认 'pre' 会在 ref 仍为 null 时 draw 空转，之后无人再触发，
+// 图表首屏就丢了。'post' 保证本次更新里 DOM 挂好后才画。
+watch(() => [props.points, props.metric], draw, { flush: 'post' })
 
 onBeforeUnmount(() => {
   ro?.disconnect()

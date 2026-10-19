@@ -47,7 +47,13 @@ func enrollToHub(cfg config.AgentConfig) error {
 		return fmt.Errorf("构造纳管请求失败: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+cfg.JoinSecret)
+	// 反向模式下用户往往只提供 token（token 本身就是 join_secret），
+	// 若 JoinSecret 为空就用 Token 兜底，避免「有凭证却因字段没填被拒」。
+	secret := cfg.JoinSecret
+	if secret == "" {
+		secret = cfg.Token
+	}
+	req.Header.Set("Authorization", "Bearer "+secret)
 
 	resp, err := enrollClient(cfg).Do(req)
 	if err != nil {

@@ -30,12 +30,14 @@ TLS 已起 + 鉴权生效」，且不必把 token 放上命令行。
 
 ## 手工步骤（脚本不可用时）
 
-镜像默认 `ghcr.io/yy1319hua/dockdeck-{hub,agent}:latest`，随私有库发布故为**私有镜像**，
-部署宿主机首次拉取前需登录（用有 `read:packages` 的 GitHub PAT）：
+镜像默认 `ghcr.io/yy1319hua/dockdeck-{hub,agent}:latest`，随公开库发布故为**公开镜像**，
+匿名即可拉取，**部署机不需要任何 GHCR 凭据**：
 
 ```bash
-docker login ghcr.io   # 用户名 = GitHub 用户名，密码 = PAT
+docker pull ghcr.io/yy1319hua/dockdeck-hub:v0.2.1   # 无需 docker login
 ```
+
+只有镜像转回私有时才需要 `docker login ghcr.io`（PAT 需 `read:packages`）。
 
 镜像由 `.github/workflows/ci.yml` 在打 `v*` tag 时经 GitHub Actions 构建并推送
 （双架构、免 QEMU；tag 名与 `latest` 两个 tag）。

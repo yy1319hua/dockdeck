@@ -20,7 +20,7 @@
 #     {hub,agent}:latest）对应——改这里记得同步 compose 默认值。
 #   * registry 用 ghcr.io + Actions 自带 GITHUB_TOKEN（permissions:
 #     packages: write），不落任何额外 secret。私有库镜像默认私有，部署
-#     宿主机需 docker login ghcr.io（PAT read:packages）——见
+#     公开镜像匿名可拉，宿主机无需 docker login——见
 #     deploy/README.md。
 #   * 多架构免 QEMU：Dockerfile 构建阶段全钉 BUILDPLATFORM、Go 侧
 #     GOARCH=$TARGETARCH 交叉编译，没有「构建期运行目标架构二进制」的

@@ -7,7 +7,7 @@
 - [ ] 已装 Docker Engine + Compose v2（`docker compose version` 有输出）
 - [ ] `docker` 能连 socket（`docker ps` 不报权限错）
 - [ ] 已确定绑定 IP（`tailscale ip -4` 或 `ip -4 addr show eth0`）
-- [ ] 已备 GHCR PAT（`read:packages`）
+- [ ] 能访问 ghcr.io（公开镜像，无需 PAT）
 - [ ] 在 `deploy/` 目录下操作
 
 ## 2. 预检阶段失败
@@ -19,14 +19,15 @@
 | 端口被占用 | 8443/9527 已被占 | `ss -ltnp \| grep -E '8443\|9527'` 查占用进程并让出 |
 | socket 摸不到 | 当前用户不在 docker 组 / 无 root | 用 `sudo` 跑安装脚本 |
 
-## 3. GHCR 拉取 401 / 镜像拉不到
+## 3. GHCR 拉取失败 / 镜像拉不到
 
-- **症状**：`pull` 步骤报 401 / `manifest unknown`。
-- **根因**：
-  1. 未登录或登录 token 无效 → `docker login ghcr.io`，用户名 = GitHub 账号，密码 = PAT。
-  2. PAT **缺少 `read:packages`** 权限 → 到 GitHub 重新生成带 `read:packages` 的 PAT。
-  3. 镜像尚未发布（release job 未跑）→ 确认是否打了 `v*` tag 或跑了手动发布；私有库镜像默认不存在于公开查询。
-- **GHCR 握手提示**：`GET /v2/` 返回 401 是**协议第一步**（挑战），不代表失败；需按 `WWW-Authenticate` 用 basic 换 bearer 再拉。
+- **症状**：`pull` 步骤报 `denied` / `manifest unknown`。
+- **前提**：镜像随公开库发布，**匿名即可拉**，正常情况不需要任何登录。
+- **排查顺序**：
+  1. tag 不存在（发版失败或 tag 拼错）→ `docker manifest inspect ghcr.io/yy1319hua/dockdeck-hub:<tag>`，404 即未发布。
+  2. 机器上残留失效的 ghcr 旧凭据 → `docker logout ghcr.io` 再重试；**过期凭据会得到 `denied`，比匿名更糟**（这是 2026-10-19 实际踩到的坑）。
+  3. 网络到 ghcr.io 不通 → 换网络或配代理。
+  4. 仅当项目转回私有库时，才需要 `read:packages` 的 PAT 登录。
 
 ## 4. `.env` 报错 / 配置错误
 

@@ -54,7 +54,7 @@ DockDeck Agent 安装脚本
   --dir <PATH>            安装目录，默认 /opt/dockdeck
   --pull-user <USER>      GHCR 用户名（GitHub 账号），默认 yy1319hua
   --pull-token-file <P>   从文件读 GHCR token（无人值守）；缺省交互式输入
-  --skip-login            跳过 docker login（已登录过或镜像已公开）
+  --skip-login            匿名拉取失败时也不尝试登录（公开镜像用不到）
   --check                 只渲染 compose 自检，不登录、不拉取、不启动
   --force                 重写已存在的 .env
   -h, --help              显示本帮助
@@ -281,20 +281,24 @@ ghcr_login() {
     info "已登录 ghcr.io（用户 $PULL_USER）"
 }
 
-if (( DO_LOGIN )); then
-    ghcr_login
-else
-    info "按 --skip-login 跳过登录，直接尝试拉取"
-fi
-
-# ---------------------------------------------------------------- 拉取（失败即停）
-info "拉取镜像：$IMAGE"
+# 2026-10-19 起镜像随公开库发布，匿名即可拉：先直接 pull，只有失败才谈登录。
+# 这样部署机不必再持有任何 GHCR 凭据——凭据越少越好。
+info "拉取镜像：$IMAGE（公开镜像，匿名拉取）"
 if ! docker pull "$IMAGE"; then
-    warn "镜像拉取失败：$IMAGE"
-    warn "若上面提示 unauthorized / denied / 401，多半是 GHCR 未登录或 token 过期："
-    warn "  docker login ghcr.io    # 用户名 = GitHub 账号，密码 = 有 read:packages 的 PAT"
-    warn "  然后重跑本脚本（可加 --skip-login 避免重复登录）"
-    exit 1
+    warn "匿名拉取失败：$IMAGE"
+    if (( DO_LOGIN )) && { [[ -t 0 ]] || [[ -n "$PULL_TOKEN_FILE" ]]; }; then
+        warn "改为登录 ghcr.io 后重试（仅在镜像转回私有、或本地残留失效凭据时才需要）"
+        ghcr_login
+        if ! docker pull "$IMAGE"; then
+            warn "登录后仍然失败；检查网络与镜像 tag 是否已发布"
+            exit 1
+        fi
+    else
+        warn "若提示 unauthorized / denied / 401，说明该镜像需要登录："
+        warn "  docker login ghcr.io    # 用户名 = GitHub 账号，PAT 需 read:packages"
+        warn "  然后重跑本脚本（不要加 --skip-login）"
+        exit 1
+    fi
 fi
 
 # ---------------------------------------------------------------- 落盘

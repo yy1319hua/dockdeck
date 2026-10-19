@@ -67,7 +67,7 @@ Agent 只做「被 Hub 调用」一件事，所有请求强制 **Bearer + HMAC �
 
 | 凭据 | 形态 | 管理 |
 |------|------|------|
-| GHCR 拉镜像 PAT | `read:packages` GitHub PAT | 部署机 `docker login ghcr.io`；只给最小 scope（纯读包），碰不到私有代码 |
+| GHCR 凭据 | **不需要**（公开镜像） | 2026-10-19 起镜像随公开库发布，部署机匿名拉取；仅当镜像转回私有时才需 `read:packages` PAT，用完即删 |
 | Agent Token | Hub→Agent 共享密钥 | `secrets/agent.token`（600），文件挂载，不进环境变量 |
 | Hub 数据主密钥 / 自签证书 | 命名卷内 | 随 Hub 数据卷备份（`backup.sh`）|
 
@@ -83,7 +83,7 @@ Agent 只做「被 Hub 调用」一件事，所有请求强制 **Bearer + HMAC �
 ## 11. 部署安全清单
 
 - [ ] Hub/Agent 只绑 Tailnet/内网具体 IP，绝不 `0.0.0.0` 公网暴露。
-- [ ] GHCR PAT 仅 `read:packages`，定期轮换。
+- [ ] 部署机未保存 ghcr 凭据（公开镜像无需登录；`~/.docker/config.json` 的 `auths` 应为空）。
 - [ ] `secrets/agent.token` 权限 600，且 `docker inspect` 不可见。
 - [ ] `.env` / `secrets/` 已确认在 `.gitignore` 内。
 - [ ] 部署后跑 `verify.sh` 确认冒烟 + 存量容器不变性。

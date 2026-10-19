@@ -20,7 +20,7 @@ DockDeck 由两类角色组成，通过 Compose 单文件双 profile 部署：
 
 - Docker Engine + Docker Compose **v2**（`docker compose` 子命令）。
 - 一个具体可达的绑定 IP：Tailscale 网卡 IP（`tailscale ip -4`）或内网具体 IP。**`0.0.0.0` 会被应用层拒绝**。
-- 部署机需能拉取 GHCR 私有镜像：一个具备 `read:packages` 的 GitHub PAT（用户名 = GitHub 账号，密码 = PAT）。
+- 能访问 ghcr.io 即可：镜像随公开库发布，**匿名可拉，部署机不需要任何凭据**（仅转回私有时才需 `read:packages` 的 PAT）。
 
 **网络暴露前提（重要）**
 
@@ -55,8 +55,8 @@ sudo ./install-agent.sh --hub-url https://100.64.0.1:8443 --server-name node2
 
 1. **预检**：docker / compose v2 / docker socket / 端口占用。
 2. **解析绑定 IP**：默认 `tailscale ip -4` 第一条；`--bind-ip` 可强制；校验 IP 属本机网卡。
-3. **GHCR 交互登录**：`read -s` + `docker login --password-stdin`，失败可重来。
-4. **拉镜像**：`pull` 前置且失败即停（401 会提示重新登录）。
+3. **拉镜像**：公开镜像直接匿名 `pull`（2026-10-19 起不再需要 GHCR 凭据）。
+4. **登录兜底**：仅当匿名失败且当前是交互终端时，才提示 `docker login` 后重试；仍失败即停。
 5. **落盘**：`.env`（600）、Agent 侧 `secrets/agent.token`（600，无尾随换行）。
 6. **启动**：`compose up -d`。
 7. **探活**：Hub 探 `/api/v1/health`（恒 200）；Agent 探 `/api/v1/info` **期望 401**（401 恰好证明端口已听 + TLS 已起 + 鉴权生效）。

@@ -886,12 +886,12 @@ func (s *server) routes() http.Handler {
 	}, middleware.Audit(s.st, "admin.backup", s.backupDB))
 
 	// 受管主机清单：直接读 servers 表，不做实时探测（在线状态以 last_seen 为准）。
-	// 列表只投影管理所需字段，绝不回带 Agent 令牌等秘密；纳管（写入 servers）机制见 `docs/ARCHITECTURE.md` 的纳管设计裁定。
+	// 列表只投影管理所需字段，绝不回带 Agent 令牌等秘密；纳管（写入 servers）机制见`docs/ARCHITECTURE.md` 的纳管设计裁定。
 	tbl.Add(route.Entry{
 		Method: "GET", Path: "/api/v1/servers", OKSchema: "ServerList", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadMetrics,
 		Summary: "受管主机清单", Tags: []string{"Servers"},
 		Desc: "返回全部受管主机（含已禁用）。列表不暴露 Agent 令牌等秘密字段；在线状态以 last_seen 为准。" +
-			"纳管（写入 servers 表）机制见 `docs/ARCHITECTURE.md` 的纳管设计裁定。",
+			"纳管（写入 servers 表）机制见`docs/ARCHITECTURE.md` 的纳管设计裁定。",
 		Responses: []route.Response{
 			{Status: 403, Desc: "缺少 read:metrics 权限"},
 			{Status: 500, Desc: "读取受管主机清单失败"},

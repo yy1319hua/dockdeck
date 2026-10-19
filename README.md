@@ -11,7 +11,7 @@ Hub 负责登录、聚合、审计与界面，并对外提供 OpenAPI 供 App �
   文件管理、审计日志、OpenAPI + API Token
 - 不含（明确排除）：服务拨测、告警通知、Web 终端、免登录公开状态页
 
-> 状态：开发中。当前进度见 `docs/ARCHITECTURE.md`；架构与接口契约见 `docs/ARCHITECTURE.md`。
+> 状态：开发中。当前进度见 `docs/ARCHITECTURE.md` 与提交历史；架构与接口契约见 `docs/ARCHITECTURE.md`。
 
 ## 为什么是 Hub + Agent
 

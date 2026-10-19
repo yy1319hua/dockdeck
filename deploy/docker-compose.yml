@@ -12,7 +12,7 @@
 #   docker compose --profile hub --profile agent up -d   # 单机双角色
 #   docker compose --profile hub --profile agent config   # 自检（渲染+插值，不需守护进程）
 #
-# 设计要点与取舍（详见 docs/ARCHITECTURE.md「网络与暴露」）：
+# 设计要点与取舍（详见 docs/ARCHITECTURE.md「网络与暴露」与 `.github/workflows/ci.yml` 的发布流程）：
 #   * network_mode: host + 应用层绑 IP——Hub 禁绑 0.0.0.0（config.Validate），
 #     桥接网络里容器 IP 运行时分配、写不进启动参数；host 下 tailscale0 直接
 #     可见，暴露面仍由应用自己的绑定白名单把守。故无 ports: 发布（host 模式下

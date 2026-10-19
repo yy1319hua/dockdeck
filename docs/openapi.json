@@ -1022,7 +1022,7 @@
       "get": {
         "operationId": "getApiV1Servers",
         "summary": "受管主机清单",
-        "description": "返回全部受管主机（含已禁用）。列表不暴露 Agent 令牌等秘密字段；在线状态以 last_seen 为准。纳管（写入 servers 表）机制见 `docs/ARCHITECTURE.md` 的纳管设计裁定。\n\nAPI Token 须具备 scope `read:metrics`；浏览器会话不受此限制。",
+        "description": "返回全部受管主机（含已禁用）。列表不暴露 Agent 令牌等秘密字段；在线状态以 last_seen 为准。纳管（写入 servers 表）机制见`docs/ARCHITECTURE.md` 的纳管设计裁定。\n\nAPI Token 须具备 scope `read:metrics`；浏览器会话不受此限制。",
         "tags": [
           "Servers"
         ],

@@ -105,6 +105,26 @@
       </tbody>
     </table>
 
+    <!-- 手机态（<768px，PLAN-MOBILE M5）：表格退役转卡片；动作只有删除，直接行内放，不必收面板。 -->
+    <div v-else-if="im.images.length > 0" class="im__cards">
+      <article v-for="img in im.images" :key="img.id" class="icard">
+        <header class="icard__head">
+          <span v-if="img.dangling" class="im__none">&lt;none&gt;</span>
+          <span v-else class="icard__tag" :title="img.tags.join(' | ')">{{ img.tags[0] || '&lt;none&gt;' }}</span>
+          <span class="icard__size">{{ formatBytes(img.size) }}</span>
+        </header>
+        <p v-if="img.tags.length > 1" class="icard__more-tags" :title="img.tags.join(' | ')">另有 {{ img.tags.length - 1 }} 个 tag</p>
+        <p class="icard__meta">
+          <span>{{ shortId(img.id) }}</span>
+          <span>{{ img.arch }}/{{ img.os }}</span>
+          <span>{{ formatWhen(img.created) }}</span>
+        </p>
+        <footer class="icard__acts">
+          <button type="button" class="link link--danger" :disabled="acting" @click="askDelete(img)">删除</button>
+        </footer>
+      </article>
+    </div>
+
     <div v-else-if="!im.loading && !im.error" class="im__empty">
       <template v-if="im.servers.length === 0">
         <p class="im__empty-title">还没有纳管的主机</p>
@@ -480,5 +500,73 @@ function onSelectHost(e: Event): void {
   margin-top: var(--space-1);
   color: var(--fg-muted);
   font-size: var(--text-sm);
+}
+
+/* 手机态（<768px，M5）：桌面只见表格，手机只见卡片。 */
+.im__cards {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  .im__table {
+    display: none;
+  }
+
+  .im__cards {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+}
+
+.icard {
+  background: var(--bg-elev-1);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+}
+
+.icard__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.icard__tag {
+  font-weight: var(--weight-medium);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.icard__size {
+  flex: none;
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.icard__more-tags {
+  margin-top: var(--space-1);
+  color: var(--fg-subtle);
+  font-size: var(--text-xs);
+}
+
+.icard__meta {
+  margin-top: var(--space-2);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.icard__acts {
+  margin-top: var(--space-2);
+  display: flex;
+  justify-content: flex-end;
 }
 </style>

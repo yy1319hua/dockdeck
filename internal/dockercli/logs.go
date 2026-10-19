@@ -67,20 +67,44 @@ func (c *Client) Logs(ctx context.Context, id string, o LogsOptions) (io.ReadClo
 
 // doStream 与 do 的区别：不读干响应体（流式透传），超时可豁免（follow 用）。
 func (c *Client) doStream(ctx context.Context, method, path string, noTimeout bool) (*http.Response, error) {
+	var cancel context.CancelFunc
 	if c.RequestTimeout > 0 && !noTimeout {
-		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, c.RequestTimeout)
-		defer cancel()
 	}
 	req, err := http.NewRequestWithContext(ctx, method, "http://docker"+path, nil)
 	if err != nil {
+		if cancel != nil {
+			cancel()
+		}
 		return nil, fmt.Errorf("dockercli: 构造请求失败: %w", err)
 	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
+		if cancel != nil {
+			cancel()
+		}
 		return nil, fmt.Errorf("dockercli: 引擎请求失败: %w", err)
 	}
+	if cancel != nil {
+		// 超时 ctx 必须活到 Body 关闭：这是流式响应，由调用方随后读取。
+		// 若在返回前 cancel（原 defer cancel 写法），Body 立刻失效，
+		// 容器日志非 follow 模式会整条读成 0 字节（GAP-8，node1 实测）。
+		resp.Body = &bodyWithCancel{ReadCloser: resp.Body, cancel: cancel}
+	}
 	return resp, nil
+}
+
+// bodyWithCancel 把 ctx 的 cancel 推迟到 Body 关闭时执行。
+// 正常读完并 Close 释放计时器；调用方中途放弃时 Close 同样会取消，不漏。
+type bodyWithCancel struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (b *bodyWithCancel) Close() error {
+	err := b.ReadCloser.Close()
+	b.cancel()
+	return err
 }
 
 // Demux 把复用流拆帧并把 stdout/stderr 载荷按序写入 w（合流）。

@@ -150,11 +150,16 @@ func Demux(r io.Reader, w io.Writer) error {
 			}
 			return fmt.Errorf("dockercli: 读帧载荷失败: %w", err)
 		}
-		if header[0] == 0 || header[0] == 1 { // stdout / stderr，合流
+		// Docker 复用流的类型定义：0=stdin、1=stdout、2=stderr。
+		// 2 是 stderr，不是「system」——早期把它当未定义类型丢弃，
+		// 导致所有写 stderr 的程序（Go 的 log、logrus 默认输出）日志整条为空
+		// （GAP-9，node1 实测：dockdeck-hub/watchtower 经面板看是 0 字节）。
+		// 3+ 才是未定义：丢弃但继续读，不中断整条流。
+		if header[0] <= 2 {
 			if _, werr := w.Write(payload[:size]); werr != nil {
 				return werr
 			}
-		} // 2=system 而 3+ 未定义：丢弃但继续读，不中断整条流
+		}
 		if _, err := io.ReadFull(r, header); err != nil {
 			if err == io.EOF || err == io.ErrUnexpectedEOF {
 				return nil // 引擎关闭即正常结束

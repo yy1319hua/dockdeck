@@ -74,9 +74,11 @@ var codeStatus = map[string]int{
 	CodeTooLarge:              http.StatusRequestEntityTooLarge,
 	CodePathEscape:            http.StatusBadRequest,
 	CodePathDenied:            http.StatusForbidden,
-	CodeUpstreamUnavailable:   http.StatusBadGateway,
-	CodeUpstreamError:         http.StatusBadGateway,
-	CodeInternal:              http.StatusInternalServerError,
+	// upstream_* 用 424 而非 502：Cloudflare 会把 origin 的 502/504 换成自家
+	// 错误页（v0.2.2 #3），浏览器只看到 http_error，真实原因全丢；424 会原样透传。
+	CodeUpstreamUnavailable: http.StatusFailedDependency,
+	CodeUpstreamError:       http.StatusFailedDependency,
+	CodeInternal:            http.StatusInternalServerError,
 }
 
 // StatusForCode 返回错误码对应的 HTTP 状态码。

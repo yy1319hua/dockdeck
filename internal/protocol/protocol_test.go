@@ -45,8 +45,8 @@ func TestStatusForCode(t *testing.T) {
 		{CodeTooLarge, http.StatusRequestEntityTooLarge},
 		{CodePathEscape, http.StatusBadRequest},
 		{CodePathDenied, http.StatusForbidden},
-		{CodeUpstreamUnavailable, http.StatusBadGateway},
-		{CodeUpstreamError, http.StatusBadGateway},
+		{CodeUpstreamUnavailable, http.StatusFailedDependency},
+		{CodeUpstreamError, http.StatusFailedDependency},
 		{CodeInternal, http.StatusInternalServerError},
 		// 未知码落到 500：宁可按服务端故障处理，也不要伪装成客户端错误。
 		{"totally_unknown_code", http.StatusInternalServerError},

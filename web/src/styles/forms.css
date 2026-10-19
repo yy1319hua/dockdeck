@@ -123,6 +123,21 @@
   font-size: var(--text-xs);
 }
 
+/* 手机态触区收口（PLAN-MOBILE M9）：按钮与文字链接统一抬到 44px 触区，
+   桌面不变；.link 用纵向 padding 撑高而不改字号。 */
+@media (max-width: 767px) {
+  .btn,
+  .btn--sm {
+    height: 44px;
+  }
+
+  .link {
+    display: inline-block;
+    padding: 10px var(--space-2);
+    margin: -10px calc(var(--space-2) * -1);
+  }
+}
+
 .btn--danger:hover:not(:disabled) {
   background: var(--danger);
   border-color: var(--danger);

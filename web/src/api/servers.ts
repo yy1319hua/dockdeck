@@ -5,7 +5,7 @@
  * 所以这里有两套类型——Wire 照抄线上形态，Server 是前端用的 camelCase，
  * 转换只发生在 toServer 一处。将来后端若补了 json tag，改这里就够了。
  */
-import { request } from './client'
+import { postJSON, request } from './client'
 
 export interface ServerWire {
   ID: number
@@ -63,4 +63,32 @@ export function isOnline(s: Server, now: number = Date.now()): boolean {
     return false
   }
   return now - t <= ONLINE_WINDOW_SEC * 1000
+}
+
+/** 纳管邀请：明文 join_secret 仅签发响应可见一次，落库只存哈希。 */
+export interface Invite {
+  joinSecret: string
+  /** 有效期（秒）。页面应在到期后停止展示/复制。 */
+  expiresIn: number
+  warning: string
+}
+
+interface InviteWire {
+  join_secret: string
+  expires_in: number
+  warning: string
+}
+
+/**
+ * 签发一次性纳管邀请（POST /servers/invite，仅浏览器会话可调）。
+ *
+ * ttl_min 默认 15：够用户在目标机器上粘贴命令，又短到泄露窗口有限。
+ * 后端上限 24h，超出会被静默 clamp——这里不重复校验，以响应的 expires_in 为准。
+ */
+export async function createInvite(ttlMin = 15, nameHint?: string): Promise<Invite> {
+  const w = await postJSON<InviteWire>('/servers/invite', {
+    ttl_min: ttlMin,
+    ...(nameHint ? { name_hint: nameHint } : {}),
+  })
+  return { joinSecret: w.join_secret, expiresIn: w.expires_in, warning: w.warning }
 }

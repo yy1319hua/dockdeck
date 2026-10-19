@@ -13,7 +13,10 @@
           共 {{ ov.total }} 台 · 在线 {{ ov.onlineCount }} 台<template v-if="ov.loading"> · 刷新中…</template>
         </p>
       </div>
-      <button type="button" class="btn" :disabled="ov.loading" @click="onRefresh">刷新</button>
+      <div class="ov__actions">
+        <button type="button" class="btn" :disabled="ov.loading" @click="onRefresh">刷新</button>
+        <button type="button" class="btn btn--primary" @click="goAddNode">添加节点</button>
+      </div>
     </header>
 
     <section class="ov__stats">
@@ -36,7 +39,8 @@
 
     <div v-if="ov.loaded && ov.total === 0" class="ov__empty">
       <p class="ov__empty-title">还没有纳管的主机</p>
-      <p class="ov__empty-hint">纳管方式见 S5.8：Hub 签发 join_secret，Agent 启动时自注册。</p>
+      <p class="ov__empty-hint">点「添加节点」生成一次性纳管命令，在目标机器上执行即可。</p>
+      <button type="button" class="btn btn--primary ov__empty-btn" @click="goAddNode">添加节点</button>
     </div>
 
     <div v-else class="ov__grid">
@@ -47,6 +51,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted } from 'vue'
+import { useRouter } from 'vue-router'
 import ServerCard from '@/components/ServerCard.vue'
 import { useOverviewStore } from '@/stores/overview'
 import { formatBytes, formatPercent, formatRatePercent } from '@/utils/format'
@@ -54,6 +59,7 @@ import { useUiStore } from '@/stores/ui'
 
 const ov = useOverviewStore()
 const ui = useUiStore()
+const router = useRouter()
 
 onMounted(() => ov.start())
 onUnmounted(() => ov.stop())
@@ -62,6 +68,10 @@ const rateText = computed(() => formatRatePercent(ov.onlineRate))
 const memText = computed(() =>
   ov.memTotal > 0 ? `${formatBytes(ov.memUsed)} / ${formatBytes(ov.memTotal)}` : '—',
 )
+
+function goAddNode() {
+  void router.push({ name: 'add-node' })
+}
 
 async function onRefresh() {
   ui.clearError()
@@ -77,6 +87,16 @@ async function onRefresh() {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
+}
+
+.ov__actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.ov__empty-btn {
+  margin-top: var(--space-3);
 }
 
 .ov__head {

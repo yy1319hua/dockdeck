@@ -8,6 +8,7 @@ import Compose from '@/pages/Compose.vue'
 import VolumesNetworks from '@/pages/VolumesNetworks.vue'
 import Files from '@/pages/Files.vue'
 import Audit from '@/pages/Audit.vue'
+import AddNode from '@/pages/AddNode.vue'
 import Settings from '@/pages/Settings.vue'
 import DesignTokens from '@/pages/DesignTokens.vue'
 import Login from '@/pages/Login.vue'
@@ -94,6 +95,14 @@ const routes: RouteRecordRaw[] = [
         name: 'audit',
         component: Audit,
         meta: { title: '审计 · DockDeck', requiresAuth: true },
+      },
+      {
+        // PLAN-NODE-DOCS A：添加节点页。入口在总览页按钮，不进侧栏
+        // （纳管是低频一次性动作，占一栏不值当）。
+        path: 'add-node',
+        name: 'add-node',
+        component: AddNode,
+        meta: { title: '添加节点 · DockDeck', requiresAuth: true },
       },
       {
         // S7.8 设置页：单页五分区（改密 / API Token / 保护名单 / TLS 指纹 /

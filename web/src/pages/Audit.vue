@@ -117,6 +117,32 @@
       </tbody>
     </table>
 
+    <!-- 手机态（<768px，PLAN-MOBILE M7）：表格退役转卡片；展开复用同一 detail 区块。 -->
+    <div v-else-if="au.logs.length > 0" class="au__cards">
+      <article v-for="l in au.logs" :key="l.id" class="acard">
+        <header class="acard__head">
+          <span class="acard__action" :title="l.action">{{ l.action }}</span>
+          <span class="au__badge" :class="l.result === 'error' ? 'au__badge--err' : 'au__badge--ok'">{{ l.result || '—' }}</span>
+        </header>
+        <p class="acard__meta">
+          <span>{{ formatRFC3339(l.ts) }}</span>
+          <span>{{ l.username || '—' }}</span>
+          <span>服务器 {{ l.serverId || '—' }}</span>
+        </p>
+        <footer class="acard__acts">
+          <button type="button" class="link" @click="toggleExpand(l.id)">{{ expandedId === l.id ? '收起' : '展开' }}</button>
+        </footer>
+        <dl v-if="expandedId === l.id" class="au__detail acard__detail">
+          <div><dt>ID</dt><dd>{{ l.id }}</dd></div>
+          <div><dt>目标</dt><dd class="au__mono">{{ l.target || '—' }}</dd></div>
+          <div><dt>结果</dt><dd>{{ l.result || '—' }}</dd></div>
+          <div v-if="l.error" class="au__detail-err"><dt>错误</dt><dd class="au__mono">{{ l.error }}</dd></div>
+          <div v-if="l.detail"><dt>明细</dt><dd class="au__mono">{{ l.detail }}</dd></div>
+          <div><dt>来源 IP</dt><dd class="au__mono">{{ l.ip || '—' }}</dd></div>
+        </dl>
+      </article>
+    </div>
+
     <div v-else-if="!au.loading" class="au__empty">
       <template v-if="au.filterActive">
         <p class="au__empty-title">没有匹配的审计记录</p>
@@ -389,5 +415,67 @@ function exportCsv(): void {
 .au__more-hint {
   color: var(--fg-subtle);
   font-size: var(--text-xs);
+}
+
+/* 手机态（<768px，M7）：桌面只见表格，手机只见卡片。 */
+.au__cards {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  .au__table {
+    display: none;
+  }
+
+  .au__cards {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+}
+
+.acard {
+  background: var(--bg-elev-1);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+}
+
+.acard__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.acard__action {
+  font-family: var(--font-mono);
+  font-weight: var(--weight-medium);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.acard__meta {
+  margin-top: var(--space-1);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.acard__acts {
+  margin-top: var(--space-2);
+  display: flex;
+  justify-content: flex-end;
+}
+
+.acard__detail {
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border-subtle);
 }
 </style>

@@ -75,7 +75,23 @@
             </tr>
           </tbody>
         </table>
-        <p v-else class="vn__empty">这台机上没有数据卷。</p>
+        <!-- 手机态（<768px，PLAN-MOBILE M7）：卷表转卡片（与 table 同条件互显）。 -->
+        <div v-if="rs.volumes.length > 0" class="vn__vcards">
+          <article v-for="v in rs.volumes" :key="v.name" class="vcard">
+            <header class="vcard__head">
+              <span class="vcard__name" :title="v.name">{{ v.name }}</span>
+              <span class="vcard__size">{{ volumeSize(v) }}</span>
+            </header>
+            <p class="vcard__meta">
+              <span>{{ v.driver || '—' }}</span>
+              <span>{{ v.scope || '—' }}</span>
+              <span>在用 {{ volumeRef(v) }}</span>
+            </p>
+            <p v-if="labelText(v.labels)" class="vcard__labels" :title="labelText(v.labels)">{{ labelText(v.labels) }}</p>
+            <p class="vcard__when">{{ formatRFC3339(v.createdAt) }}</p>
+          </article>
+        </div>
+        <p v-if="rs.volumes.length === 0" class="vn__empty">这台机上没有数据卷。</p>
         <p class="vn__note">
           「在用容器」是 Engine 给的引用计数——它<b>不给</b>具体是哪些容器在用（要看名单须逐个容器
           inspect）。卷的宿主机挂载路径按既有口径不在此展示。
@@ -150,7 +166,54 @@
             </template>
           </tbody>
         </table>
-        <p v-else class="vn__empty">这台机上没有容器网络。</p>
+        <!-- 手机态：网络表转卡片；展开复用同一容器明细表（横滑兜底）。 -->
+        <div v-if="rs.networks.length > 0" class="vn__ncards">
+          <article v-for="n in rs.networks" :key="n.id" class="ncard">
+            <header class="ncard__head">
+              <span class="ncard__name" :title="n.name">{{ n.name }}</span>
+              <span class="ncard__driver">{{ n.driver || '—' }}</span>
+            </header>
+            <p class="ncard__meta">
+              <span>{{ shortID(n.id) }}</span>
+              <span>{{ n.subnets.length > 0 ? n.subnets.join('、') : '无子网' }}</span>
+            </p>
+            <p class="ncard__badges">
+              <span v-if="n.internal" class="badge badge--info">内部</span>
+              <span v-if="n.ingress" class="badge badge--info">ingress</span>
+              <span v-if="n.attachable" class="badge badge--off">可接入</span>
+              <span v-if="n.ipv6" class="badge badge--off">IPv6</span>
+              <span v-if="!n.internal && !n.ingress && !n.attachable && !n.ipv6" class="ncard__nobadge">—</span>
+            </p>
+            <footer class="ncard__acts">
+              <button v-if="n.containers.length > 0" type="button" class="link" @click="toggleNet(n.id)">
+                接入 {{ n.containers.length }}（{{ expanded === n.id ? '收起' : '展开' }}）
+              </button>
+              <span v-else class="ncard__none">未接入容器</span>
+              <span class="ncard__when">{{ formatRFC3339(n.created) }}</span>
+            </footer>
+            <div v-if="expanded === n.id" class="ncard__detail">
+              <table class="vn__sub">
+                <thead>
+                  <tr>
+                    <th>容器</th>
+                    <th>IPv4</th>
+                    <th>IPv6</th>
+                    <th>MAC</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="cn in n.containers" :key="cn.name">
+                    <td>{{ cn.name }}</td>
+                    <td class="vn__mono">{{ cn.ipv4 || '—' }}</td>
+                    <td class="vn__mono">{{ cn.ipv6 || '—' }}</td>
+                    <td class="vn__mono">{{ cn.mac || '—' }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </article>
+        </div>
+        <p v-if="rs.networks.length === 0" class="vn__empty">这台机上没有容器网络。</p>
         <p class="vn__note">
           接入名单由 Engine 在清单里一并给出，故展开不额外发请求——这与卷只有计数不同，差异在数据形态。
         </p>
@@ -388,5 +451,121 @@ function onSelectHost(e: Event): void {
   font-size: var(--text-xs);
   color: var(--fg-muted);
   font-family: var(--font-mono);
+}
+
+/* 手机态（<768px，M7）：桌面只见表格，手机只见卡片。 */
+.vn__vcards,
+.vn__ncards {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  .vn__table {
+    display: none;
+  }
+
+  .vn__vcards,
+  .vn__ncards {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+}
+
+.vcard,
+.ncard {
+  background: var(--bg-elev-1);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+}
+
+.vcard__head,
+.ncard__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.vcard__name,
+.ncard__name {
+  font-weight: var(--weight-medium);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vcard__size {
+  flex: none;
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+}
+
+.vcard__meta,
+.ncard__meta {
+  margin-top: var(--space-1);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+}
+
+.vcard__labels {
+  margin-top: var(--space-1);
+  color: var(--fg-subtle);
+  font-size: var(--text-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vcard__when {
+  margin-top: var(--space-1);
+  color: var(--fg-subtle);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.ncard__driver {
+  flex: none;
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+}
+
+.ncard__badges {
+  margin-top: var(--space-1);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.ncard__nobadge,
+.ncard__none {
+  color: var(--fg-subtle);
+  font-size: var(--text-xs);
+}
+
+.ncard__acts {
+  margin-top: var(--space-2);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.ncard__when {
+  color: var(--fg-subtle);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.ncard__detail {
+  margin-top: var(--space-2);
+  overflow-x: auto;
 }
 </style>

@@ -132,7 +132,18 @@
                 </tr>
               </tbody>
             </table>
-            <p v-else class="cp__bk-empty">这个项目还没有写前备份——每次写入 compose 文件都会自动生成一份。</p>
+            <!-- 手机态（<768px，PLAN-MOBILE M7）：备份表转卡片。 -->
+            <div v-if="backups.length > 0" class="cp__bk-cards">
+              <article v-for="b in backups" :key="b.name" class="bcard">
+                <p class="bcard__name" :title="b.name">{{ b.name }}</p>
+                <p class="bcard__meta">{{ formatBytes(b.size) }} · {{ formatRFC3339(b.modTime) }}</p>
+                <footer class="bcard__acts">
+                  <button type="button" class="link" :disabled="bkBusy" @click="onPreviewBackup(b.name)">预览</button>
+                  <button type="button" class="link link--danger" :disabled="bkBusy" @click="onAskRestore(b.name)">恢复</button>
+                </footer>
+              </article>
+            </div>
+            <p v-if="backups.length === 0" class="cp__bk-empty">这个项目还没有写前备份——每次写入 compose 文件都会自动生成一份。</p>
 
             <div v-if="bkPreviewName" class="cp__bk-prev">
               <p class="cp__bk-prev-head">
@@ -188,7 +199,35 @@
       </tbody>
     </table>
 
-    <div v-else-if="!cp.loading && !cp.error" class="cp__empty">
+        <!-- 手机态（<768px，M7）：项目表转卡片。 -->
+    <div v-else-if="cp.projects.length > 0" class="cp__cards">
+      <article v-for="p in cp.projects" :key="p.name" class="pcard">
+        <header class="pcard__head">
+          <span class="pcard__name" :title="p.path">{{ p.name }}</span>
+          <span class="cp__badge" :class="`cp__badge--${p.status}`">{{ statusLabel(p.status) }}</span>
+        </header>
+        <p class="pcard__meta">
+          <span>{{ p.services.length }} 个服务</span>
+          <span class="pcard__file" :title="p.configFile">{{ p.configFile }}</span>
+        </p>
+        <footer class="pcard__acts">
+          <button type="button" class="link" :disabled="acting" @click="openEdit(p)">编辑</button>
+          <button
+            v-for="a in ACTIONS"
+            :key="a.name"
+            type="button"
+            class="link"
+            :class="a.danger ? 'link--danger' : ''"
+            :disabled="acting"
+            @click="askAction(a, p)"
+          >
+            {{ a.label }}
+          </button>
+        </footer>
+      </article>
+    </div>
+
+<div v-else-if="!cp.loading && !cp.error" class="cp__empty">
       <template v-if="cp.servers.length === 0">
         <p class="cp__empty-title">还没有纳管的主机</p>
         <p class="cp__empty-hint">纳管方式见 S5.8：Hub 签发 join_secret，Agent 启动时自注册。</p>
@@ -1061,5 +1100,81 @@ function onSelectHost(e: Event): void {
   margin: 0;
   font-size: var(--text-sm);
   color: var(--fg-muted);
+}
+
+/* 手机态（<768px，M7）：桌面只见表格，手机只见卡片。 */
+.cp__cards,
+.cp__bk-cards {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  .cp__table,
+  .cp__bk-table {
+    display: none;
+  }
+
+  .cp__cards,
+  .cp__bk-cards {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+}
+
+.pcard,
+.bcard {
+  background: var(--bg-elev-1);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+}
+
+.pcard__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.pcard__name {
+  font-weight: var(--weight-medium);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pcard__meta,
+.bcard__meta {
+  margin-top: var(--space-1);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+}
+
+.pcard__file {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pcard__acts,
+.bcard__acts {
+  margin-top: var(--space-2);
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+
+.bcard__name {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

@@ -54,7 +54,7 @@ func run(args []string) error {
 		return err
 	}
 
-	handler := buildHandler(cfg.Token, collector.New(cfg.DiskMounts), collector.NilStatsSource{},
+	handler := buildHandler(cfg.Token, collector.New(cfg.DiskMounts), newEngineStatsSource(cfg.DockerSocket),
 		newContainersAPI(cfg.DockerSocket, cfg.SelfContainer), newImagesAPI(cfg.DockerSocket),
 		newComposeAPI(cfg.ComposeDirs), fapi, newResourcesAPI(cfg.DockerSocket))
 

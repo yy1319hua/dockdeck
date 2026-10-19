@@ -67,7 +67,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { exportLogs, fetchLogsText, streamLogs, type LogsQuery } from '@/api/containers'
 
 const props = withDefaults(
@@ -216,6 +216,18 @@ watch([tail, timestamps], () => {
   if (props.open && !following.value) {
     void reload()
   }
+})
+
+// 抽屉开着锁 body 滚动（PLAN-MOBILE M6 / HANDOFF #12 后半：背景可点问题随遮罩
+// 已有，滚动穿透补上）；关闭/卸载时必须还原，否则整页失去滚动。
+watch(
+  () => props.open,
+  (v) => {
+    document.body.style.overflow = v ? 'hidden' : ''
+  },
+)
+onUnmounted(() => {
+  document.body.style.overflow = ''
 })
 </script>
 

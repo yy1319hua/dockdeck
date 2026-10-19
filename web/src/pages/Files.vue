@@ -131,6 +131,23 @@
         </tbody>
       </table>
 
+    <!-- 手机态（<768px，PLAN-MOBILE M6）：表格退役转卡片；目录名可点进层。 -->
+      <div v-else-if="fs.entries.length > 0" class="fl__cards">
+        <article v-for="e in fs.entries" :key="e.path" class="fcard">
+          <header class="fcard__head">
+            <button v-if="e.isDir" type="button" class="link fl__dir fcard__name" @click="fs.enterDir(e.path)">{{ e.name }}/</button>
+            <button v-else type="button" class="link fcard__name" @click="openFile(e)">{{ e.name }}</button>
+            <span class="fcard__size">{{ e.isDir ? '目录' : formatBytes(e.size) }}</span>
+          </header>
+          <p class="fcard__meta">{{ e.mode }} · {{ formatRFC3339(e.modTime) }}</p>
+          <footer class="fcard__acts">
+            <button v-if="!e.isDir" type="button" class="link" :disabled="acting" @click="download(e)">下载</button>
+            <button type="button" class="link" :disabled="acting" @click="askRename(e)">重命名</button>
+            <button type="button" class="link link--danger" :disabled="acting" @click="askDelete(e)">删除</button>
+          </footer>
+        </article>
+      </div>
+
       <div v-else-if="!fs.loading && !fs.probing" class="fl__empty">
         <template v-if="fs.servers.length === 0">
           <p class="fl__empty-title">还没有纳管的主机</p>
@@ -530,6 +547,17 @@ async function onConfirmDelete(): Promise<void> {
   font-size: var(--text-sm);
 }
 
+/* 手机态（<768px，M6）：深层路径单行横滑，不换行不撑破视口。 */
+@media (max-width: 767px) {
+  .fl__crumbs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: var(--space-1);
+  }
+}
+
 .fl__sep {
   color: var(--fg-subtle);
 }
@@ -689,5 +717,64 @@ async function onConfirmDelete(): Promise<void> {
   margin-top: var(--space-1);
   color: var(--fg-muted);
   font-size: var(--text-sm);
+}
+
+/* 手机态（<768px，M6）：桌面只见表格，手机只见卡片。 */
+.fl__cards {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  .fl__table {
+    display: none;
+  }
+
+  .fl__cards {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+}
+
+.fcard {
+  background: var(--bg-elev-1);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+}
+
+.fcard__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.fcard__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.fcard__size {
+  flex: none;
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.fcard__meta {
+  margin-top: var(--space-1);
+  color: var(--fg-subtle);
+  font-size: var(--text-xs);
+}
+
+.fcard__acts {
+  margin-top: var(--space-2);
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
 }
 </style>

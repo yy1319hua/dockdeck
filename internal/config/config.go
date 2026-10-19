@@ -20,11 +20,15 @@ const (
 
 // Config 是 Hub 的运行期配置。
 type Config struct {
-	ListenAddr    string
-	DataDir       string
-	DBPath        string
-	MasterKeyPath string
-	TLSMode       TLSMode
+	ListenAddr string
+	// AllowInsecureBind 显式允许绑定 0.0.0.0（监听所有网卡）。
+	// 用于「内网多网卡、且将来可能增删网卡」的场景；默认 false = 硬拒。
+	// 开启后面板会暴露到内网与 docker 网桥，启动必须打告警。
+	AllowInsecureBind bool
+	DataDir           string
+	DBPath            string
+	MasterKeyPath     string
+	TLSMode           TLSMode
 	// MetricsIntervalSec 是轮询各 Agent 采集指标的周期（秒）。
 	MetricsIntervalSec int
 	// MetricsRetentionDays 是指标历史（metrics_snapshots）的保留天数。
@@ -55,6 +59,9 @@ func Load(args []string) (Config, error) {
 	if v := os.Getenv("DD_LISTEN"); v != "" {
 		c.ListenAddr = v
 	}
+	if envFlag("DD_ALLOW_INSECURE_BIND") {
+		c.AllowInsecureBind = true
+	}
 	if v := os.Getenv("DD_TLS_MODE"); v != "" {
 		m := TLSMode(strings.ToLower(v))
 		if m != TLSModeSelf && m != TLSModeNone {
@@ -81,6 +88,8 @@ func Load(args []string) (Config, error) {
 	fs.StringVar(&c.ListenAddr, "listen", c.ListenAddr, "监听地址 host:port，必须为 tailnet / 内网 / 回环的具体 IP（禁止 0.0.0.0）")
 	fs.StringVar(&c.DataDir, "data-dir", c.DataDir, "数据目录")
 	fs.StringVar(&c.MasterKeyPath, "master-key", c.MasterKeyPath, "机器主密钥文件路径")
+	fs.BoolVar(&c.AllowInsecureBind, "allow-insecure-bind", c.AllowInsecureBind,
+		"允许绑定 0.0.0.0（危险：面板会监听所有网卡，含内网与 docker 网桥）")
 	var tlsMode string
 	fs.StringVar(&tlsMode, "tls", string(c.TLSMode), "TLS 模式：self|none")
 	fs.IntVar(&c.MetricsIntervalSec, "metrics-interval-sec", c.MetricsIntervalSec, "指标采集周期（秒）")
@@ -114,9 +123,14 @@ func (c Config) Validate() error {
 		return fmt.Errorf("监听地址缺少端口: %q", c.ListenAddr)
 	}
 	ip := net.ParseIP(host)
-	// host 为空或 IP 为未指定地址（0.0.0.0 / ::）→ 拒绝，绝不绑所有接口。
-	if host == "" || ip == nil || ip.IsUnspecified() {
-		return fmt.Errorf("拒绝绑定 %q：DockDeck 只允许绑定 tailnet / 内网 / 回环的具体 IP，禁止绑定 0.0.0.0（所有接口）", c.ListenAddr)
+	if host == "" || ip == nil {
+		return fmt.Errorf("监听地址非法: %q", c.ListenAddr)
+	}
+	// 未指定地址（0.0.0.0 / ::）默认硬拒；只有显式 --allow-insecure-bind 才放行。
+	// 放行的代价是面板暴露到所有网卡（含内网与 docker 网桥），启动时打告警。
+	if ip.IsUnspecified() && !c.AllowInsecureBind {
+		return fmt.Errorf("拒绝绑定 %q：DockDeck 只允许绑定具体 IP（tailnet / 内网 / 回环）；"+
+			"确需监听所有网卡请显式加 --allow-insecure-bind 或 DD_ALLOW_INSECURE_BIND=1", c.ListenAddr)
 	}
 	if c.TLSMode == TLSModeNone && !ip.IsLoopback() {
 		return fmt.Errorf("TLS_MODE=none 仅允许回环监听，当前为 %q；对外请用 self", host)

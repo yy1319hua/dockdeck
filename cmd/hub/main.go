@@ -60,6 +60,10 @@ func run(args []string) error {
 		return err
 	}
 
+	if cfg.AllowInsecureBind {
+		log.Printf("hub: ⚠️ 已启用 --allow-insecure-bind，监听 %s 会暴露到所有网卡（含内网与 docker 网桥），请确认这是有意为之", cfg.ListenAddr)
+	}
+
 	sqlDB, err := db.Open(cfg.DBPath)
 	if err != nil {
 		return err

@@ -30,7 +30,7 @@ BIN       := bin
 CMDS      := hub agent
 PLATFORMS := linux/amd64 linux/arm64
 
-.PHONY: all hub agent dist openapi verify-dist test vet clean info $(CMDS)
+.PHONY: all hub agent dist openapi verify-dist third-party test vet clean info $(CMDS)
 
 all: $(CMDS)
 
@@ -72,6 +72,7 @@ openapi:
 	@echo "wrote $(OUT)/openapi.json  and  $(OUT)/openapi.yaml"
 
 test:
+	python3 tools/check_third_party.py
 	TZ=Asia/Shanghai CGO_ENABLED=0 $(GO) test ./...
 
 vet:

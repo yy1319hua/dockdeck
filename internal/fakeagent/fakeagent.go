@@ -720,7 +720,8 @@ func (f *Fake) serveComposeFileDiff(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(status)
 		return
 	}
-	raw, _ := io.ReadAll(io.LimitReader(r.Body, 4<<10))
+	// 与真 Agent 同款 1MiB：整份 YAML 进请求体，4KiB 是选项体的口径（v0.2.2 #4）。
+	raw, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	var req protocol.ComposeFileUpdate
 	if len(raw) > 0 && json.Unmarshal(raw, &req) != nil {
 		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, "请求体不是合法 JSON")
@@ -738,7 +739,8 @@ func (f *Fake) serveComposeFilePut(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(status)
 		return
 	}
-	raw, _ := io.ReadAll(io.LimitReader(r.Body, 4<<10))
+	// 与真 Agent 同款 1MiB：整份 YAML 进请求体，4KiB 是选项体的口径（v0.2.2 #4）。
+	raw, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	var req protocol.ComposeFileUpdate
 	if len(raw) > 0 && json.Unmarshal(raw, &req) != nil {
 		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, "请求体不是合法 JSON")

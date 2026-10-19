@@ -202,3 +202,29 @@ func TestHubComposeFilePut(t *testing.T) {
 		t.Errorf("新内容应原样透传到 Agent，得 %v", bodies)
 	}
 }
+
+// TestHubComposeFilePut_LargeYAML 回归 v0.2.2 #4：compose 请求体上限独立于
+// 选项体的 4KiB——>5KiB 的 YAML 必须能写进（真机 7.2KiB compose 曾报
+// 「请求体不合法: unexpected EOF」）。
+func TestHubComposeFilePut_LargeYAML(t *testing.T) {
+	h, sid, fa := hubWithAgent(t, true)
+	fa.SetComposeFileWritten(protocol.ComposeFileWritten{BackupFile: "/tmp/x.bak"})
+	tok := h.token(t, "rw", apitoken.ScopeWriteContainers)
+	path := "/api/v1/servers/" + strconv.FormatInt(sid, 10) + "/compose/watchtower/file"
+
+	// 构造 >5KiB 的 content（JSON 里逐字符安全）：若干行注释垫底。
+	line := "services:\\n  watchtower:\\n    image: containrrr/watchtower:latest\\n"
+	content := strings.Repeat("# pad line to exceed 4KiB body limit for compose yaml\\n", 130)
+	content += line
+	payload := `{"content":"` + content + `"}`
+	if len(payload) < 5<<10 {
+		t.Fatalf("用例自身没超过 4KiB，失去回归意义: %d", len(payload))
+	}
+	resp, body := h.do(t, http.MethodPut, path, payload, tok, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf(">5KiB YAML 应 200，得 %d｜%s", resp.StatusCode, trim(body))
+	}
+	if bodies := fa.WriteBodies(); len(bodies) != 1 || !strings.Contains(bodies[0], "watchtower") {
+		t.Errorf("大 YAML 应原样透传到 Agent")
+	}
+}

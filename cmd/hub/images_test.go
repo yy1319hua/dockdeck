@@ -72,7 +72,7 @@ func TestHubImageListForwardsToAgent(t *testing.T) {
 
 // TestHubImagePullForwards 覆盖 POST images/pull：body {"ref":...} 原样
 // 抵达 Agent；汇总式响应（最终状态/层清单）透传给前端；空 ref 与坏 ref
-// 都在本地 400 不出门；Engine 流内业务失败（Agent 已映射 502）原样
+// 都在本地 400 不出门；Engine 流内业务失败（Agent 已映射 424（v0.2.2 #3，502 会被 CF 吃掉））原样
 // 透传；read scope 不可拉取。
 func TestHubImagePullForwards(t *testing.T) {
 	h, sid, fa := hubWithAgent(t, true)
@@ -121,11 +121,11 @@ func TestHubImagePullForwards(t *testing.T) {
 	}
 
 	// 流内业务失败：Engine 把错误放在进度流里（HTTP 200），Agent 映射
-	// 502 带原话，Hub 原样透传——调用方要能区分「仓库不存在」与「网络不通」。
+	// 424 带原话，Hub 原样透传——调用方要能区分「仓库不存在」与「网络不通」。
 	fa.SetPullResult(protocol.PullResult{Err: "pull access denied for nope/nope, repository does not exist"})
 	resp, body = h.do(t, http.MethodPost, path, `{"ref":"nope/nope:latest"}`, tok, "")
-	if resp.StatusCode != http.StatusBadGateway || errorCode(t, body) != protocol.CodeUpstreamError {
-		t.Fatalf("流内失败应透传 502 upstream_error，得 %d｜%s", resp.StatusCode, trim(body))
+	if resp.StatusCode != http.StatusFailedDependency || errorCode(t, body) != protocol.CodeUpstreamError {
+		t.Fatalf("流内失败应透传 424 upstream_error，得 %d｜%s", resp.StatusCode, trim(body))
 	}
 	if !strings.Contains(string(body), "repository does not exist") {
 		t.Errorf("Engine 原话应带到，得 %s", trim(body))

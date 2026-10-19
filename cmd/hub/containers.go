@@ -109,7 +109,13 @@ func parseAll(r *http.Request) (bool, error) {
 // 非空严格解码——多一个字段也拒，防止把 typo 静默吞成默认行为。
 // 4KB 上限与 Agent 侧同款：选项体只有一两个字段，给大了就是异常。
 func decodeOptionalBody(r *http.Request, dst any) error {
-	raw, err := io.ReadAll(io.LimitReader(r.Body, 4<<10))
+	return decodeBody(r, dst, 4<<10)
+}
+
+// decodeBody 按给定上限读体并严格解码（v0.2.2 #4 拆出的通用形态）。
+// compose 端点把整份 YAML 放请求体，用 1MiB 上限（与 httpx.DecodeJSON 同款）。
+func decodeBody(r *http.Request, dst any, limit int64) error {
+	raw, err := io.ReadAll(io.LimitReader(r.Body, limit))
 	if err != nil {
 		return err
 	}

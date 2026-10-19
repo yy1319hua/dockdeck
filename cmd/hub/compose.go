@@ -112,6 +112,11 @@ func (s *server) composeFileGet(w http.ResponseWriter, r *http.Request) {
 }
 
 // composeFileDiff 实现 POST /api/v1/servers/{id}/compose/{project}/diff。
+// composeBodyLimit 是 compose diff/put/restore 的请求体上限：整份 YAML 进请求体，
+// 不能复用选项体的 4KiB（真机 7.2KiB 的 compose 就写不进去，v0.2.2 #4）；
+// 1MiB 与 httpx.DecodeJSON 的 MaxBytesReader 同款，Agent 侧解码口径一致。
+const composeBodyLimit = 1 << 20
+
 // 「先看 diff → 再确认写」两段式的第一段：只算不写，不落盘、不产生备份。
 func (s *server) composeFileDiff(w http.ResponseWriter, r *http.Request) {
 	cl, ok := s.agentFor(w, r)
@@ -119,7 +124,7 @@ func (s *server) composeFileDiff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body protocol.ComposeFileUpdate
-	if err := decodeOptionalBody(r, &body); err != nil {
+	if err := decodeBody(r, &body, composeBodyLimit); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, err.Error())
 		return
 	}
@@ -140,7 +145,7 @@ func (s *server) composeFilePut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body protocol.ComposeFileUpdate
-	if err := decodeOptionalBody(r, &body); err != nil {
+	if err := decodeBody(r, &body, composeBodyLimit); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, err.Error())
 		return
 	}
@@ -195,7 +200,7 @@ func (s *server) composeBackupsRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body protocol.ComposeBackupUpdate
-	if err := decodeOptionalBody(r, &body); err != nil {
+	if err := decodeBody(r, &body, composeBodyLimit); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, err.Error())
 		return
 	}

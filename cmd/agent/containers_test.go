@@ -211,8 +211,9 @@ func TestContainers_WriteOps(t *testing.T) {
 		{http.MethodPost, "/api/v1/containers/abc123def456/unpause", "POST /containers/abc123def456/unpause", ""},
 		{http.MethodPost, "/api/v1/containers/abc123def456/kill", "POST /containers/abc123def456/kill?signal=SIGTERM", `{"signal":"sigterm"}`},
 		// confirm 只过 Agent 的确认门，不透传 Engine（Engine 无此参数）。
-		{http.MethodDelete, "/api/v1/containers/abc123def456?force=1&v=1&confirm=abc123def456", "DELETE /containers/abc123def456/?force=1&v=1", ""},
-		{http.MethodDelete, "/api/v1/containers/abc123def456?confirm=abc123def456", "DELETE /containers/abc123def456/", `{"confirm":"abc123def456"}`}, // body confirm 与 query 同效
+		// Engine 路径不带尾斜杠（尾斜杠会被当容器名，No such container: xxx/）。
+		{http.MethodDelete, "/api/v1/containers/abc123def456?force=1&v=1&confirm=abc123def456", "DELETE /containers/abc123def456?force=1&v=1", ""},
+		{http.MethodDelete, "/api/v1/containers/abc123def456?confirm=abc123def456", "DELETE /containers/abc123def456", `{"confirm":"abc123def456"}`}, // body confirm 与 query 同效
 	}
 	for i, c := range cases {
 		t.Run(fmt.Sprintf("case%02d", i), func(t *testing.T) { // 子名用短编号：路径拼接进 unix socket 名，过长会 bind 失败

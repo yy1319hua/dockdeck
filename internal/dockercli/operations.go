@@ -13,8 +13,8 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
-	"strings"
 
 	"github.com/yy1319hua/dockdeck/internal/protocol"
 )
@@ -98,15 +98,20 @@ func (c *Client) Remove(ctx context.Context, id string, force, volumes bool) err
 	if !idSafe(id) {
 		return fmt.Errorf("dockercli: 非法容器标识 %q", id)
 	}
-	q := "?"
-	if force {
-		q += "force=1&"
+	// 查询串只在有参数时才带 "?"——路径本身不能有尾斜杠：
+	// Engine 会把 "/containers/<id>/" 整体当容器名（No such container: xxx/）。
+	path := "/containers/" + id
+	if force || volumes {
+		qv := url.Values{}
+		if force {
+			qv.Set("force", "1")
+		}
+		if volumes {
+			qv.Set("v", "1")
+		}
+		path += "?" + qv.Encode()
 	}
-	if volumes {
-		q += "v=1&"
-	}
-	q = strings.TrimSuffix(q, "&")
-	status, body, _, err := c.do(ctx, http.MethodDelete, "/containers/"+id+"/"+q)
+	status, body, _, err := c.do(ctx, http.MethodDelete, path)
 	if err != nil {
 		return err
 	}

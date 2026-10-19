@@ -5,11 +5,13 @@ package agentcli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yy1319hua/dockdeck/internal/protocol"
 )
@@ -253,5 +255,37 @@ func TestClient_ContainerWriteForbidden(t *testing.T) {
 	}
 	if attempts != 1 {
 		t.Errorf("写请求绝不重试，尝试次数 = %d", attempts)
+	}
+}
+
+// TestClient_StopBeyondDefaultWriteTimeout 回归 v0.2.2 #2：默认写超时 5s 小于
+// 引擎默认 10s SIGTERM 宽限，慢停止会被误报 error（其实已停）。假 Agent 延迟
+// 7s 才响应，ContainerStop 必须成功（慢写超时 ≥60s），而普通写（pause）仍快速失败。
+func TestClient_StopBeyondDefaultWriteTimeout(t *testing.T) {
+	var path string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		time.Sleep(7 * time.Second)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"data":null}`)
+	}))
+	defer srv.Close()
+
+	c := quickClient(srv)
+	if err := c.ContainerStop(context.Background(), "slowbox123", nil); err != nil {
+		t.Fatalf("慢停止不该超时报错: %v", err)
+	}
+	if path != "/api/v1/containers/slowbox123/stop" {
+		t.Errorf("路径 = %q", path)
+	}
+
+	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(7 * time.Second)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"data":null}`)
+	}))
+	defer srv2.Close()
+	if err := quickClient(srv2).ContainerPause(context.Background(), "slowbox123"); err == nil {
+		t.Error("普通写操作 5s 内必须快速失败")
 	}
 }

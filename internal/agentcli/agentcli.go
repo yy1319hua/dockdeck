@@ -36,6 +36,9 @@ const (
 	DefaultReadTimeout = 10 * time.Second
 	// DefaultWriteTimeout 是写操作上限：必须快速见效，见包注释。
 	DefaultWriteTimeout = 5 * time.Second
+	// MinSlowWriteTimeout 是带引擎宽限期的写操作（stop/restart/强删）下限：
+	// 引擎默认等 10s SIGTERM，5s 写超时会误杀「其实已停」的操作（v0.2.2 #2）。
+	MinSlowWriteTimeout = 60 * time.Second
 	// DefaultMaxReadTries 是读请求最大尝试次数（含首次）。
 	DefaultMaxReadTries = 3
 	// DefaultRetryBackoff 是读重试的基础等待，逐次翻倍。
@@ -181,9 +184,13 @@ func (e *httpStatusError) Error() string {
 // 返回值是 Agent 的 HTTP 状态码（成功路径用得上）。错误统一归一为
 // *protocol.Error：网络不可达 → upstream_unavailable，信封业务错误 → 原样透传，
 // 其余非 2xx → upstream_error。
-func (c *Client) do(ctx context.Context, method, path string, body []byte, dst interface{}) (int, error) {
+// do 的 writeTimeout 可变参允许个别写调用覆盖默认写超时（传 0/缺省用 c.WriteTimeout）。
+func (c *Client) do(ctx context.Context, method, path string, body []byte, dst interface{}, writeTimeout ...time.Duration) (int, error) {
 	read := method == http.MethodGet || method == http.MethodHead
 	tries, timeout := 1, c.WriteTimeout
+	if len(writeTimeout) > 0 && writeTimeout[0] > 0 {
+		timeout = writeTimeout[0]
+	}
 	if read {
 		tries, timeout = c.MaxReadTries, c.ReadTimeout
 		if tries <= 0 {

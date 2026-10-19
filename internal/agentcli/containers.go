@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"time"
 
 	"github.com/yy1319hua/dockdeck/internal/protocol"
 )
@@ -57,7 +58,8 @@ func (c *Client) ContainerInspect(ctx context.Context, id string) (json.RawMessa
 // ---- 写操作（S3.4）----
 //
 // 每个方法只针对单个容器，不提供任何批量入口（与 Agent 侧同一条红线）。
-// 写策略由 do() 保证：POST/DELETE 不重试、5s 短超时——Agent 侧写操作
+// 写策略由 do() 保证：POST/DELETE 不重试、默认 5s 短超时（stop/restart/强删按
+// 宽限期拉长，见 slowWriteTimeout）——Agent 侧写操作
 // 尚无幂等去重（X-DD-Request-Id 是独立后续步），盲目重试可能把一次
 // stop 变成两次。本地校验（ID 字符集、信号白名单、行列正数）一律在
 // 发请求之前完成：该拒的请求不该出门。
@@ -72,8 +74,10 @@ type lifecycleOpts struct {
 }
 
 // containerWrite 执行一次容器写请求。action 为空表示针对容器本身（DELETE remove）。
+// writeTimeout 覆盖默认写超时（0 = 用 DefaultWriteTimeout）：stop/restart/强删
+// 要等 Engine 的 SIGTERM 宽限期，用 slowWriteTimeout 计算，其余保持快速失败。
 // ID 校验与路径拼接集中在这里，8 个写方法不各写一遍。
-func (c *Client) containerWrite(ctx context.Context, method, action, id, query string, body []byte) error {
+func (c *Client) containerWrite(ctx context.Context, method, action, id, query string, body []byte, writeTimeout time.Duration) error {
 	if !protocol.ValidContainerID(id) {
 		return fmt.Errorf("agentcli: 非法容器标识 %q", id)
 	}
@@ -84,38 +88,59 @@ func (c *Client) containerWrite(ctx context.Context, method, action, id, query s
 	if query != "" {
 		path += "?" + query
 	}
-	_, err := c.do(ctx, method, path, body, nil)
+	_, err := c.do(ctx, method, path, body, nil, writeTimeout)
 	return err
+}
+
+// slowWriteTimeout 计算带引擎宽限期的写超时：基础写预算 + 宽限秒数 + 余量，
+// 且不低于 minSlowWrite（覆盖引擎默认 10s SIGTERM 的常规情形）。
+// graceSec 是 SIGTERM 等待秒数；passes 是宽限期生效次数（stop=1，restart=stop+start=2）。
+func slowWriteTimeout(graceSec, passes int) time.Duration {
+	if graceSec < 0 {
+		graceSec = 0
+	}
+	if passes < 1 {
+		passes = 1
+	}
+	d := DefaultWriteTimeout + time.Duration(graceSec*passes)*time.Second + 15*time.Second
+	if d < MinSlowWriteTimeout {
+		d = MinSlowWriteTimeout
+	}
+	return d
 }
 
 // ContainerStart 启动容器。
 func (c *Client) ContainerStart(ctx context.Context, id string) error {
-	return c.containerWrite(ctx, http.MethodPost, "start", id, "", nil)
+	return c.containerWrite(ctx, http.MethodPost, "start", id, "", nil, 0)
 }
 
 // ContainerStop 停止容器。timeoutSec 是 SIGTERM 后等待秒数：
 // nil 用引擎默认（10s），显式 0 表示立即停止；走请求体，与 Agent 侧口径一致。
+// 写超时按宽限期拉长（v0.2.2 #2）：默认写超时 5s < 引擎默认 10s，
+// 稍慢的容器会被误报 error 但其实已停（agent 日志 context canceled）。
 func (c *Client) ContainerStop(ctx context.Context, id string, timeoutSec *int) error {
 	var body []byte
+	grace := 10 // 引擎默认 SIGTERM 宽限
 	if timeoutSec != nil {
+		grace = *timeoutSec
 		body, _ = json.Marshal(lifecycleOpts{TimeoutSec: timeoutSec})
 	}
-	return c.containerWrite(ctx, http.MethodPost, "stop", id, "", body)
+	return c.containerWrite(ctx, http.MethodPost, "stop", id, "", body, slowWriteTimeout(grace, 1))
 }
 
-// ContainerRestart 重启容器。
+// ContainerRestart 重启容器。等价 stop+start，宽限期按两倍计。
 func (c *Client) ContainerRestart(ctx context.Context, id string) error {
-	return c.containerWrite(ctx, http.MethodPost, "restart", id, "", nil)
+	return c.containerWrite(ctx, http.MethodPost, "restart", id, "", nil, slowWriteTimeout(10, 2))
 }
 
 // ContainerPause 暂停容器（冻结进程，不杀）。
 func (c *Client) ContainerPause(ctx context.Context, id string) error {
-	return c.containerWrite(ctx, http.MethodPost, "pause", id, "", nil)
+	return c.containerWrite(ctx, http.MethodPost, "pause", id, "", nil, 0)
 }
 
 // ContainerUnpause 恢复暂停的容器。
 func (c *Client) ContainerUnpause(ctx context.Context, id string) error {
-	return c.containerWrite(ctx, http.MethodPost, "unpause", id, "", nil)
+	return c.containerWrite(ctx, http.MethodPost, "unpause", id, "", nil, 0)
 }
 
 // ContainerKill 向容器主进程发信号。signal 形如 SIGTERM/SIGKILL
@@ -130,7 +155,7 @@ func (c *Client) ContainerKill(ctx context.Context, id, signal string) error {
 	if norm != "" {
 		body, _ = json.Marshal(lifecycleOpts{Signal: norm})
 	}
-	return c.containerWrite(ctx, http.MethodPost, "kill", id, "", body)
+	return c.containerWrite(ctx, http.MethodPost, "kill", id, "", body, 0)
 }
 
 // ContainerResize 调整 TTY 尺寸（配合日志/exec 终端用）。
@@ -142,7 +167,7 @@ func (c *Client) ContainerResize(ctx context.Context, id string, height, width i
 	q := url.Values{}
 	q.Set("h", strconv.Itoa(height))
 	q.Set("w", strconv.Itoa(width))
-	return c.containerWrite(ctx, http.MethodPost, "resize", id, q.Encode(), nil)
+	return c.containerWrite(ctx, http.MethodPost, "resize", id, q.Encode(), nil, 0)
 }
 
 // ContainerRemove 删除容器。force 强删运行中的；volumes 连同匿名卷删除。
@@ -160,5 +185,10 @@ func (c *Client) ContainerRemove(ctx context.Context, id string, force, volumes 
 	if confirm != "" {
 		q.Set("confirm", confirm)
 	}
-	return c.containerWrite(ctx, http.MethodDelete, "", id, q.Encode(), nil)
+	// 强删运行中的容器也要等 SIGTERM 宽限（v0.2.2 #2）；删已停止的秒回，超时只是上限。
+	wt := time.Duration(0)
+	if force {
+		wt = slowWriteTimeout(10, 1)
+	}
+	return c.containerWrite(ctx, http.MethodDelete, "", id, q.Encode(), nil, wt)
 }

@@ -116,5 +116,24 @@ services:
       DD_HUB_URL: "${DD_HUB_URL:-}"
       DD_AGENT_JOIN_SECRET: "${DD_AGENT_JOIN_SECRET:-}"
 
+
+  # Cloudflare Tunnel 出口：把面板暴露到公网而不开任何入站端口。
+  # cloudflared 是出站连接，宿主机只需能访问外网 443。
+  # network_mode: host —— 要直连 Hub 绑定的 ${DD_BIND_IP}:8443
+  # （Hub 不监听回环，容器默认 bridge 网络到不了该地址）。
+  # ⚠️ token 走 .env（已 gitignore）注入，绝不写死在本文件——本文件入库。
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: dockdeck-tunnel
+    profiles: ["tunnel"]
+    network_mode: host
+    command:
+      - tunnel
+      - --no-autoupdate
+      - run
+      - --token
+      - "${DD_TUNNEL_TOKEN:?必填：在 deploy/.env 设置 DD_TUNNEL_TOKEN（Cloudflare Zero Trust → Networks → Tunnels 创建后获得）}"
+    restart: unless-stopped
+    logging: *logging
 volumes:
   dockdeck-hub-data:

@@ -35,6 +35,11 @@ PULL_TOKEN_FILE=""
 DO_LOGIN=1
 FORCE=0
 CHECK_ONLY=0
+REVERSE=0
+FS_ROOTS=""
+COMPOSE_DIRS=""
+SELF_CONTAINER=""
+DISK_MOUNTS=""
 
 info() { printf '[agent] %s\n' "$*"; }
 warn() { printf '[agent] ⚠️  %s\n' "$*" >&2; }
@@ -55,6 +60,11 @@ DockDeck Agent 安装脚本
   --pull-user <USER>      GHCR 用户名（GitHub 账号），默认 yy1319hua
   --pull-token-file <P>   从文件读 GHCR token（无人值守）；缺省交互式输入
   --skip-login            匿名拉取失败时也不尝试登录（公开镜像用不到）
+  --reverse               反向模式：不监听端口，主动连 Hub（NAT 后/无公网 IP 用）
+  --fs-roots <LIST>       文件管理根白名单，逗号分隔（留空 = 关闭文件模块）
+  --compose-dirs <LIST>   Compose 白名单目录，逗号分隔（留空 = Compose 页为空）
+  --self-container <NAME> 自身容器名，默认 dockdeck-agent（保护它不被面板误操作）
+  --disk-mounts <LIST>    磁盘挂载点白名单，逗号分隔（留空 = 自动探测）
   --check                 只渲染 compose 自检，不登录、不拉取、不启动
   --force                 重写已存在的 .env
   -h, --help              显示本帮助
@@ -65,7 +75,7 @@ EOF
 
 while (( $# > 0 )); do
     case "$1" in
-        -h|--help|--skip-login|--check|--force) ;;
+        -h|--help|--skip-login|--check|--force|--reverse) ;;
         --*) (( $# >= 2 )) || die "$1 缺少参数" ;;
     esac
     case "$1" in
@@ -80,6 +90,11 @@ while (( $# > 0 )); do
         --skip-login) DO_LOGIN=0; shift ;;
         --check) CHECK_ONLY=1; shift ;;
         --force) FORCE=1; shift ;;
+        --reverse) REVERSE=1; shift ;;
+        --fs-roots) FS_ROOTS="$2"; shift 2 ;;
+        --compose-dirs) COMPOSE_DIRS="$2"; shift 2 ;;
+        --self-container) SELF_CONTAINER="$2"; shift 2 ;;
+        --disk-mounts) DISK_MOUNTS="$2"; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *) usage >&2; die "未知参数：$1" ;;
     esac
@@ -335,6 +350,11 @@ DD_BIND_IP=${BIND_IP}
 DD_HUB_URL=${HUB_URL}
 DD_AGENT_JOIN_SECRET=${JOIN_SECRET}
 DD_AGENT_IMAGE=${IMAGE}
+DD_AGENT_REVERSE=${REVERSE}
+DD_AGENT_FS_ROOTS=${FS_ROOTS:-$INSTALL_DIR}
+DD_AGENT_COMPOSE_DIRS=${COMPOSE_DIRS:-$INSTALL_DIR}
+DD_AGENT_SELF_CONTAINER=${SELF_CONTAINER:-dockdeck-agent}
+DD_AGENT_DISK_MOUNTS=${DISK_MOUNTS}
 EOF
     )
     info "已写入 $ENV_FILE"

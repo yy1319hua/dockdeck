@@ -71,18 +71,18 @@ services:
       # 与 container_name 联动：hostname 默认是容器短 ID（重建即变），
       # 固定名才能让 guard 的「不碰自身容器」跨重建稳定（双向前缀匹配）。
       - --self-container
-      - dockdeck-agent
+      - "${DD_AGENT_SELF_CONTAINER:-dockdeck-agent}"
       # 令牌从文件读：内容不进环境变量（docker inspect 不可见）、不进命令行。
       - --token-file
       - /run/secrets/agent.token
       # Compose 白名单目录（递归扫描其内的 compose 文件）。
       # 不配 → Agent 的 ComposeDirs 为空 → 面板 Compose 页恒为空列表。
       - --compose-dirs
-      - "${DD_COMPOSE_DIRS:-/opt/dockdeck/dockdeck/deploy}"
+      - "${DD_AGENT_COMPOSE_DIRS:-${DD_COMPOSE_DIRS:-/opt/dockdeck/dockdeck/deploy}}"
       # 文件管理根白名单（逗号分隔；留空 = 该模块不注册路由，面板报未启用）。
       # 必须是「容器内」可见路径：下方 volumes 已把宿主 /opt/dockdeck 同路径挂入。
       - --fs-root
-      - "${DD_FS_ROOTS:-/opt/dockdeck}"
+      - "${DD_AGENT_FS_ROOTS:-${DD_FS_ROOTS:-/opt/dockdeck}}"
     volumes:
       # 只读挂载 Engine socket：Agent 只需要读+发命令，:ro 是第二道边界
       # （第一道是应用侧自我保护名单）。Hub 不挂 socket。
@@ -118,6 +118,10 @@ services:
     environment:
       DD_HUB_URL: "${DD_HUB_URL:-}"
       DD_AGENT_JOIN_SECRET: "${DD_AGENT_JOIN_SECRET:-}"
+      # 反向模式：1 = 不监听端口，主动连 Hub（NAT 后可用）。留空 = 正常监听。
+      DD_AGENT_REVERSE: "${DD_AGENT_REVERSE:-}"
+      # 磁盘挂载点白名单（逗号分隔）。留空 = 自动探测常见挂载点。
+      DD_AGENT_DISK_MOUNTS: "${DD_AGENT_DISK_MOUNTS:-}"
 
 
   # Cloudflare Tunnel 出口：把面板暴露到公网而不开任何入站端口。

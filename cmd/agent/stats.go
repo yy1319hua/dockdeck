@@ -49,33 +49,64 @@ func newEngineStatsSource(socket string) *engineStatsSource {
 // ContainerStats 实现 collector.ContainerStatsSource。
 // sorted 输出与接口注释一致（按 ID 升序）。
 func (s *engineStatsSource) ContainerStats() ([]protocol.ContainerStat, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-	defer cancel()
-
-	sums, err := s.dc.List(ctx, false) // 只列运行中：停止的容器 docker stats 也不报
+	// List 与 stats 采集解耦：列容器名要快，stats 采样各自独立超时。早先一个全局 8s
+	// ctx 串行采集，容器一多就吃满整拍预算，尾部容器被 continue 跳过——表现就是
+	// 「容器占用显示不全」（截图只见前几个，且没有「还有 N 个未列出」提示）。
+	listCtx, listCancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer listCancel()
+	sums, err := s.dc.List(listCtx, false) // 只列运行中：停止的容器 docker stats 也不报
 	if err != nil {
 		return nil, err
 	}
 
 	now := time.Now()
-	out := make([]protocol.ContainerStat, 0, len(sums))
+	out := make([]protocol.ContainerStat, len(sums))
 	next := make(map[string]cpuSample, len(sums))
-	for _, c := range sums {
-		raw, err := s.dc.Stats(ctx, c.ID)
-		if err != nil {
-			continue // 单容器瞬时失败（已退出/删除）只跳过，不让整拍空转
-		}
-		st := s.statFor(c, raw, now, next)
-		out = append(out, st)
+
+	// 并发采集：单容器 stats?stream=false 要约 1–2s，串行时 N 个容器就是 N 秒量级。
+	// 每个容器独立超时 + 限流并发（护住 Engine），单点失败（退出/删除/超时）只跳过自己。
+	const (
+		perContainerTimeout = 6 * time.Second
+		maxConcurrency      = 5
+	)
+	var (
+		wg sync.WaitGroup
+		mu sync.Mutex // 保护 next map 的并发写与 out 槽位
+	)
+	sem := make(chan struct{}, maxConcurrency)
+	for i, c := range sums {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(i int, c dockercli.ContainerSummary) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			cctx, ccancel := context.WithTimeout(context.Background(), perContainerTimeout)
+			defer ccancel()
+			raw, err := s.dc.Stats(cctx, c.ID)
+			if err != nil {
+				return // 单容器瞬时失败只跳过，不影响其它容器与整拍
+			}
+			mu.Lock()
+			out[i] = s.statFor(c, raw, now, next) // statFor 写 next map，须持 mu
+			mu.Unlock()
+		}(i, c)
 	}
+	wg.Wait()
 
 	s.mu.Lock()
 	s.prev = next
 	s.prevAt = now
 	s.mu.Unlock()
 
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out, nil
+	// 压紧被跳过的零值槽，再按 ID 升序（接口要求只含成功项、按 ID 排序）。
+	compact := out[:0]
+	for _, st := range out {
+		if st.ID != "" {
+			compact = append(compact, st)
+		}
+	}
+	sort.Slice(compact, func(i, j int) bool { return compact[i].ID < compact[j].ID })
+	return compact, nil
 }
 
 // statFor 由一份原始 stats 算出 ContainerStat，并把这拍的 CPU 计数写入 next

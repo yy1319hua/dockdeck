@@ -29,6 +29,7 @@ HUB_URL=""
 SERVER_NAME=""
 JOIN_SECRET=""
 TAG="latest"
+IMAGE=""
 INSTALL_DIR="$DEFAULT_DIR"
 PULL_USER="$DEFAULT_GHCR_USER"
 PULL_TOKEN_FILE=""
@@ -56,6 +57,7 @@ DockDeck Agent 安装脚本
   --join-secret <SECRET>  Hub「添加服务器」生成的一次性纳管密钥（30 分钟有效）
   --bind-ip <IP>          本机监听的具体 IP（默认取 tailscale ip -4 的第一条）
   --tag <TAG>             镜像 tag，默认 latest（已有 .env 时以 .env 为准）
+  --image <REF>           完整镜像引用（可含加速域名），默认 ghcr.io/yy1319hua/dockdeck-agent:<tag>；配了就从指定源拉取
   --dir <PATH>            安装目录，默认 /opt/dockdeck
   --pull-user <USER>      GHCR 用户名（GitHub 账号），默认 yy1319hua
   --pull-token-file <P>   从文件读 GHCR token（无人值守）；缺省交互式输入
@@ -84,6 +86,7 @@ while (( $# > 0 )); do
         --join-secret) JOIN_SECRET="$2"; shift 2 ;;
         --bind-ip) BIND_IP="$2"; shift 2 ;;
         --tag) TAG="$2"; shift 2 ;;
+        --image) IMAGE="$2"; shift 2 ;;
         --dir) INSTALL_DIR="$2"; shift 2 ;;
         --pull-user) PULL_USER="$2"; shift 2 ;;
         --pull-token-file) PULL_TOKEN_FILE="$2"; shift 2 ;;

@@ -23,6 +23,14 @@ export const useFilesStore = defineStore('files', () => {
   /** 静态探测槽位数：拍板值。坏槽由探测收敛，多配的根超出部分看不到（后端无列根端点）。 */
   const ROOT_SLOTS = 4
 
+  /**
+   * 在线状态轮询周期：与默认采集周期（30s）对齐。文件清单本身不轮询（文件不会自己变），
+   * 但主机「（离线）」标签以后端 last_seen 为准，不持续刷新就会与总览页矛盾（总览每
+   * 30s 刷 last_seen）——表现为「总览显示在线、文件页却标（离线）」。
+   */
+  const STATUS_REFRESH_MS = 30_000
+  let statusTimer: ReturnType<typeof setInterval> | undefined
+
   const servers = ref<Server[]>([])
   const selectedId = ref(0)
   const rootSlots = ref<{ index: number; status: 'unknown' | 'ok' | 'bad' }[]>([])
@@ -63,7 +71,7 @@ export const useFilesStore = defineStore('files', () => {
     probing.value = true
     try {
       const results = await Promise.allSettled(
-        Array.from({ length: ROOT_SLOTS }, (_, i) => fetchFiles(id, i, '')),
+        Array.from({ length: ROOT_SLOTS }, (_, i) => fetchFiles(id, i, '', true)),
       )
       rootSlots.value = results.map((r, i) => ({
         index: i,
@@ -128,6 +136,7 @@ export const useFilesStore = defineStore('files', () => {
       error.value = e instanceof Error ? e.message : String(e)
     } finally {
       loading.value = false
+      startStatusPoll()
     }
   }
 
@@ -141,6 +150,31 @@ export const useFilesStore = defineStore('files', () => {
       error.value = e instanceof Error ? e.message : String(e)
     } finally {
       refreshing.value = false
+    }
+  }
+
+  /**
+   * 只刷主机在线状态（切换器的「（离线）」标签），不重拉文件清单。
+   * 失败静默：保留上次清单，别为一次抖动弹错或清空主机选择器（同其它 store 后台轮询口径）。
+   */
+  async function pollServers(): Promise<void> {
+    try {
+      await pullServers()
+    } catch {
+      // 状态轮询失败：静默保留上次数据。
+    }
+  }
+
+  /** 进入页面开始轮询在线状态；离开务必 stop，否则定时器常驻后台（同 overview 房规）。 */
+  function startStatusPoll(): void {
+    stopStatusPoll()
+    statusTimer = setInterval(() => void pollServers(), STATUS_REFRESH_MS)
+  }
+
+  function stopStatusPoll(): void {
+    if (statusTimer !== undefined) {
+      clearInterval(statusTimer)
+      statusTimer = undefined
     }
   }
 
@@ -201,6 +235,7 @@ export const useFilesStore = defineStore('files', () => {
     crumbs,
     load,
     refresh,
+    stopStatusPoll,
     selectServer,
     setRoot,
     enterDir,

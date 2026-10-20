@@ -57,6 +57,12 @@
           <span class="an__tip">与 Hub 版本不必一致；latest 跟随最新发布</span>
         </label>
 
+        <label class="an__field">
+          <span class="an__label">镜像加速地址</span>
+          <input v-model.trim="opt.mirror" class="an__input" placeholder="如 docker.m.daocloud.io（留空 = ghcr.io 原址）" />
+          <span class="an__tip">可选。国内拉取 ghcr.io 不畅时填加速域名，会拼成 <code>加速域名/ghcr.io/…</code>；三种形态同步生效</span>
+        </label>
+
         <label class="an__field an__field--check">
           <span class="an__label">反向模式</span>
           <span class="an__check">
@@ -164,6 +170,7 @@ const opt = reactive({
   bindIp: '',
   dir: '/opt/dockdeck',
   tag: 'latest',
+  mirror: '',
   reverse: false,
   fsRoots: '',
   composeDirs: '',
@@ -185,6 +192,15 @@ const activeFsRoots = computed(() => opt.fsRoots || activeDir.value)
 const activeComposeDirs = computed(() => opt.composeDirs || activeDir.value)
 const activeTag = computed(() => opt.tag || 'latest')
 const activeSelf = computed(() => opt.selfContainer || 'dockdeck-agent')
+/** 镜像加速前缀：去掉首尾空白与末尾斜杠；留空 = 直连 ghcr.io 原址。 */
+const activeMirror = computed(() => opt.mirror.trim().replace(/\/+$/, ''))
+/** 完整镜像引用：配了加速域名则拼成 pull-through 形式「加速域名/ghcr.io/…:tag」，
+ *  否则用 ghcr.io 原址。三种形态（脚本 / docker run / compose）共用这一个值。 */
+const agentImage = computed(() =>
+  activeMirror.value
+    ? `${activeMirror.value}/ghcr.io/yy1319hua/dockdeck-agent:${activeTag.value}`
+    : `ghcr.io/yy1319hua/dockdeck-agent:${activeTag.value}`,
+)
 
 const expired = computed(() => invite.value !== null && remaining.value <= 0)
 
@@ -204,6 +220,9 @@ const scriptArgs = computed(() => {
   a.push(`--dir ${activeDir.value}`)
   if (activeTag.value !== 'latest') {
     a.push(`--tag ${activeTag.value}`)
+  }
+  if (activeMirror.value) {
+    a.push(`--image ${agentImage.value}`)
   }
   if (opt.reverse) {
     a.push('--reverse')
@@ -256,7 +275,7 @@ const currentCommand = computed(() => {
       '  -v /var/run/docker.sock:/var/run/docker.sock:ro \\',
       `  -v ${activeDir.value}:${activeDir.value} \\`,
       ...env.map((x) => `  ${x} \\`),
-      `  ghcr.io/yy1319hua/dockdeck-agent:${activeTag.value}`,
+      `  ${agentImage.value}`,
     ].join('\n')
   }
   // compose：给可直接合并进现有栈的片段（不包顶层 version，已废弃）。
@@ -289,7 +308,7 @@ const currentCommand = computed(() => {
   return [
     'services:',
     `  ${activeSelf.value}:`,
-    `    image: ghcr.io/yy1319hua/dockdeck-agent:${activeTag.value}`,
+    `    image: ${agentImage.value}`,
     `    container_name: ${activeSelf.value}`,
     '    network_mode: host',
     '    restart: unless-stopped',

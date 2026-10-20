@@ -77,9 +77,17 @@ function itemQuery(root: number, path: string): string {
  * depth 只发 1（单层口径）：后端 depth>1 是递归扁平列表，整树预拉会撞
  * maxEntries 上限且截断语义按层才说得清（S7.6 拍板 Q1=A）。
  */
-export async function fetchFiles(serverId: number, root: number, path: string): Promise<FilesPage> {
+export async function fetchFiles(
+  serverId: number,
+  root: number,
+  path: string,
+  probe = false,
+): Promise<FilesPage> {
+  // probe=true 仅用于 store 的 root 槽位探测：带 X-DD-Probe 头，让 Hub 审计中间件
+  // 跳过这类「预期失败」的试探——越界 root 返 400 是探测的正常结果，不该进审计表。
   const res = await request<{ entries?: FileEntryWire[]; truncated?: boolean }>(
     `/servers/${serverId}/files?${itemQuery(root, path)}&depth=1`,
+    probe ? { headers: { 'X-DD-Probe': '1' } } : undefined,
   )
   return {
     entries: (res.entries ?? []).map(toFileEntry),

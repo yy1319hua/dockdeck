@@ -224,7 +224,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import AppConfirm from '@/components/AppConfirm.vue'
 import { downloadFile, fetchFileContent, fileAction, putFileContent, type FileEntry } from '@/api/files'
 import { isOnline } from '@/api/servers'
@@ -236,6 +236,8 @@ const fs = useFilesStore()
 const ui = useUiStore()
 
 onMounted(() => void fs.load())
+// 离开页面务必停掉在线状态轮询，否则定时器常驻后台（同其它页面房规）。
+onUnmounted(() => fs.stopStatusPoll())
 
 /** 任一写操作在飞时禁用全表操作按钮，防连点。 */
 const acting = ref(false)

@@ -184,6 +184,14 @@ func AuditFunc(st *store.Store, actionOf func(*http.Request) string, fn http.Han
 
 func audit(st *store.Store, actionOf func(*http.Request) string, fn http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// 带 X-DD-Probe 的是「预期失败」的内部探测（如文件页对 root 槽位 0..3 的试探），
+		// 既不是用户操作、也不是安全事件：handler 照常执行，但不落审计行——否则每次进
+		// 文件页都会在审计表刷出几条 error，把真正的操作记录淹掉（与鉴权层对探针 401
+		// 不审计是同一种考量：探测流量不该占审计表）。
+		if r.Header.Get("X-DD-Probe") == "1" {
+			fn(w, r)
+			return
+		}
 		rec := &StatusRecorder{ResponseWriter: w}
 		fn(rec, r)
 		res := "ok"

@@ -2,7 +2,7 @@
 # DockDeck 部署模板（S9.3）——Hub / Agent 双角色，按 profile 择一启动。
 #
 #   Hub   控制面：Web UI、鉴权、审计、聚合。数据落命名卷，不碰 docker.sock。
-#   Agent 每台被管主机一个：代理本机 Docker Engine，socket 以 :ro 挂载。
+#   Agent 每台被管服务器一个：代理本机 Docker Engine，socket 以 :ro 挂载。
 #
 # 用法（在 deploy/ 目录下）：
 #   cp .env.example .env            # 填 DD_BIND_IP（两个角色都必填）

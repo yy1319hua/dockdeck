@@ -22,7 +22,7 @@ Tailscale 私网或内网反代访问，不开任何公网端口。对外提供 
                           ├─ Go 单二进制，前端 go:embed
                           ├─ SQLite（用户/服务器/会话/API令牌/审计/指标快照）
                           ├─ 鉴权：cookie 会话 + Bearer API Token（scope 制）
-                          └─ Agent Client ──HTTP+Bearer+HMAC──► Agent(:9527, 每台宿主机)
+                          └─ /api/v1/agent/link ◄──出站 wss── Agent（每台宿主机，不监听端口）
                                                                  ├─ /proc 服务器指标
                                                                  ├─ Docker Engine API (unix socket)
                                                                  └─ 受限文件系统（根白名单）
@@ -39,32 +39,34 @@ Hub 与 Agent 是两个独立二进制，同一 module、共享 `internal/protoc
 
 ```
 --listen <BIND_IP>:8443     # Hub（也可用 DD_LISTEN 环境变量）
---listen <BIND_IP>:9527     # Agent（--bind-ifaces tailscale0 校验归属）
 ```
 
 `BIND_IP` 由部署脚本现取（`tailscale ip -4` 或指定内网 IP），写进 `.env`，不硬编码进仓库。
-Agent 启动时校验绑定地址属于 tailscale0，否则拒绝启动（`--allow-insecure-bind` 例外）。
+以上约束只属于 Hub：v0.2.6 起 Agent 不再监听任何端口（见下节），无绑定可言。
 
-### 反向长连接（Agent 主动连 Hub，2026-10-19 起）
+### 反向长连接（Agent 唯一形态，2026-10-19 引入 / v0.2.6 起唯一）
 
-上面的「Hub 拨号到 Agent」在 NAT 后或纯内网（无公网入口）的机器上不成立。
-为此新增反向模式（`--reverse` / `DD_AGENT_REVERSE=1`）：
+Agent 全部走反向长连接：由 **Agent 主动拨出**，Hub 从不反连——NAT 后、
+无公网 IP 的机器同样可纳管。原先的正向（监听）模式已于 v0.2.6 整套删除：
+`--listen` / `--bind-ifaces` / `--allow-cidr` / `--reverse` 等旗标与
+`DD_AGENT_LISTEN` / `DD_AGENT_REVERSE` 等环境变量不再存在。
 
 ```
 Agent ──出站 wss──> Hub /api/v1/agent/link ──复用同一条 WS──> 下发原 HTTP 请求
 ```
 
-- 连接由 **Agent 主动拨出**，Hub 从不反连；握手复用现有 Bearer + HMAC（±120s 时间窗），
-  连接绑定 `servers.id`；同 ID 新连接顶替旧连接（旧连接收 `goaway` 后关闭）。
+- 握手复用现有 Bearer + HMAC（±120s 时间窗），连接绑定 `servers.id`；
+  同 ID 新连接顶替旧连接（旧连接收 `goaway` 后关闭）。
 - Hub 侧 `internal/agentlink` 维护 `server_id → 连接`；`agentcli` 通过 `Doer` 抽象
-  在有活跃连接时走 WS、没有则**回落 HTTP**——两种模式共用同一套请求构造/重试/解信封逻辑。
+  在有活跃连接时走 WS、没有则请求被入口防护挡下（`upstream_unavailable`，
+  见 `agentcli.newSignedRequest`）——不再有 HTTP 回落。
 - Agent 侧把帧合成为 `http.Request` 后 `ServeHTTP` 到本地 mux，
-  **路由、鉴权、错误映射与 HTTP 模式完全一致**（不复制 handler）。
+  **路由、鉴权、错误映射与 HTTP 模式一致**（不复制 handler）。
 - 心跳 25s（`--link-ping`），必须明显小于反代空闲超时（Cloudflare 约 100s）。
 - M1 只承载非流式请求：请求 ≤1 MiB、响应 ≤8 MiB；流式日志与大文件在 M2。
-- **面板「添加节点」统一只生成反向（wss）命令**（2026-10-20 起）：正向（监听）模式
-  仅保留在 CLI 层，不再作为部署选项暴露；Agent 的 `--bind-ip` / `--listen`
-  只剩 Hub 侧与手工 CLI 场景会用。
+- **面板「添加节点」生成的全部是反向（wss）命令**（2026-10-20 起）；
+  部署模板也拆成 `deploy/docker-compose.yml`（Hub）与
+  `deploy/docker-compose.agent.yml`（Agent，单服务无 profile）。
 
 ## 认证
 

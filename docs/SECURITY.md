@@ -43,9 +43,10 @@
 
 ## 6. Hub ↔ Agent 通信（HMAC 双重校验）
 
-Agent 只做「被 Hub 调用」一件事，所有请求强制 **Bearer + HMAC 双重校验**：
+Agent 只做「被 Hub 调用」一件事（v0.2.6 起经反向长连接，见第 8 节），
+所有请求强制 **Bearer + HMAC 双重校验**：
 
-- **共享密钥**：Agent 的 Token 是 Hub→Agent 的**共享密钥明文**，同时用于 Bearer 校验与 HMAC 签名（见 `internal/config`）。
+- **共享密钥**：Agent 的 Token 是 Hub↔Agent 的**共享密钥明文**，同时用于 Bearer 校验、HMAC 签名与反向连接握手（见 `internal/config`）。
 - **每个请求都签名**：头含 `Authorization: Bearer <token>`、`X-Timestamp`、以及 `X-Signature`（HMAC-SHA256 的十六进制小写结果）。
 - **签名串口径**：`timestamp` / `method` / `URI` / `body`（查询串与请求体参与）。算法与 canonical 格式见 `internal/agenthttp` / `internal/agentcli` / `internal/crypto`。
 - **服务端校验顺序**：先挡无凭证请求 → 再挡过期时间戳（防重放窗口）→ 最后做相对昂贵的 HMAC 计算。
@@ -55,12 +56,12 @@ Agent 只做「被 Hub 调用」一件事，所有请求强制 **Bearer + HMAC �
 
 - Hub 默认 `self`（自签证书，指纹见设置页）。
 - `none` = 明文，仅允许**回环**监听，用于前面有反向代理终结 TLS 的场景。
-- Agent 默认不对外暴露 API，仅接受来自 Hub 的 HMAC 校验请求。
+- Agent 不对外暴露任何 API：v0.2.6 起无监听端口，仅接受经 Hub 下发的 HMAC 校验请求。
 
 ## 8. 网络暴露模型
 
-- 服务 `network_mode: host`，应用层只绑**具体 IP**（`DD_BIND_IP`），`0.0.0.0` 被 `config.Validate` 拒绝。
-- 端口绑定由 `--listen ${DD_BIND_IP}:<端口>` 完成，无 `ports:` 发布（host 模式下 `ports` 被忽略）。
+- Hub：`network_mode: host`，应用层只绑**具体 IP**（`DD_BIND_IP`），`0.0.0.0` 被 `config.Validate` 拒绝；端口绑定由 `--listen ${DD_BIND_IP}:8443` 完成，无 `ports:` 发布（host 模式下 `ports` 被忽略）。
+- Agent（v0.2.6 起唯一形态）：**反向长连接**——不监听端口、无入站面，由 Agent 主动向 Hub 拨出 wss。原先的正向模式（`--listen 9527` + 网卡白名单 + 自签证书）已整套删除，`DD_AGENT_LISTEN` / `DD_AGENT_REVERSE` 等变量不再存在。
 - **暴露面靠 Tailnet/内网隔离把守**，不在应用层做公网防护。
 
 ## 9. 凭据与密钥管理
@@ -82,7 +83,7 @@ Agent 只做「被 Hub 调用」一件事，所有请求强制 **Bearer + HMAC �
 
 ## 11. 部署安全清单
 
-- [ ] Hub/Agent 只绑 Tailnet/内网具体 IP，绝不 `0.0.0.0` 公网暴露。
+- [ ] Hub 只绑 Tailnet/内网具体 IP，绝不 `0.0.0.0` 公网暴露；Agent 无监听端口（反向长连接），无需绑定 IP。
 - [ ] 部署机未保存 ghcr 凭据（公开镜像无需登录；`~/.docker/config.json` 的 `auths` 应为空）。
 - [ ] `secrets/agent.token` 权限 600，且 `docker inspect` 不可见。
 - [ ] `.env` / `secrets/` 已确认在 `.gitignore` 内。

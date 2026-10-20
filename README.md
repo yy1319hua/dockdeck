@@ -17,8 +17,8 @@ Hub 负责登录、聚合、审计与界面，并对外提供 OpenAPI 供 App �
 
 面板要管的不是一台机器，而是散在各处的宿主机。让浏览器或 App 直连每台机器的 Docker API 意味着
 N 份证书、N 套密码、N 个监听端口——不可维护，也不安全。DockDeck 把信任边界收在一处：
-客户端只面对 Hub，Hub 只面对自己纳管的 Agent，Agent 监听在 tailscale 网卡或指定网卡上、
-只认一个每机独立的 token。审计日志因此天然集中在 Hub，权限模型也只需要在一处守。
+客户端只面对 Hub，Hub 只面对自己纳管的 Agent，Agent **不监听任何端口**、由内向外主动连 Hub 的
+WebSocket（反向长连接），每机只认一个独立 token。审计日志因此天然集中在 Hub，权限模型也只需要在一处守。
 
 ## OpenAPI 与 App 调用
 

@@ -7,10 +7,15 @@
 #   docker buildx build --platform linux/amd64,linux/arm64 --push \
 #     -f deploy/Dockerfile.agent -t <registry>/dockdeck-agent:<tag> .
 #
-# 运行（host 网络 + docker.sock 只读挂载；compose 模板见 S9.3）：
-#   docker run --network host \
+# 运行（docker.sock 只读挂载；compose 模板见 deploy/docker-compose.agent.yml）：
+#   docker run \
 #     -v /var/run/docker.sock:/var/run/docker.sock:ro \
-#     <img> --listen <TAILNET_IP>:9527
+#     -e DD_HUB_URL=https://hub.example:8443 \
+#     -e DD_AGENT_TOKEN=<令牌> \
+#     <img>
+#
+# v0.2.6 起 Agent 只有反向长连接一种形态：不监听端口（无 EXPOSE、无 --listen），
+# 启动后主动连 Hub 的 WebSocket，NAT 后 / 无公网 IP 同样可纳管。
 #
 # 为什么以 root 跑：Agent 要读写 /var/run/docker.sock（属主 root:docker），
 # 非 root 用户除非加入宿主 docker 组（GID 逐宿主机不同、运行时才知）否则摸不到
@@ -53,8 +58,8 @@ RUN apk add --no-cache tzdata docker-cli docker-cli-compose \
  && echo "Asia/Shanghai" > /etc/timezone
 ENV TZ=Asia/Shanghai
 COPY --from=builder /out/dockdeck-agent /usr/local/bin/dockdeck-agent
-EXPOSE 9527
 ENTRYPOINT ["dockdeck-agent"]
-# 默认回环 + 只绑 tailscale0；生产用 --listen <TAILNET_IP>:9527 覆盖。
+# v0.2.6 起唯一形态：反向长连接，无监听端口（原 EXPOSE 9527 随之删除）。
+# Hub 地址是硬前提：--hub-url / DD_HUB_URL 必须可达，否则启动即失败。
 # docker.sock 路径显式声明（与默认值一致，写出来防呆）
 CMD ["--docker-socket", "/var/run/docker.sock"]

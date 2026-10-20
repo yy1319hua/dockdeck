@@ -3,7 +3,8 @@
 # DockDeck 部署后验证脚本（S10.3）
 #
 # 只读、可重复执行。在已部署的宿主机上跑，覆盖两类断言：
-#   1) API 冒烟：Hub / Agent 关键端点可达且鉴权生效；
+#   1) 冒烟：Hub 关键端点可达且鉴权生效；Agent 无监听端口（v0.2.6 起反向
+#      长连接唯一形态），断言容器在跑 + 启动日志含「已纳管」；
 #   2) 存量容器不变性：部署没有扰动宿主机上既有的其它容器。
 #
 # 角色自动探测：看本机 docker 里有没有 dockdeck-hub / dockdeck-agent，
@@ -29,7 +30,6 @@ set -euo pipefail
 
 readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 readonly HUB_PORT=8443
-readonly AGENT_PORT=9527
 readonly CONTAINER_PREFIX=dockdeck-
 readonly DEFAULT_DIR=/opt/dockdeck
 
@@ -38,7 +38,6 @@ ROLE="auto"            # auto | hub | agent
 BIND_IP=""
 TLS_MODE=""
 HUB_URL=""
-AGENT_TOKEN_FILE=""
 PROTECT=""
 BASELINE_FILE=""
 INIT_BASELINE=0
@@ -58,9 +57,8 @@ DockDeck 部署后验证脚本
 
   --dir <PATH>           安装目录，默认 /opt/dockdeck（与 install 脚本一致）
   --role <auto|hub|agent>  探测角色，默认 auto（看本机有没有 dockdeck 容器）
-  --bind-ip <IP>         覆盖 .env 里的 DD_BIND_IP（一般不用）
-  --hub-url <URL>        覆盖 Agent 端判断 Hub 地址（本地验证一般不用）
-  --agent-token-file <P> Agent 令牌文件，默认 <dir>/secrets/agent.token
+  --bind-ip <IP>         覆盖 .env 里的 DD_BIND_IP（一般不用；仅 Hub 需要）
+  --hub-url <URL>        覆盖 .env 里的 DD_HUB_URL（仅 Agent 校验展示用）
   --protect NAME[,...]   额外要求保持 running 的容器名（逗号分隔），如 watchtower,komari
   --baseline <FILE>      不变性基线文件，默认 <dir>/.verify-baseline
   --init-baseline        只记录当前容器基线并存盘，不校验（用于部署前锁基准）
@@ -82,7 +80,6 @@ while (( $# > 0 )); do
         --role)             ROLE="$2"; shift 2 ;;
         --bind-ip)          BIND_IP="$2"; shift 2 ;;
         --hub-url)          HUB_URL="$2"; shift 2 ;;
-        --agent-token-file) AGENT_TOKEN_FILE="$2"; shift 2 ;;
         --protect)          PROTECT="$2"; shift 2 ;;
         --baseline)         BASELINE_FILE="$2"; shift 2 ;;
         --init-baseline)    INIT_BASELINE=1; shift ;;
@@ -127,17 +124,16 @@ http_code() {
 if (( CHECK_ONLY )); then
     info "静态自检模式：检查依赖与 .env 解析，不触网、不查容器"
     require_cmd docker; require_cmd curl
-    command -v openssl >/dev/null 2>&1 \
-        && info "openssl 可用（Agent 签名 200 冒烟将启用）" \
-        || warn "openssl 不可用：Agent 签名 200 冒烟将跳过（401 冒烟仍生效）"
     ENV_FILE="$DIR/.env"
     if [[ -r "$ENV_FILE" ]]; then
         b="$(env_get DD_BIND_IP "$ENV_FILE" || true)"
         t="$(env_get DD_HUB_TLS_MODE "$ENV_FILE" || true)"
-        info "解析 .env：DD_BIND_IP=${b:-（空）}  DD_HUB_TLS_MODE=${t:-（空）}"
-        [[ -n "$b" ]] || warn "DD_BIND_IP 为空：实际验证时需从 .env 或 --bind-ip 取得"
+        h="$(env_get DD_HUB_URL "$ENV_FILE" || true)"
+        info "解析 .env：DD_BIND_IP=${b:-（空）}  DD_HUB_TLS_MODE=${t:-（空）}  DD_HUB_URL=${h:-（空）}"
+        [[ -n "$b" ]] || warn "DD_BIND_IP 为空：仅影响 Hub 验证（v0.2.6 起 Agent 无监听端口，不需要它）"
+        [[ -n "$h" ]] || warn "DD_HUB_URL 为空：v0.2.6 起这是 Agent 的硬前提，重启将启动失败"
     else
-        warn "找不到 $ENV_FILE：静态自检无法解析绑定地址（仅检查依赖通过）"
+        warn "找不到 $ENV_FILE：静态自检无法解析配置（仅检查依赖通过）"
     fi
     info "静态自检通过"
     exit 0
@@ -146,16 +142,12 @@ fi
 require_cmd docker
 docker info >/dev/null 2>&1 || die "无法连接 Docker 守护进程（需要 root 或 docker 组权限）"
 require_cmd curl
-HAS_OPENSSL=0; command -v openssl >/dev/null 2>&1 && HAS_OPENSSL=1
 
 ENV_FILE="$DIR/.env"
 [[ -r "$ENV_FILE" ]] || die "找不到 $ENV_FILE；请先跑 install-hub.sh / install-agent.sh 生成 .env"
-[[ -n "$BIND_IP" ]] || BIND_IP="$(env_get DD_BIND_IP "$ENV_FILE" || true)"
-[[ -n "$BIND_IP" ]] || die "无法取得绑定 IP：.env 无 DD_BIND_IP，且未传 --bind-ip"
 tls="$(env_get DD_HUB_TLS_MODE "$ENV_FILE" || true)"
 [[ -n "$tls" ]] && TLS_MODE="$tls"
 scheme=https; [[ "$TLS_MODE" == "none" ]] && scheme=http
-[[ -n "$AGENT_TOKEN_FILE" ]] || AGENT_TOKEN_FILE="$DIR/secrets/agent.token"
 
 # ---------------------------------------------------------------- 角色探测
 hub_present=0; agent_present=0
@@ -173,6 +165,12 @@ if (( ! hub_present && ! agent_present )); then
 fi
 
 info "探测到角色：Hub=$( ((hub_present)) && echo 是 || echo 否 )  Agent=$( ((agent_present)) && echo 是 || echo 否 )"
+
+# 绑定 IP 只有 Hub 用得到（v0.2.6 起 Agent 无监听端口）；纯 Agent 机没有也不拦。
+[[ -n "$BIND_IP" ]] || BIND_IP="$(env_get DD_BIND_IP "$ENV_FILE" || true)"
+if (( hub_present )) && [[ -z "$BIND_IP" ]]; then
+    die "无法取得绑定 IP：.env 无 DD_BIND_IP，且未传 --bind-ip（Hub 冒烟需要）"
+fi
 
 # ---------------------------------------------------------------- 存量容器基线
 record_baseline() {
@@ -216,47 +214,39 @@ smoke_hub() {
 }
 
 # ---------------------------------------------------------------- 冒烟：Agent
+# v0.2.6 起 Agent 不监听端口（反向长连接唯一形态）：没有可探的 HTTP 端点，
+# 断言收敛为「容器在跑 + 启动日志含已纳管」。纳管在启动期同步完成——
+# Hub 不可达会无限重试（容器仍 running），凭据/邀请类错误直接退出（容器不在）。
 smoke_agent() {
-    local url="https://${BIND_IP}:${AGENT_PORT}"
-    info "Agent 冒烟：$url"
-
-    # 无 token → 401：证明端口已监听 + TLS 已起 + 鉴权生效（沿用 install-agent.sh 约定）
-    local nc; nc="$(http_code "$url/api/v1/info")"
-    if [[ "$nc" == "401" ]]; then
-        info "  ✅ /api/v1/info 无 token → 401（端口/TLS/鉴权生效）"
-    else
-        fail "Agent /api/v1/info 期望 401，得到 ${nc:-无响应}（Agent 未就绪或 TLS/端口异常）"
-    fi
-
-    # 带签名 token → 200：证明令牌文件有效（软检查，失败只告警，不判整体失败）
-    if (( HAS_OPENSSL )) && [[ -r "$AGENT_TOKEN_FILE" ]]; then
-        local token ts sig signing method target body
-        token="$(tr -d '\r\n' < "$AGENT_TOKEN_FILE")"
-        [[ -n "$token" ]] || { warn "  ⚠️  Agent 令牌文件为空，跳过签名 200 冒烟"; return; }
-        ts="$(date +%s)"
-        method=GET; target=/api/v1/info; body=""
-        signing="${ts}"$'\n'"${method}"$'\n'"${target}"$'\n'"${body}"
-        sig="$(printf '%s' "$signing" | openssl dgst -sha256 -hmac "$token" 2>/dev/null | sed 's/^.*= //')"
-        local sc
-        sc="$(curl -ksS -o /dev/null -w '%{http_code}' --max-time 5 \
-            -H "Authorization: Bearer $token" \
-            -H "X-DD-Timestamp: $ts" \
-            -H "X-DD-Signature: $sig" \
-            "$url/api/v1/info" 2>/dev/null || true)"
-        if [[ "$sc" == "200" ]]; then
-            info "  ✅ 带签名请求 /api/v1/info → 200（令牌文件有效，HMAC 校验通过）"
-        else
-            warn "  ⚠️  带签名请求 /api/v1/info 返回 ${sc:-无响应}（可能是时钟偏移或签名实现差异；端口/TLS/鉴权以 401 测试为准）"
-        fi
-    else
-        (( HAS_OPENSSL )) || warn "  ⚠️  openssl 不可用，跳过签名 200 冒烟"
-        [[ -r "$AGENT_TOKEN_FILE" ]] || warn "  ⚠️  找不到 Agent 令牌文件 $AGENT_TOKEN_FILE，跳过签名 200 冒烟"
-    fi
+    info "Agent 冒烟（反向长连接，无监听端口）"
 
     if docker ps -q --filter "name=^/${CONTAINER_PREFIX}agent$" 2>/dev/null | grep -q .; then
         info "  ✅ 容器 ${CONTAINER_PREFIX}agent 运行中"
     else
-        fail "容器 ${CONTAINER_PREFIX}agent 未在运行"
+        fail "容器 ${CONTAINER_PREFIX}agent 未在运行（v0.2.6 起纳管失败即退出；排查：docker logs --tail 100 ${CONTAINER_PREFIX}agent）"
+        return
+    fi
+
+    # 纳管日志：enroll 成功会打「已纳管为 Hub 服务器 #id」，main 另有一行
+    # 「已纳管，主动连接 Hub」；出现任一行即自注册完成。
+    local logs
+    logs="$(docker logs "${CONTAINER_PREFIX}agent" 2>&1 || true)"
+    if grep -q '已纳管' <<<"$logs"; then
+        info "  ✅ 启动日志含「已纳管」（自注册完成，长连接已建立或重连中）"
+    else
+        warn "  ⚠️  启动日志未见「已纳管」：Hub 暂不可达时会持续重试；确认 Hub 地址与网络后重跑本脚本"
+    fi
+
+    # Hub 地址是 v0.2.6 起的硬前提：.env 里必须有；--hub-url 覆盖时提示差异。
+    local hub; hub="$(env_get DD_HUB_URL "$ENV_FILE" || true)"
+    if [[ -n "$HUB_URL" && -n "$hub" && "$hub" != "$HUB_URL" ]]; then
+        warn "  ⚠️  .env 的 DD_HUB_URL=$hub 与 --hub-url 覆盖值 $HUB_URL 不同：实际以 .env 为准"
+    elif [[ -n "$hub" ]]; then
+        info "  Hub 地址（.env）：$hub"
+    elif [[ -n "$HUB_URL" ]]; then
+        info "  Hub 地址（--hub-url 覆盖）：$HUB_URL"
+    else
+        warn "  ⚠️  .env 未配 DD_HUB_URL：v0.2.6 起这是硬前提，Agent 重启将启动失败"
     fi
 }
 

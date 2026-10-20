@@ -1,0 +1,104 @@
+# ============================================================================
+# DockDeck Agent 部署模板（v0.2.6 起唯一形态）——单服务，无 profile。
+#
+#   Agent 每台被纳管宿主机一个：反向长连接连 Hub 的 WebSocket，
+#   不监听任何端口（NAT 后 / 无公网 IP 同样可纳管）。
+#
+# 用法（在 deploy/ 目录下）：
+#   install -m 600 /dev/null secrets/agent.token   # 写入 Hub 签发的令牌
+#   docker compose -f docker-compose.agent.yml up -d
+#   docker compose -p dockdeck-agent -f docker-compose.agent.yml config  # 自检
+#
+#   一键安装亦可：bash install-agent.sh
+#
+# 为什么从 docker-compose.yml 拆出（v0.2.6）：
+#   compose 对未激活 profile 的服务也做变量插值——旧模板里 Agent 的
+#   ${DD_BIND_IP:?必填} 让「只起 Agent 的机器」（.env 里没有 DD_BIND_IP）
+#   即使 --profile agent 也直接报错。拆成单文件后互不干扰。
+#
+# 设计要点与取舍：
+#   * network_mode: host 非监听需要，而是给「Hub 与本机同机」的场景：
+#     Hub 绑在 tailscale0/内网 IP 上，Agent 容器要能用 https://<该IP>:8443
+#     直连（bridge 网络下 127.0.0.1 与部分 host-only 地址不可达）。
+#     反向模式没有任何入站监听，host 网络不扩大暴露面。
+#   * Agent 的 token 走 --token-file 文件挂载而非环境变量：docker inspect
+#     看不到挂载文件内容；文件权限 600，路径在 .gitignore 内。
+#   * socket 只读（:ro）；Agent 以 root 跑（socket 属主 root:docker），
+#     边界 = :ro + 自我保护名单；Hub 非 root（uid 10000）且不挂 socket。
+#   * 容器名固定，--self-container 与 container_name 联动，
+#     「不动自己」跨重建稳定。
+# ============================================================================
+
+name: dockdeck-agent
+
+# 共享日志策略：json-file 轮转，10m × 3 份（容器日志不加限会把宿主磁盘吃满）
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  agent:
+    image: "${DD_AGENT_IMAGE:-ghcr.io/yy1319hua/dockdeck-agent:latest}"
+    container_name: dockdeck-agent
+    network_mode: host
+    # command 覆盖镜像 CMD（exec 形式整体替换），故把镜像 CMD 的
+    # --docker-socket 一并列出。v0.2.6 起无 --listen/--reverse：
+    # 反向是唯一形态，启动即连 Hub。
+    command:
+      - --docker-socket
+      - /var/run/docker.sock
+      # 与 container_name 联动：hostname 默认是容器短 ID（重建即变），
+      # 固定名才能让 guard 的「不碰自身容器」跨重建稳定（双向前缀匹配）。
+      - --self-container
+      - "${DD_AGENT_SELF_CONTAINER:-dockdeck-agent}"
+      # 令牌从文件读：内容不进环境变量（docker inspect 不可见）、不进命令行。
+      - --token-file
+      - /run/secrets/agent.token
+      # Compose 白名单目录（递归扫描其内的 compose 文件）。
+      # 不配 → Agent 的 ComposeDirs 为空 → 面板 Compose 页恒为空列表。
+      - --compose-dirs
+      - "${DD_AGENT_COMPOSE_DIRS:-${DD_COMPOSE_DIRS:-/opt/dockdeck/dockdeck/deploy}}"
+      # 文件管理根白名单（逗号分隔；留空 = 该模块不注册路由，面板报未启用）。
+      # 必须是「容器内」可见路径：下方 volumes 已把宿主 /opt/dockdeck 同路径挂入。
+      - --fs-root
+      - "${DD_AGENT_FS_ROOTS:-${DD_FS_ROOTS:-/opt/dockdeck}}"
+    volumes:
+      # 只读挂载 Engine socket：Agent 只需要读+发命令，:ro 是第二道边界
+      # （第一道是应用侧自我保护名单）。Hub 不挂 socket。
+      # create_host_path: false——宿主机没有 socket 就启动失败，而不是被
+      # docker 悄悄建个目录/空文件顶替（那是把配置错误藏成运行期怪事）。
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+        read_only: true
+        bind:
+          create_host_path: false
+      # 宿主机 ./secrets/agent.token（相对本文件目录，权限 600）→ 容器内只读。
+      # 同样不代建：文件没备好就当场失败（见 README 第 2 步）。
+      - type: bind
+        source: ./secrets/agent.token
+        target: /run/secrets/agent.token
+        read_only: true
+        bind:
+          create_host_path: false
+      # 文件管理与 Compose 读写需要看到宿主目录：同路径 bind 挂载，
+      # 面板里展示/操作的路径即宿主真实路径。范围刻意锁在 /opt/dockdeck，
+      # 不挂 / ——面板可写，挂根等于把整机文件面暴露给 Web 会话。
+      - type: bind
+        source: /opt/dockdeck
+        target: /opt/dockdeck
+        bind:
+          create_host_path: false
+    restart: unless-stopped
+    logging: *logging
+    # 启动时向 Hub 自注册纳管（S5.8）：在 .env 填 DD_HUB_URL / DD_AGENT_JOIN_SECRET。
+    # v0.2.6 起 Hub 地址是硬前提（反向唯一形态，没有第二步）——留空则 Agent
+    # 启动即失败并提示，不会静默起一个连不出去的容器。install-agent.sh 会
+    # 把面板给的 Hub 地址写进 .env，正常流程碰不到这个默认值。
+    environment:
+      DD_HUB_URL: "${DD_HUB_URL:-}"
+      DD_AGENT_JOIN_SECRET: "${DD_AGENT_JOIN_SECRET:-}"
+      # 磁盘挂载点白名单（逗号分隔）。留空 = 自动探测常见挂载点。
+      DD_AGENT_DISK_MOUNTS: "${DD_AGENT_DISK_MOUNTS:-}"

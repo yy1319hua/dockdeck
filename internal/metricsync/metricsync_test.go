@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -223,5 +224,43 @@ func TestPollRecordsLastErrorOnFailure(t *testing.T) {
 	}
 	if lastErr == "" {
 		t.Fatal("采集失败应把原因写进 last_error，否则排障无从下手")
+	}
+}
+
+// 反向模式的 Agent 没有可拨号地址：长连接不在线时必须明确报「不在线」，
+// 而不是拿 reverse:// 占位符去撞 HTTP（unsupported protocol scheme，文案骗人）。
+func TestPollOnceReportsReverseOffline(t *testing.T) {
+	st := newStore(t)
+	// 反向节点：base_url 是占位符，不起假 Agent——它本来就没有可拨的 HTTP 服务。
+	cipher, err := crypto.SealSecret(st.Key, []byte("agent-sekret"))
+	if err != nil {
+		t.Fatalf("封存令牌: %v", err)
+	}
+	res, err := st.DB.ExecContext(context.Background(),
+		`INSERT INTO servers(name, base_url, token_cipher, enabled) VALUES(?,?,?,1)`,
+		"ghost", "reverse://ghost", cipher)
+	if err != nil {
+		t.Fatalf("种服务器行: %v", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		t.Fatalf("取 id: %v", err)
+	}
+
+	p := New(st, time.Second, 24*time.Hour, t.Logf)
+	if n := p.PollOnce(context.Background()); n != 0 {
+		t.Fatalf("无长连接的反向节点不应采到，成功台数应 0，实际 %d", n)
+	}
+
+	var lastErr string
+	if err := st.DB.QueryRowContext(context.Background(),
+		`SELECT last_error FROM servers WHERE id=?`, id).Scan(&lastErr); err != nil {
+		t.Fatalf("读 last_error: %v", err)
+	}
+	if !strings.Contains(lastErr, "反向连接不在线") {
+		t.Fatalf("错误文案应明确为反向连接不在线，得 %q", lastErr)
+	}
+	if strings.Contains(lastErr, "unsupported protocol scheme") {
+		t.Fatalf("不该出现 scheme 类底层错误：%q", lastErr)
 	}
 }

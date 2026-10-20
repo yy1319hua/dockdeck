@@ -9,8 +9,10 @@ package metricsync
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/yy1319hua/dockdeck/internal/agentcli"
@@ -159,6 +161,12 @@ func (p *Poller) collect(ctx context.Context, id int64, name string) error {
 		if lc := p.linkFor(id); lc != nil {
 			cli.Link = lc
 		}
+	}
+	// 反向模式的 Agent 没有可拨号地址：无长连接即离线，别拿 reverse://
+	// 占位符去撞 HTTP（会报 unsupported protocol scheme，文案骗人）。
+	// 与 cmd/hub/containers.go agentFor 同口径——差别只在它是 error 而非 502。
+	if cli.Link == nil && strings.HasPrefix(conn.BaseURL, "reverse://") {
+		return errors.New("Agent 反向连接不在线")
 	}
 
 	m, err := cli.Metrics(ctx2)

@@ -22,6 +22,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/yy1319hua/dockdeck/internal/agenthttp"
@@ -59,7 +60,9 @@ type Doer interface {
 }
 
 type Client struct {
-	// BaseURL 是 Agent 根地址（如 https://100.x.y.z:9527），不带尾斜杠。
+	// BaseURL 是 Agent 根地址，不带尾斜杠。v0.2.6 起 Agent 只有反向一种形态，
+	// 库里存的是 reverse://<name> 标记串——有活跃 Link 时它不参与拼 URL，
+	// Link 断开时全部请求被入口防护挡下（见 newSignedRequest）。
 	BaseURL string
 	// Token 是这台 Agent 的共享凭证。
 	Token string
@@ -261,7 +264,15 @@ func normalize(err error) *protocol.Error {
 //
 // 信封请求（once）与裸流请求（Logs）共用本方法：签名口径只许有一处，
 // 每多一处就多一个 S2.8 那种悄悄劈叉的机会。
+//
+// reverse:// 防护：v0.2.6 起 Agent 不再监听端口，反向 Agent 的 base_url 就是
+// reverse:// 标记串。没有活跃长连接（Link==nil）时若放行请求，net/http 会拿
+// 这个 scheme 直接报 unsupported protocol scheme——那是底层噪声，不是给人看的
+// 结论。统一入口挡下，全部页面（镜像/Compose/日志/文件……）一次覆盖。
 func (c *Client) newSignedRequest(ctx context.Context, method, path string, body []byte) (*http.Request, error) {
+	if c.Link == nil && strings.HasPrefix(c.BaseURL, "reverse://") {
+		return nil, protocol.NewError(protocol.CodeUpstreamUnavailable, "Agent 反向连接不在线")
+	}
 	req, err := http.NewRequestWithContext(ctx, method, c.BaseURL+path, bytes.NewReader(body))
 	if err != nil {
 		return nil, err

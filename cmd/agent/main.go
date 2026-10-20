@@ -2,22 +2,23 @@
 
 // Command agent 运行在每台被纳管的宿主机上，只做一件事：对 Hub 提供服务器指标与
 // 受限操作接口。它不保存历史数据，重装即可恢复。
+//
+// 2026-10-20（v0.2.6）起 Agent 只有反向长连接一种形态：不监听任何端口，
+// 启动后主动连 Hub 的 WebSocket——NAT 后 / 无公网 IP 的机器同样可纳管。
+// 原先的正向模式（--listen + 自签证书 + 网卡白名单）整套删除。
 package main
 
 import (
 	"context"
-	"crypto/tls"
 	"log"
 	"net/http"
 	"os"
-	"time"
 
 	"github.com/yy1319hua/dockdeck/internal/agenthttp"
 	"github.com/yy1319hua/dockdeck/internal/collector"
 	"github.com/yy1319hua/dockdeck/internal/config"
 	"github.com/yy1319hua/dockdeck/internal/httpx"
 	"github.com/yy1319hua/dockdeck/internal/protocol"
-	"github.com/yy1319hua/dockdeck/internal/tlsx"
 )
 
 func main() {
@@ -32,25 +33,6 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	// 破例放行必须留下痕迹：这条日志是事后追责的唯一依据。
-	if cfg.AllowInsecureBind {
-		log.Printf("agent: ⚠️ 已启用 --allow-insecure-bind，%q 未经网卡白名单校验，请确认该地址不对外暴露", cfg.ListenAddr)
-	}
-
-	// GAP-1 纳管：配了 Hub 与 join_secret 时，启动即自注册。幂等、best-effort，
-	// 失败只告警不阻断服务（登记可在此后重启时重试）。放后台，避免拖慢监听就绪。
-	// 反向模式下 enroll 必须同步（握手前 servers 表里必须已有本机记录），
-	// 所以后台自注册只服务正常模式。
-	if cfg.HubURL != "" && cfg.JoinSecret != "" && !cfg.Reverse {
-		go func() {
-			// 有限重试：Hub 与 Agent 常在同一份 compose 里一起拉起，
-			// Agent 先就绪时 Hub 可能还没监听——几秒退避就能自愈，不该等到下次重启。
-			// 12 次（约 4 分钟）仍失败才放弃：Agent 本身仍在正常服务，纳管只是加分项。
-			if err := enrollWithRetry(context.Background(), cfg, 12); err != nil {
-				log.Printf("agent: ⚠️ 纳管自注册失败（Agent 服务不受影响，重启可再试）：%v", err)
-			}
-		}()
-	}
 
 	// 文件管理可能未启用（未配 --fs-root 时返回 nil）；配了而根目录不可用则启动失败。
 	fapi, err := newFilesAPI(cfg)
@@ -62,52 +44,18 @@ func run(args []string) error {
 		newContainersAPI(cfg.DockerSocket, cfg.SelfContainer), newImagesAPI(cfg.DockerSocket),
 		newComposeAPI(cfg.ComposeDirs), fapi, newResourcesAPI(cfg.DockerSocket))
 
-	// 反向模式：不监听、不自签，主动连 Hub；本地 mux 仍是唯一入口，
-	// 帧会被合成为 http.Request 后回到这个 handler，路由/鉴权与 HTTP 模式完全一致。
-	if cfg.Reverse {
-		// 反向模式下「能连上 Hub」就是 Agent 的命脉：Hub 未就绪时无限重试
-		// （退避上限 30s），只有凭据/邀请类永久失败才退出——
-		// 那种情况重试一万次也不会好，早退出能让运维直接看到原因。
-		if err := enrollWithRetry(context.Background(), cfg, 0); err != nil {
-			log.Printf("agent: ⚠️ 反向模式纳管失败（Hub 里没有本机记录就无法握手）：%v", err)
-			return err
-		}
-		log.Printf("agent: 反向模式，主动连接 Hub %s", cfg.HubURL)
-		return runReverse(cfg, handler)
-	}
-
-	srv := &http.Server{
-		Addr:              cfg.ListenAddr,
-		Handler:           handler,
-		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      30 * time.Second,
-	}
-
-	if cfg.TLSMode == config.TLSModeNone {
-		log.Printf("agent: 明文监听 %s（TLS 模式为 none，仅限回环/反代场景）", cfg.ListenAddr)
-		return srv.ListenAndServe()
-	}
-
-	host, port, err := config.SplitHostPort(cfg.ListenAddr)
-	if err != nil {
+	// 反向模式下「能连上 Hub 并完成纳管」就是 Agent 的命脉：Hub 未就绪时无限重试
+	// （退避上限 30s），只有凭据/邀请类永久失败才退出——
+	// 那种情况重试一万次也不会好，早退出能让运维直接看到原因。
+	// 握手前 servers 表里必须已有本机记录，所以这一步必须同步完成。
+	if err := enrollWithRetry(context.Background(), cfg, 0); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(cfg.CertDir, 0o700); err != nil {
-		return err
-	}
-	cert, fingerprint, err := tlsx.EnsureSelfSigned(cfg.CertDir, host, port)
-	if err != nil {
-		return err
-	}
-	// 指纹是 Hub 首次纳管时信任这台 Agent 的依据，必须打印出来供人核对。
-	log.Printf("agent: 自签证书指纹 %s（Hub 纳管时需比对）", fingerprint)
-	srv.TLSConfig = &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		MinVersion:   tls.VersionTLS12,
-	}
-	log.Printf("agent: 监听 https://%s", cfg.ListenAddr)
-	return srv.ListenAndServeTLS("", "")
+	log.Printf("agent: 已纳管，主动连接 Hub %s", cfg.HubURL)
+
+	// 唯一形态：不监听端口，本地 mux 是唯一入口——反向连接收到的帧会被合成
+	// http.Request 后回到这个 handler，路由/鉴权与曾经的 HTTP 模式完全一致。
+	return runReverse(cfg, handler)
 }
 
 // buildHandler 装配 Agent 的路由表。

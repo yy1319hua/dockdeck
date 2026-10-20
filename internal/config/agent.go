@@ -5,7 +5,6 @@ package config
 import (
 	"flag"
 	"fmt"
-	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -15,13 +14,6 @@ import (
 
 	"github.com/yy1319hua/dockdeck/internal/protocol"
 )
-
-// DefaultBindIfaces 是默认的允许绑定网卡。
-//
-// 选 tailscale0 只因为它是当前环境的接入方式，不是协议要求：
-// 用户后续可能纳入 WireGuard、ZeroTier 或纯局域网机器，届时用 --bind-ifaces
-// 或 --allow-cidr 追加即可，无需改代码。
-const DefaultBindIfaces = "tailscale0"
 
 // 文件管理模块的默认上限。
 //
@@ -59,13 +51,11 @@ var DefaultFsDeny = []string{
 }
 
 // AgentConfig 是 Agent 的运行期配置。
+//
+// 2026-10-20（v0.2.6）起 Agent 只有反向长连接一种形态：不监听任何端口，
+// 启动后主动连 Hub 的 WebSocket。原先的正向模式（--listen + 网卡白名单 +
+// 自签证书）整套删除，相关 flag / 环境变量 / 配置字段一并移除。
 type AgentConfig struct {
-	// ListenAddr 形如 host:port。
-	ListenAddr string
-
-	// Reverse 为 true 时进入反向模式：不监听端口，主动连 Hub 的 WebSocket。
-	// 用于 NAT 后 / 无公网 IP 的 Agent——Hub 不再需要拨号到它。
-	Reverse bool
 	// LinkPingInterval 是反向连接的心跳间隔，默认 25s。
 	// 必须明显小于反代（Cloudflare 约 100s）的空闲超时，否则连接会被静默掐断。
 	LinkPingInterval time.Duration
@@ -83,17 +73,6 @@ type AgentConfig struct {
 	// EnrollInsecure 自注册调用 Hub 时是否跳过 TLS 校验。Hub 用自签证书时为 true（默认），
 	// 生产可用 --enroll-insecure=false 强制校验（需 Hub 证书受信）。
 	EnrollInsecure bool
-	// CertDir 存放自签证书。
-	CertDir string
-	// TLSMode 与 Hub 侧同义：self 自签、none 明文（仅回环）。
-	TLSMode TLSMode
-	// BindIfaces 允许绑定的网卡名，命中其中任一网卡的地址即放行。
-	BindIfaces []string
-	// AllowCIDR 额外放行的 IP 段，供不在 BindIfaces 里的网络使用。
-	AllowCIDR []net.IPNet
-	// AllowInsecureBind 跳过网卡白名单校验。
-	// 仅用于「明确知道自己在做什么」的场景，启动时必须留下告警日志。
-	AllowInsecureBind bool
 	// DiskMounts 是要统计容量的挂载点，默认只统计根。
 	DiskMounts []string
 	// DockerSocket 是 Docker Engine API 的 unix socket 路径。
@@ -122,48 +101,10 @@ type AgentConfig struct {
 	FsDeny []string
 }
 
-// ifaceAddrs 返回「网卡名 → 该网卡上的 IP 列表」。
-//
-// 抽成包级变量是为了可测：开发沙箱与 CI 里都没有 tailscale0，
-// 不注入就无法覆盖白名单命中的分支。
-var ifaceAddrs = func() (map[string][]net.IP, error) {
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		return nil, err
-	}
-	out := make(map[string][]net.IP, len(ifaces))
-	for _, iface := range ifaces {
-		addrs, err := iface.Addrs()
-		if err != nil {
-			continue
-		}
-		var ips []net.IP
-		for _, a := range addrs {
-			switch v := a.(type) {
-			case *net.IPNet:
-				ips = append(ips, v.IP)
-			case *net.IPAddr:
-				ips = append(ips, v.IP)
-			}
-		}
-		out[iface.Name] = ips
-	}
-	return out, nil
-}
-
 func agentDefaults() AgentConfig {
-	dataDir := os.Getenv("DD_AGENT_DIR")
-	if dataDir == "" {
-		dataDir = "/srv/dockdeck/agent"
-	}
 	return AgentConfig{
-		// 安全默认值：先绑回环，绝不误绑到所有接口。
-		ListenAddr:       "127.0.0.1:9527",
 		LinkPingInterval: 25 * time.Second,
 		LinkMaxInflight:  64,
-		CertDir:          filepath.Join(dataDir, "certs"),
-		TLSMode:          TLSModeSelf,
-		BindIfaces:       []string{DefaultBindIfaces},
 		DiskMounts:       []string{"/"},
 		// 文件管理的上限与黑名单先落默认值；FsRoots 故意留空——
 		// 「没配根目录」就是要让模块整体关闭。
@@ -183,34 +124,8 @@ func agentDefaults() AgentConfig {
 func LoadAgent(args []string) (AgentConfig, error) {
 	c := agentDefaults()
 
-	if v := os.Getenv("DD_AGENT_LISTEN"); v != "" {
-		c.ListenAddr = v
-	}
-	if v := os.Getenv("DD_AGENT_CERT_DIR"); v != "" {
-		c.CertDir = v
-	}
-	if v := os.Getenv("DD_AGENT_TLS_MODE"); v != "" {
-		m, err := parseTLSMode(v)
-		if err != nil {
-			return AgentConfig{}, fmt.Errorf("DD_AGENT_TLS_MODE %w", err)
-		}
-		c.TLSMode = m
-	}
-	if v := os.Getenv("DD_AGENT_BIND_IFACES"); v != "" {
-		c.BindIfaces = splitList(v)
-	}
-	if v := os.Getenv("DD_AGENT_ALLOW_CIDR"); v != "" {
-		nets, err := parseCIDRs(v)
-		if err != nil {
-			return AgentConfig{}, err
-		}
-		c.AllowCIDR = nets
-	}
 	if v := os.Getenv("DD_AGENT_DISK_MOUNTS"); v != "" {
 		c.DiskMounts = splitList(v)
-	}
-	if envFlag("DD_AGENT_ALLOW_INSECURE_BIND") {
-		c.AllowInsecureBind = true
 	}
 	if v := os.Getenv("DD_AGENT_DOCKER_SOCKET"); v != "" {
 		c.DockerSocket = v
@@ -220,9 +135,6 @@ func LoadAgent(args []string) (AgentConfig, error) {
 	}
 	if v := os.Getenv("DD_AGENT_COMPOSE_DIRS"); v != "" {
 		c.ComposeDirs = splitList(v)
-	}
-	if envFlag("DD_AGENT_REVERSE") {
-		c.Reverse = true
 	}
 	if v := os.Getenv("DD_AGENT_LINK_PING"); v != "" {
 		d, err := time.ParseDuration(v)
@@ -278,10 +190,6 @@ func LoadAgent(args []string) (AgentConfig, error) {
 	}
 
 	fs := flag.NewFlagSet("agent", flag.ContinueOnError)
-	fs.StringVar(&c.ListenAddr, "listen", c.ListenAddr, "监听地址 host:port")
-	fs.StringVar(&c.CertDir, "cert-dir", c.CertDir, "自签证书目录")
-	bindIfaces := fs.String("bind-ifaces", strings.Join(c.BindIfaces, ","), "允许绑定的网卡名，逗号分隔")
-	allowCIDR := fs.String("allow-cidr", "", "额外允许绑定的 IP 段，逗号分隔 CIDR")
 	diskMounts := fs.String("disk-mounts", strings.Join(c.DiskMounts, ","), "统计容量的挂载点，逗号分隔")
 	dockerSocket := fs.String("docker-socket", c.DockerSocket, "Docker Engine unix socket 路径")
 	selfContainer := fs.String("self-container", c.SelfContainer, "Agent 自身容器 ID/名字（写入保护，默认取 hostname）")
@@ -295,33 +203,12 @@ func LoadAgent(args []string) (AgentConfig, error) {
 	hubURL := fs.String("hub-url", c.HubURL, "Hub 基址（https://host）；非空且配了 join_secret 时启动自注册纳管")
 	joinSecretFile := fs.String("join-secret-file", "", "读取纳管 join_secret 的文件（优先用环境变量 DD_AGENT_JOIN_SECRET）")
 	insecureEnroll := fs.Bool("enroll-insecure", c.EnrollInsecure, "自注册调用 Hub 时跳过 TLS 校验（Hub 自签证书场景默认开）")
-	insecure := fs.Bool("allow-insecure-bind", c.AllowInsecureBind, "跳过网卡白名单校验（不安全，仅调试）")
-	fs.BoolVar(&c.Reverse, "reverse", c.Reverse, "反向模式：不监听端口，主动连 Hub 的 WebSocket（NAT 后/无公网 IP 的 Agent 用）")
 	fs.DurationVar(&c.LinkPingInterval, "link-ping", c.LinkPingInterval, "反向连接心跳间隔（默认 25s，须小于反代空闲超时）")
 	fs.IntVar(&c.LinkMaxInflight, "link-inflight", c.LinkMaxInflight, "反向连接并发请求上限")
-	var tlsModeRaw string
-	fs.StringVar(&tlsModeRaw, "tls", string(c.TLSMode), "TLS 模式：self|none")
 	if err := fs.Parse(args); err != nil {
 		return AgentConfig{}, err
 	}
 
-	if tlsModeRaw != "" {
-		m, err := parseTLSMode(tlsModeRaw)
-		if err != nil {
-			return AgentConfig{}, fmt.Errorf("-tls %w", err)
-		}
-		c.TLSMode = m
-	}
-	if *bindIfaces != "" {
-		c.BindIfaces = splitList(*bindIfaces)
-	}
-	if *allowCIDR != "" {
-		nets, err := parseCIDRs(*allowCIDR)
-		if err != nil {
-			return AgentConfig{}, err
-		}
-		c.AllowCIDR = nets
-	}
 	if *diskMounts != "" {
 		c.DiskMounts = splitList(*diskMounts)
 	}
@@ -339,9 +226,6 @@ func LoadAgent(args []string) (AgentConfig, error) {
 	}
 	if *fsDeny != "" {
 		c.FsDeny = append(c.FsDeny, splitList(*fsDeny)...)
-	}
-	if *insecure {
-		c.AllowInsecureBind = true
 	}
 	c.HubURL = strings.TrimSpace(*hubURL)
 	c.EnrollInsecure = *insecureEnroll
@@ -415,89 +299,25 @@ func (c *AgentConfig) normalizeFs() error {
 	return nil
 }
 
-// Validate 校验监听地址与凭据是否可用。
+// Validate 校验凭据与 Hub 地址是否可用。
 //
-// 与 Hub 侧 Config.Validate 保持同一套约束：不绑全零地址、明文只走回环，
-// 再加 Agent 特有的网卡白名单。
+// 2026-10-20（v0.2.6）起 Agent 只有反向一种形态：不监听端口，
+// 监听地址 / 网卡白名单 / TLS 模式三组校验整套删除，只留反向连接的硬前提。
 func (c AgentConfig) Validate() error {
 	if strings.TrimSpace(c.Token) == "" {
-		return fmt.Errorf("缺少 Agent token：请设置环境变量 DD_AGENT_TOKEN 或用 --token-file 指定")
+		return fmt.Errorf("缺少 Agent token：请设置环境变量 DD_AGENT_TOKEN、用 --token-file 指定，或配置 DD_AGENT_JOIN_SECRET（一次性纳管密钥，认领后即本机长期令牌）")
 	}
-	if c.Reverse {
-		// 反向模式不监听：跳过监听地址与网卡白名单校验——这两条只在「自己开端口」时才有意义。
-		// 但 Hub 地址必须可用，否则连都没法连。
-		if strings.TrimSpace(c.HubURL) == "" {
-			return fmt.Errorf("反向模式必须配置 Hub 地址：--hub-url 或 DD_HUB_URL")
-		}
-		u, err := url.Parse(c.HubURL)
-		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-			return fmt.Errorf("反向模式的 Hub 地址必须是 http(s)://host，得到 %q", c.HubURL)
-		}
-		if c.LinkPingInterval <= 0 || c.LinkMaxInflight <= 0 {
-			return fmt.Errorf("反向连接参数非法：link-ping / link-inflight 必须为正")
-		}
-		return nil
+	if strings.TrimSpace(c.HubURL) == "" {
+		return fmt.Errorf("必须配置 Hub 地址：--hub-url 或 DD_HUB_URL")
 	}
-	host, port, err := net.SplitHostPort(c.ListenAddr)
-	if err != nil {
-		return fmt.Errorf("监听地址格式应为 host:port，得到 %q: %w", c.ListenAddr, err)
+	u, err := url.Parse(c.HubURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("Hub 地址必须是 http(s)://host，得到 %q", c.HubURL)
 	}
-	if port == "" {
-		return fmt.Errorf("监听地址缺少端口: %q", c.ListenAddr)
+	if c.LinkPingInterval <= 0 || c.LinkMaxInflight <= 0 {
+		return fmt.Errorf("反向连接参数非法：link-ping / link-inflight 必须为正")
 	}
-	ip := net.ParseIP(host)
-	if host == "" || ip == nil || ip.IsUnspecified() {
-		return fmt.Errorf("拒绝绑定 %q：不得暴露到所有接口，请指定具体 IP", c.ListenAddr)
-	}
-	if c.TLSMode == TLSModeNone && !ip.IsLoopback() {
-		return fmt.Errorf("TLS 模式为 none 时仅允许回环监听，当前为 %q；对外请用 self", host)
-	}
-	if c.AllowInsecureBind {
-		// 破例放行，由调用方负责打告警日志。
-		return nil
-	}
-	return c.checkBindAllowed(ip)
-}
-
-// checkBindAllowed 判断 IP 是否落在允许绑定的范围内：
-// 回环、任一 BindIfaces 网卡的地址、或任一 AllowCIDR 网段。
-func (c AgentConfig) checkBindAllowed(ip net.IP) error {
-	if ip.IsLoopback() {
-		return nil
-	}
-	addrs, err := ifaceAddrs()
-	if err != nil {
-		return fmt.Errorf("枚举网卡失败，无法校验绑定地址: %w", err)
-	}
-	for _, name := range c.BindIfaces {
-		for _, owned := range addrs[name] {
-			if owned.Equal(ip) {
-				return nil
-			}
-		}
-	}
-	for _, n := range c.AllowCIDR {
-		if n.Contains(ip) {
-			return nil
-		}
-	}
-	return fmt.Errorf("拒绝绑定 %q：地址不属于允许范围（网卡 %s%s）；"+
-		"若确实需要请加 --bind-ifaces / --allow-cidr，或用 --allow-insecure-bind 破例",
-		ip, strings.Join(c.BindIfaces, ","), cidrHint(c.AllowCIDR))
-}
-
-// SplitHostPort 拆出 host 与数字端口，供 cmd/agent 生成证书时复用，
-// 避免各处各写一遍解析逻辑。
-func SplitHostPort(addr string) (string, int, error) {
-	host, portStr, err := net.SplitHostPort(addr)
-	if err != nil {
-		return "", 0, err
-	}
-	port := 0
-	if _, err := fmt.Sscanf(portStr, "%d", &port); err != nil {
-		return "", 0, fmt.Errorf("端口非法: %q", portStr)
-	}
-	return host, port, nil
+	return nil
 }
 
 func parseTLSMode(v string) (TLSMode, error) {
@@ -560,22 +380,10 @@ func parsePositiveInt64(name, v string) (int64, error) {
 	return n, nil
 }
 
-func parseCIDRs(v string) ([]net.IPNet, error) {
-	var out []net.IPNet
-	for _, part := range splitList(v) {
-		_, n, err := net.ParseCIDR(part)
-		if err != nil {
-			return nil, fmt.Errorf("CIDR 非法 %q: %w", part, err)
-		}
-		if n != nil {
-			out = append(out, *n)
-		}
-	}
-	return out, nil
-}
-
 // loadAgentToken 取得 token：环境变量优先，其次文件。
-// 两者都没有时报错，绝不退化成空 token——那等于关掉鉴权。
+// 两者都未配置时返回空串而不报错——「只给一次性 join_secret」的形态
+// 也要能启动，token 由调用方从 join_secret 派生；派生后仍为空才由
+// Validate 拒绝（绝不带着空 token 进运行期，那等于关掉鉴权）。
 func loadAgentToken(tokenFile string) (string, error) {
 	if v := strings.TrimSpace(os.Getenv("DD_AGENT_TOKEN")); v != "" {
 		return v, nil
@@ -590,7 +398,7 @@ func loadAgentToken(tokenFile string) (string, error) {
 		}
 		return "", fmt.Errorf("token 文件为空: %s", tokenFile)
 	}
-	return "", fmt.Errorf("缺少 Agent token")
+	return "", nil
 }
 
 func envFlag(name string) bool {
@@ -600,15 +408,4 @@ func envFlag(name string) bool {
 	default:
 		return false
 	}
-}
-
-func cidrHint(nets []net.IPNet) string {
-	if len(nets) == 0 {
-		return ""
-	}
-	parts := make([]string, 0, len(nets))
-	for _, n := range nets {
-		parts = append(parts, n.String())
-	}
-	return "，额外网段 " + strings.Join(parts, ",")
 }

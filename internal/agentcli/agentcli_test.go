@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -261,3 +262,55 @@ func TestClientForwardsRequestID(t *testing.T) {
 		t.Error("ctx 无键时不应发 X-DD-Request-Id 头")
 	}
 }
+
+// TestClientReverseOfflineRejected 守反向 Agent 离线时的报错口径：
+// base_url 是 reverse:// 标记串且没有活跃长连接时，任何请求都必须在
+// 入口被挡下并给出 upstream_unavailable——而不是让 net/http 拿
+// "reverse://" 这个 scheme 报一句 unsupported protocol scheme。
+// 这个防护一次覆盖全部调用方（镜像/Compose/日志/文件……）。
+func TestClientReverseOfflineRejected(t *testing.T) {
+	c := New("reverse://node-x", "tok", nil)
+	c.Link = nil
+	var pe *protocol.Error
+	// 读与写各来一条：防护在 newSignedRequest 入口，与 method 无关。
+	for _, call := range []func() error{
+		func() error { _, err := c.Info(context.Background()); return err },
+		func() error { return c.ContainerStart(context.Background(), "c1") },
+	} {
+		err := call()
+		if !errors.As(err, &pe) {
+			t.Fatalf("应返回 *protocol.Error，得 %v", err)
+		}
+		if pe.Code != protocol.CodeUpstreamUnavailable {
+			t.Errorf("错误码应为 %s，得 %s", protocol.CodeUpstreamUnavailable, pe.Code)
+		}
+		if !strings.Contains(pe.Message, "反向连接不在线") {
+			t.Errorf("错误信息应说明反向连接不在线，得 %q", pe.Message)
+		}
+	}
+}
+
+// TestClientReverseOnlineUsesLink 守「有 Link 时 reverse:// 不拦」：
+// 防护只针对 Link==nil，长连接在时请求照常发出（这里 Link 是记录型
+// 假 Doer，确认请求确实走了它而不是 HTTP）。
+func TestClientReverseOnlineUsesLink(t *testing.T) {
+	var gotPath string
+	c := New("reverse://node-x", "tok", nil)
+	c.Link = DoerFunc(func(req *http.Request) (*http.Response, error) {
+		gotPath = req.URL.Path
+		w := httptest.NewRecorder()
+		writeEnvelope(w, http.StatusOK, protocol.AgentInfo{Hostname: "h1"})
+		return w.Result(), nil
+	})
+	if _, err := c.Info(context.Background()); err != nil {
+		t.Fatalf("有 Link 时应放行，得 %v", err)
+	}
+	if gotPath != "/api/v1/info" {
+		t.Errorf("请求应经 Link 发出，path = %q", gotPath)
+	}
+}
+
+// DoerFunc 把函数适配成 Doer，供测试注入假长连接。
+type DoerFunc func(*http.Request) (*http.Response, error)
+
+func (f DoerFunc) Do(req *http.Request) (*http.Response, error) { return f(req) }

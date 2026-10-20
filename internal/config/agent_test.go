@@ -3,7 +3,6 @@
 package config
 
 import (
-	"net"
 	"os"
 	"path/filepath"
 	"slices"
@@ -14,116 +13,76 @@ import (
 	"github.com/yy1319hua/dockdeck/internal/protocol"
 )
 
-// withIfaces 替换网卡枚举，让白名单分支在没有任何真实 tailscale 网卡的机器上也可测。
-func withIfaces(t *testing.T, m map[string][]net.IP) {
+// agentBaseEnv 置好「能通过校验」的最小环境：token + Hub 地址。
+// v0.2.6 起 Agent 只有反向长连接一种形态，Validate 的硬前提就是这两样；
+// 顺带清掉历史遗留的正向变量，证明它们已被彻底无视。
+func agentBaseEnv(t *testing.T) {
 	t.Helper()
-	orig := ifaceAddrs
-	ifaceAddrs = func() (map[string][]net.IP, error) { return m, nil }
-	t.Cleanup(func() { ifaceAddrs = orig })
+	for _, k := range []string{
+		"DD_AGENT_LISTEN", "DD_AGENT_CERT_DIR", "DD_AGENT_TLS_MODE",
+		"DD_AGENT_BIND_IFACES", "DD_AGENT_ALLOW_CIDR", "DD_AGENT_ALLOW_INSECURE_BIND",
+		"DD_AGENT_REVERSE", "DD_AGENT_JOIN_SECRET",
+	} {
+		t.Setenv(k, "")
+	}
+	t.Setenv("DD_AGENT_TOKEN", "tok")
+	t.Setenv("DD_HUB_URL", "https://hub.example:443")
 }
 
 func TestLoadAgent_RequiresToken(t *testing.T) {
+	agentBaseEnv(t)
 	t.Setenv("DD_AGENT_TOKEN", "")
-	if _, err := LoadAgent([]string{"-listen", "127.0.0.1:9527"}); err == nil {
+	if _, err := LoadAgent(nil); err == nil {
 		t.Fatal("缺少 token 时应报错，不能退化成无鉴权")
 	} else if !strings.Contains(err.Error(), "token") {
 		t.Errorf("错误信息应提示 token，got %v", err)
 	}
 }
 
-func TestLoadAgent_RejectsWildcardBind(t *testing.T) {
-	t.Setenv("DD_AGENT_TOKEN", "tok")
-	for _, addr := range []string{"0.0.0.0:9527", ":9527", "[::]:9527"} {
-		if _, err := LoadAgent([]string{"-listen", addr}); err == nil {
-			t.Errorf("绑定 %q 应被拒绝", addr)
-		}
-	}
-}
-
-func TestLoadAgent_TLSNoneRequiresLoopback(t *testing.T) {
-	withIfaces(t, map[string][]net.IP{"tailscale0": {net.ParseIP("192.0.2.2")}})
-	t.Setenv("DD_AGENT_TOKEN", "tok")
-	if _, err := LoadAgent([]string{"-listen", "192.0.2.2:9527", "-tls", "none"}); err == nil {
-		t.Fatal("明文模式绑定非回环应被拒绝")
-	}
-	// 回环 + none 放行。
-	if _, err := LoadAgent([]string{"-listen", "127.0.0.1:9527", "-tls", "none"}); err != nil {
-		t.Errorf("回环 + none 应放行，got %v", err)
-	}
-}
-
-func TestLoadAgent_RejectsUnknownTLSMode(t *testing.T) {
-	t.Setenv("DD_AGENT_TOKEN", "tok")
-	if _, err := LoadAgent([]string{"-tls", "weird"}); err == nil {
-		t.Fatal("非法 TLS 模式应报错")
-	}
-}
-
-func TestLoadAgent_AllowsLoopbackEvenWithoutIface(t *testing.T) {
-	withIfaces(t, map[string][]net.IP{})
-	t.Setenv("DD_AGENT_TOKEN", "tok")
-	if _, err := LoadAgent([]string{"-listen", "127.0.0.1:9527"}); err != nil {
-		t.Errorf("回环应始终放行，got %v", err)
-	}
-}
-
-func TestLoadAgent_AllowsListedInterface(t *testing.T) {
-	withIfaces(t, map[string][]net.IP{"tailscale0": {net.ParseIP("192.0.2.2")}})
-	t.Setenv("DD_AGENT_TOKEN", "tok")
-	c, err := LoadAgent([]string{"-listen", "192.0.2.2:9527"})
-	if err != nil {
-		t.Fatalf("白名单网卡上的地址应放行，got %v", err)
-	}
-	if c.ListenAddr != "192.0.2.2:9527" {
-		t.Errorf("ListenAddr = %q", c.ListenAddr)
-	}
-}
-
-// 非 tailscale 网络（WireGuard、ZeroTier、局域网）靠 --bind-ifaces 纳入，
-// 这是把默认网卡从「协议要求」降为「默认值」的目的所在。
-func TestLoadAgent_AllowsAlternateInterface(t *testing.T) {
-	withIfaces(t, map[string][]net.IP{"wg0": {net.ParseIP("10.9.0.7")}})
-	t.Setenv("DD_AGENT_TOKEN", "tok")
-	if _, err := LoadAgent([]string{"-listen", "10.9.0.7:9527", "-bind-ifaces", "wg0"}); err != nil {
-		t.Errorf("显式指定 wg0 后应放行，got %v", err)
-	}
-}
-
-func TestLoadAgent_AllowsExtraCIDR(t *testing.T) {
-	withIfaces(t, map[string][]net.IP{})
-	t.Setenv("DD_AGENT_TOKEN", "tok")
-	if _, err := LoadAgent([]string{"-listen", "192.168.1.50:9527", "-allow-cidr", "192.168.1.0/24"}); err != nil {
-		t.Errorf("命中 allow-cidr 应放行，got %v", err)
-	}
-	if _, err := LoadAgent([]string{"-listen", "10.0.0.5:9527", "-allow-cidr", "192.168.1.0/24"}); err == nil {
-		t.Error("未命中 CIDR 的地址应被拒绝")
-	}
-}
-
-func TestLoadAgent_RejectsForeignAddress(t *testing.T) {
-	withIfaces(t, map[string][]net.IP{"tailscale0": {net.ParseIP("192.0.2.2")}})
-	t.Setenv("DD_AGENT_TOKEN", "tok")
-	_, err := LoadAgent([]string{"-listen", "203.0.113.9:9527"})
+func TestLoadAgent_RequiresHubURL(t *testing.T) {
+	agentBaseEnv(t)
+	t.Setenv("DD_HUB_URL", "")
+	_, err := LoadAgent(nil)
 	if err == nil {
-		t.Fatal("不属于任何白名单的地址应被拒绝")
+		t.Fatal("没有 Hub 地址时应报错：反向形态下连接目标是唯一命脉")
 	}
-	// 错误里必须带出可用的补救参数，否则用户不知道下一步怎么办。
-	for _, hint := range []string{"--bind-ifaces", "--allow-cidr", "--allow-insecure-bind"} {
-		if !strings.Contains(err.Error(), hint) {
-			t.Errorf("错误信息应提示 %s，got %v", hint, err)
+	if !strings.Contains(err.Error(), "Hub 地址") {
+		t.Errorf("错误信息应提示 Hub 地址，got %v", err)
+	}
+}
+
+func TestLoadAgent_RejectsBadHubURL(t *testing.T) {
+	agentBaseEnv(t)
+	for _, bad := range []string{"hub.example:443", "ftp://hub.example", "reverse://x", "://hub"} {
+		t.Setenv("DD_HUB_URL", bad)
+		if _, err := LoadAgent(nil); err == nil {
+			t.Errorf("Hub 地址 %q 应被拒绝", bad)
 		}
 	}
 }
 
-func TestLoadAgent_AllowInsecureBindBypasses(t *testing.T) {
-	withIfaces(t, map[string][]net.IP{})
-	t.Setenv("DD_AGENT_TOKEN", "tok")
-	c, err := LoadAgent([]string{"-listen", "203.0.113.9:9527", "-allow-insecure-bind"})
-	if err != nil {
-		t.Fatalf("显式破例应放行，got %v", err)
+// 正向模式的旗标必须整个消失：残留一个可解析的 -listen，
+// 就有人会照着旧文档填出一个静默失效的配置。
+func TestLoadAgent_RejectsListenFlag(t *testing.T) {
+	agentBaseEnv(t)
+	if _, err := LoadAgent([]string{"-listen", "127.0.0.1:9527"}); err == nil {
+		t.Fatal("-listen 应不再被识别（正向模式已删除）")
 	}
-	if !c.AllowInsecureBind {
-		t.Error("AllowInsecureBind 应置为 true，供启动时打告警")
+}
+
+func TestLoadAgent_RejectsReverseFlag(t *testing.T) {
+	agentBaseEnv(t)
+	if _, err := LoadAgent([]string{"-reverse"}); err == nil {
+		t.Fatal("-reverse 应不再被识别：反向已是唯一形态，不需要开关")
+	}
+	// 遗留环境变量同样必须被无视，不能悄悄改行为。
+	t.Setenv("DD_AGENT_REVERSE", "1")
+	c, err := LoadAgent(nil)
+	if err != nil {
+		t.Fatalf("遗留 DD_AGENT_REVERSE 不应导致失败，got %v", err)
+	}
+	if c.HubURL != "https://hub.example:443" {
+		t.Errorf("HubURL = %q", c.HubURL)
 	}
 }
 
@@ -133,8 +92,9 @@ func TestLoadAgent_TokenFromFile(t *testing.T) {
 	if err := os.WriteFile(p, []byte("file-token\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	agentBaseEnv(t)
 	t.Setenv("DD_AGENT_TOKEN", "")
-	c, err := LoadAgent([]string{"-listen", "127.0.0.1:9527", "-token-file", p})
+	c, err := LoadAgent([]string{"-token-file", p})
 	if err != nil {
 		t.Fatalf("从文件读 token 应成功，got %v", err)
 	}
@@ -144,36 +104,37 @@ func TestLoadAgent_TokenFromFile(t *testing.T) {
 }
 
 func TestLoadAgent_EnvOverridesDefaults(t *testing.T) {
-	withIfaces(t, map[string][]net.IP{"tailscale0": {net.ParseIP("192.0.2.2")}})
+	agentBaseEnv(t)
 	t.Setenv("DD_AGENT_TOKEN", "env-token")
-	t.Setenv("DD_AGENT_LISTEN", "192.0.2.2:9527")
 	c, err := LoadAgent(nil)
 	if err != nil {
 		t.Fatalf("环境变量配置应可用，got %v", err)
 	}
-	if c.Token != "env-token" || c.ListenAddr != "192.0.2.2:9527" {
-		t.Errorf("got token=%q addr=%q", c.Token, c.ListenAddr)
+	if c.Token != "env-token" {
+		t.Errorf("token = %q", c.Token)
 	}
-	if c.TLSMode != TLSModeSelf {
-		t.Errorf("默认应为 self，got %q", c.TLSMode)
+	if c.LinkPingInterval <= 0 || c.LinkMaxInflight <= 0 {
+		t.Errorf("反向连接默认参数应有效：ping=%v inflight=%d", c.LinkPingInterval, c.LinkMaxInflight)
 	}
 }
 
-func TestSplitHostPort(t *testing.T) {
-	host, port, err := SplitHostPort("192.0.2.2:9527")
-	if err != nil || host != "192.0.2.2" || port != 9527 {
-		t.Errorf("got %q %d %v", host, port, err)
+// 只配邀请未配 token 时，join_secret 即本机长期共享令牌初值：
+// 「只给一次性邀请」也要能启动（Hub 侧存的就是这把 secret 的密文）。
+func TestLoadAgent_TokenDerivedFromJoinSecret(t *testing.T) {
+	agentBaseEnv(t)
+	t.Setenv("DD_AGENT_TOKEN", "")
+	t.Setenv("DD_AGENT_JOIN_SECRET", "secret-123")
+	c, err := LoadAgent(nil)
+	if err != nil {
+		t.Fatalf("只有 join_secret 时应能启动，got %v", err)
 	}
-	if _, _, err := SplitHostPort("192.0.2.2"); err == nil {
-		t.Error("缺端口应报错")
-	}
-	if _, _, err := SplitHostPort("192.0.2.2:notaport"); err == nil {
-		t.Error("非数字端口应报错")
+	if c.Token != "secret-123" {
+		t.Errorf("token 应派生自 join_secret，got %q", c.Token)
 	}
 }
 
 func TestLoadAgent_DiskMounts(t *testing.T) {
-	t.Setenv("DD_AGENT_TOKEN", "tok")
+	agentBaseEnv(t)
 	c, err := LoadAgent([]string{"-disk-mounts", "/,/data"})
 	if err != nil {
 		t.Fatal(err)
@@ -205,8 +166,8 @@ func clearFsEnv(t *testing.T) {
 // 未配 --fs-root 时模块必须整体关闭（FsRoots 空 → cmd/agent 不注册路由），
 // 但上限与黑名单仍要有默认值——它们是「万一配了根目录」时的兜底。
 func TestLoadAgent_FsDefaults(t *testing.T) {
+	agentBaseEnv(t)
 	clearFsEnv(t)
-	t.Setenv("DD_AGENT_TOKEN", "tok")
 	c, err := LoadAgent(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -227,8 +188,8 @@ func TestLoadAgent_FsDefaults(t *testing.T) {
 }
 
 func TestLoadAgent_FsRootsAndLimits(t *testing.T) {
+	agentBaseEnv(t)
 	clearFsEnv(t)
-	t.Setenv("DD_AGENT_TOKEN", "tok")
 	c, err := LoadAgent([]string{
 		"-fs-root", "/data/,/srv/www/",
 		"-fs-max-file", "1048576",
@@ -249,8 +210,8 @@ func TestLoadAgent_FsRootsAndLimits(t *testing.T) {
 }
 
 func TestLoadAgent_FsRootsRequireAbsolutePath(t *testing.T) {
+	agentBaseEnv(t)
 	clearFsEnv(t)
-	t.Setenv("DD_AGENT_TOKEN", "tok")
 	for _, bad := range []string{"data", "./data", "../data", "data/sub"} {
 		if _, err := LoadAgent([]string{"-fs-root", bad}); err == nil {
 			t.Errorf("相对路径根 %q 应被拒绝（绝对路径是前缀比对的前提）", bad)
@@ -259,8 +220,8 @@ func TestLoadAgent_FsRootsRequireAbsolutePath(t *testing.T) {
 }
 
 func TestLoadAgent_FsDenyOnlyAppends(t *testing.T) {
+	agentBaseEnv(t)
 	clearFsEnv(t)
-	t.Setenv("DD_AGENT_TOKEN", "tok")
 	c, err := LoadAgent([]string{"-fs-deny", "*.log,/var/lib/secret.txt"})
 	if err != nil {
 		t.Fatal(err)
@@ -279,8 +240,8 @@ func TestLoadAgent_FsDenyOnlyAppends(t *testing.T) {
 }
 
 func TestLoadAgent_FsLimitsRejectNonPositive(t *testing.T) {
+	agentBaseEnv(t)
 	clearFsEnv(t)
-	t.Setenv("DD_AGENT_TOKEN", "tok")
 	cases := [][]string{
 		{"-fs-max-file", "0"},
 		{"-fs-max-file", "-1"},
@@ -296,8 +257,8 @@ func TestLoadAgent_FsLimitsRejectNonPositive(t *testing.T) {
 }
 
 func TestLoadAgent_FsEnv(t *testing.T) {
+	agentBaseEnv(t)
 	clearFsEnv(t)
-	t.Setenv("DD_AGENT_TOKEN", "tok")
 	t.Setenv("DD_AGENT_FS_ROOTS", "/srv/data, /srv/backup")
 	t.Setenv("DD_AGENT_FS_MAX_FILE", "2048")
 	t.Setenv("DD_AGENT_FS_MAX_DEPTH", "2")
@@ -319,8 +280,8 @@ func TestLoadAgent_FsEnv(t *testing.T) {
 }
 
 func TestLoadAgent_FsEnvRejectsBadLimit(t *testing.T) {
+	agentBaseEnv(t)
 	clearFsEnv(t)
-	t.Setenv("DD_AGENT_TOKEN", "tok")
 	t.Setenv("DD_AGENT_FS_MAX_FILE", "0")
 	if _, err := LoadAgent(nil); err == nil {
 		t.Error("环境变量给了非正上限应报错")
@@ -330,8 +291,8 @@ func TestLoadAgent_FsEnvRejectsBadLimit(t *testing.T) {
 // 单文件上限不能超过 protocol 的共享常量：它同时是单请求内存占用的上界，
 // 无界等于给 Agent 装了个内存放大器。
 func TestLoadAgent_FsMaxFileHasHardCeiling(t *testing.T) {
+	agentBaseEnv(t)
 	clearFsEnv(t)
-	t.Setenv("DD_AGENT_TOKEN", "tok")
 	over := strconv.FormatInt(protocol.MaxFileUploadBytes+1, 10)
 	if _, err := LoadAgent([]string{"-fs-max-file", over}); err == nil {
 		t.Fatal("超过共享上限应报错")

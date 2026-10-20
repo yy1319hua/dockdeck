@@ -49,24 +49,17 @@ func permanentEnrollStatus(code int) bool {
 }
 
 // enrollToHub 在 Agent 启动时向 Hub 自注册（GAP-1 纳管第二阶段）。
-// best-effort：失败只返回 error 由调用方告警，不阻断 Agent 服务；登记可在此后重启时
-// 重试（enroll 幂等——同一 join_secret 重复调用返回既有服务器 id 并刷新 base_url）。
+// 失败由调用方决定重试或退出（见 enrollWithRetry）；登记幂等——
+// 同一 join_secret 重复调用返回既有服务器 id 并刷新 base_url。
+//
+// 2026-10-20（v0.2.6）起 Agent 只有反向一种形态，base_url 恒为 reverse://<hostname>
+// 标记串：让 Hub 明确「这台只能走长连接」，而不是去撞一个不存在的端口。
 func enrollToHub(cfg config.AgentConfig) error {
 	ctx, cancel := context.WithTimeout(context.Background(), enrollTimeout)
 	defer cancel()
 
-	scheme := "https"
-	if cfg.TLSMode == config.TLSModeNone {
-		scheme = "http"
-	}
-	// base_url 用 Agent 实际监听地址：运维已把 DD_AGENT_LISTEN 设为 Hub 可达地址（非回环）。
 	name, _ := os.Hostname()
-	baseURL := scheme + "://" + cfg.ListenAddr
-	if cfg.Reverse {
-		// 反向模式没有可被 Hub 拨号的地址：用标记串占位，
-		// 让 Hub 明确「这台只能走长连接」，而不是去撞一个不存在的端口。
-		baseURL = "reverse://" + name
-	}
+	baseURL := "reverse://" + name
 
 	payload, _ := json.Marshal(map[string]string{
 		"name":       name,
@@ -80,7 +73,7 @@ func enrollToHub(cfg config.AgentConfig) error {
 		return fmt.Errorf("构造纳管请求失败: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	// 反向模式下用户往往只提供 token（token 本身就是 join_secret），
+	// 用户往往只提供 token（token 本身就是 join_secret），
 	// 若 JoinSecret 为空就用 Token 兜底，避免「有凭证却因字段没填被拒」。
 	secret := cfg.JoinSecret
 	if secret == "" {
@@ -129,9 +122,8 @@ func agentDockerVersion(cfg config.AgentConfig) string {
 
 // enrollWithRetry 按指数退避重试纳管，直到成功、判定为永久失败或 ctx 结束。
 //
-// maxAttempts<=0 表示无限重试（反向模式用）：连接本身是 Agent 的命脉，
-// Hub 暂时不可达时保持进程存活、持续尝试，比退出等编排器重启更可控。
-// 非反向模式用有限次数：Agent 已在正常服务，纳管只是加分项，不值得无限刷屏。
+// maxAttempts<=0 表示无限重试（v0.2.6 起 Agent 唯一形态就用它）：连接本身是
+// Agent 的命脉，Hub 暂时不可达时保持进程存活、持续尝试，比退出等编排器重启更可控。
 func enrollWithRetry(ctx context.Context, cfg config.AgentConfig, maxAttempts int) error {
 	// 生产口径：2s 起、30s 封顶。测试走 enrollRetryEvery 传更小的值，
 	// 免得为了验重试逻辑真等半分钟。

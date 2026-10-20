@@ -3,13 +3,10 @@
 package main
 
 import (
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
@@ -17,7 +14,6 @@ import (
 	"github.com/yy1319hua/dockdeck/internal/collector"
 	"github.com/yy1319hua/dockdeck/internal/crypto"
 	"github.com/yy1319hua/dockdeck/internal/protocol"
-	"github.com/yy1319hua/dockdeck/internal/tlsx"
 )
 
 const smokeToken = "smoke-token"
@@ -43,10 +39,10 @@ func authed(t *testing.T, method, url, target string, body []byte) *http.Request
 }
 
 // TestRun_RejectsMissingToken 覆盖启动失败路径：
-// 没有 token 必须启动失败，绝不能退化成无鉴权监听。
+// 没有 token 必须启动失败，绝不能退化成无鉴权连接。
 func TestRun_RejectsMissingToken(t *testing.T) {
 	t.Setenv("DD_AGENT_TOKEN", "")
-	if err := run([]string{"-listen", "127.0.0.1:9527"}); err == nil {
+	if err := run(nil); err == nil {
 		t.Fatal("缺少 token 时 run 应返回错误")
 	}
 }
@@ -134,35 +130,6 @@ func TestBuildHandler_MetricsAuthenticated(t *testing.T) {
 	// CPU 占用率必须在 0–100 之间，不能是 NaN。
 	if m.CPU.UsagePercent < 0 || m.CPU.UsagePercent > 100 {
 		t.Errorf("CPU 占用率越界：%v", m.CPU.UsagePercent)
-	}
-}
-
-func TestSelfSignedCertUsable(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "certs")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	cert, fingerprint, err := tlsx.EnsureSelfSigned(dir, "127.0.0.1", 9527)
-	if err != nil {
-		t.Fatalf("生成自签证书失败：%v", err)
-	}
-	if fingerprint == "" {
-		t.Error("指纹不应为空，Hub 需要它做首次信任")
-	}
-	srv := httptest.NewUnstartedServer(buildHandler(smokeToken, smokeCollector(t), nil, newContainersAPI("", ""), newImagesAPI(""), newComposeAPI(nil), nil, newResourcesAPI("")))
-	srv.TLS = &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
-	srv.StartTLS()
-	defer srv.Close()
-
-	// 客户端不校验证书（自签），只确认 TLS 握手与鉴权链路通畅。
-	client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}}
-	resp, err := client.Do(authed(t, http.MethodGet, srv.URL+"/api/v1/metrics", "/api/v1/metrics", nil))
-	if err != nil {
-		t.Fatalf("TLS 请求失败：%v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("TLS 下正确签名应返回 200，got %d", resp.StatusCode)
 	}
 }
 

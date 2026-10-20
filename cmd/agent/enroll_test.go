@@ -41,11 +41,7 @@ func fakeHub(t *testing.T, respond func(hit int32) (int, string)) (*httptest.Ser
 func cfgFor(url string) config.AgentConfig {
 	return config.AgentConfig{
 		HubURL:     url,
-		TLSMode:    config.TLSModeNone,
 		JoinSecret: "test-secret",
-		// 反向模式无关紧要：enrollToHub 只看 TLSMode 决定 scheme，
-		// 但 base_url 分支需要它来避免监听地址为空。
-		Reverse: true,
 	}
 }
 
@@ -88,7 +84,8 @@ func TestEnrollRetryPermanentStops(t *testing.T) {
 	}
 }
 
-// TestEnrollRetryGivesUp 守「有限次数后放弃」：非反向模式不该无限刷。
+// TestEnrollRetryGivesUp 守「有限次数后放弃」：调用方显式给了上限就必须尊重，
+// 不能无限刷屏。
 func TestEnrollRetryGivesUp(t *testing.T) {
 	srv, hits := fakeHub(t, func(int32) (int, string) {
 		return http.StatusServiceUnavailable, `{"error":{"code":"internal","message":"暂时不可用"}}`
@@ -103,7 +100,8 @@ func TestEnrollRetryGivesUp(t *testing.T) {
 	}
 }
 
-// TestEnrollRetryContextCancel 守「可被取消」：反向模式无限重试，必须能被 ctx 叫停。
+// TestEnrollRetryContextCancel 守「可被取消」：无限重试（maxAttempts<=0）
+// 必须能被 ctx 叫停，否则关不掉 Agent 进程。
 func TestEnrollRetryContextCancel(t *testing.T) {
 	srv, _ := fakeHub(t, func(int32) (int, string) {
 		return http.StatusServiceUnavailable, `{"error":{"code":"internal","message":"暂时不可用"}}`

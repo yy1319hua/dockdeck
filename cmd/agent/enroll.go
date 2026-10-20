@@ -13,10 +13,12 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
 	"github.com/yy1319hua/dockdeck/internal/config"
+	"github.com/yy1319hua/dockdeck/internal/dockercli"
 )
 
 const enrollTimeout = 15 * time.Second
@@ -66,7 +68,12 @@ func enrollToHub(cfg config.AgentConfig) error {
 		baseURL = "reverse://" + name
 	}
 
-	payload, _ := json.Marshal(map[string]string{"name": name, "base_url": baseURL})
+	payload, _ := json.Marshal(map[string]string{
+		"name":       name,
+		"base_url":   baseURL,
+		"arch":       runtime.GOARCH,
+		"docker_ver": agentDockerVersion(cfg),
+	})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		strings.TrimRight(cfg.HubURL, "/")+"/api/v1/servers/enroll", bytes.NewReader(payload))
 	if err != nil {
@@ -105,6 +112,19 @@ func enrollToHub(cfg config.AgentConfig) error {
 	}
 	log.Printf("agent: 已纳管为 Hub 服务器 #%d（name=%s base_url=%s）", out.Data.ID, out.Data.Name, baseURL)
 	return nil
+}
+
+// agentDockerVersion best-effort 取本机 Docker Engine 版本，供 Hub 服务器列表「Docker」列展示。
+// 失败（socket 不存在、Docker 未就绪等）返回空串——纳管不应被这个可缺信息卡住，
+// Hub 侧该列留空显示「—」。刻意不做版本协商：New 自带默认 API 前缀，Engine 会自动降级。
+func agentDockerVersion(cfg config.AgentConfig) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	v, err := dockercli.New(cfg.DockerSocket).Version(ctx)
+	if err != nil {
+		return ""
+	}
+	return v.Version
 }
 
 // enrollWithRetry 按指数退避重试纳管，直到成功、判定为永久失败或 ctx 结束。

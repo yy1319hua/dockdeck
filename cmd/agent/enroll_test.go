@@ -4,9 +4,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -133,5 +137,57 @@ func TestPermanentEnrollStatus(t *testing.T) {
 		if got := permanentEnrollStatus(c.code); got != c.want {
 			t.Errorf("permanentEnrollStatus(%d) = %v，期望 %v", c.code, got, c.want)
 		}
+	}
+}
+
+// TestEnrollPayloadCarriesArchAndDockerVer 守「enroll 请求体带上报字段」：
+// arch 必须是本进程 GOARCH，docker_ver 字段必须存在（值可为空——Engine 不可达时不卡纳管）。
+func TestEnrollPayloadCarriesArchAndDockerVer(t *testing.T) {
+	var got map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"data":{"id":1,"name":"n"}}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	if err := enrollToHub(cfgFor(srv.URL)); err != nil {
+		t.Fatalf("enrollToHub: %v", err)
+	}
+	if got["arch"] != runtime.GOARCH {
+		t.Fatalf("arch 应为 %q，得 %q", runtime.GOARCH, got["arch"])
+	}
+	if _, ok := got["docker_ver"]; !ok {
+		t.Fatal("请求体应含 docker_ver 字段（可为空串）")
+	}
+}
+
+// TestAgentDockerVersion 守「上报的 docker_ver 取自本机 Engine /version」：
+// 假 Engine 架在真 unix socket 上回 29.1.3；socket 不存在时 best-effort 回空串。
+func TestAgentDockerVersion(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "d.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/version" || r.URL.Path == "/v1.44/version" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"Version":"29.1.3","ApiVersion":"1.44"}`))
+			return
+		}
+		http.NotFound(w, r)
+	})}
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() { _ = srv.Close() })
+
+	if got := agentDockerVersion(config.AgentConfig{DockerSocket: sock}); got != "29.1.3" {
+		t.Fatalf("应取到 Engine 版本，得 %q", got)
+	}
+
+	missing := filepath.Join(t.TempDir(), "missing.sock")
+	if got := agentDockerVersion(config.AgentConfig{DockerSocket: missing}); got != "" {
+		t.Fatalf("Engine 不可达应回空串，得 %q", got)
 	}
 }

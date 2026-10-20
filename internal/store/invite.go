@@ -92,11 +92,17 @@ func (s *Store) lookupInvite(ctx context.Context, plain string) (*invite, error)
 // EnrollServer 认领 join_secret 并写入 servers 行；以同一 secret 作为该 Agent 长期共享令牌
 // （token_cipher = SealSecret(join_secret)，与 ServerConn 解密口径一致）。
 //
+// arch / dockerVer 由 Agent 启动时上报（GOARCH + Engine /version），**允许为空**——
+// Docker 未就绪时纳管不应被卡住，两列留空即可（列表显示「—」）。
+//
 // 幂等：已认领的 secret 再次调用，返回既有服务器 id 并刷新 base_url——Agent 重启或被调度
-// 重建后无需重新部署即可自愈上线（base_url 变了也一并更正）。
-func (s *Store) EnrollServer(ctx context.Context, plain, name, baseURL string) (int64, error) {
+// 重建后无需重新部署即可自愈上线（base_url 变了也一并更正）。arch/docker_ver 同样在重放时
+// 刷新，但仅在 Agent 确实采到时才写：采不到（空串）时保留库内旧值，不被抹空。
+func (s *Store) EnrollServer(ctx context.Context, plain, name, baseURL, arch, dockerVer string) (int64, error) {
 	name = strings.TrimSpace(name)
 	baseURL = strings.TrimSpace(baseURL)
+	arch = strings.TrimSpace(arch)
+	dockerVer = strings.TrimSpace(dockerVer)
 	if name == "" || baseURL == "" {
 		return 0, errors.New("store: name 与 base_url 均不能为空")
 	}
@@ -113,6 +119,19 @@ func (s *Store) EnrollServer(ctx context.Context, plain, name, baseURL string) (
 			if _, err := s.DB.ExecContext(ctx,
 				`UPDATE servers SET base_url=? WHERE id=?`, baseURL, inv.serverID.Int64); err != nil {
 				return 0, err
+			}
+			// 架构/引擎版本仅在上报值非空时刷新（见函数注释）。
+			if arch != "" {
+				if _, err := s.DB.ExecContext(ctx,
+					`UPDATE servers SET arch=? WHERE id=?`, arch, inv.serverID.Int64); err != nil {
+					return 0, err
+				}
+			}
+			if dockerVer != "" {
+				if _, err := s.DB.ExecContext(ctx,
+					`UPDATE servers SET docker_ver=? WHERE id=?`, dockerVer, inv.serverID.Int64); err != nil {
+					return 0, err
+				}
 			}
 			return inv.serverID.Int64, nil
 		}
@@ -134,8 +153,8 @@ func (s *Store) EnrollServer(ctx context.Context, plain, name, baseURL string) (
 		return 0, err
 	}
 	res, err := tx.ExecContext(ctx,
-		`INSERT INTO servers(name, base_url, token_cipher, enabled) VALUES(?,?,?,1)`,
-		name, baseURL, cipher)
+		`INSERT INTO servers(name, base_url, arch, docker_ver, token_cipher, enabled) VALUES(?,?,?,?,?,1)`,
+		name, baseURL, arch, dockerVer, cipher)
 	if err != nil {
 		if IsUniqueErr(err) {
 			return 0, ErrServerNameTaken

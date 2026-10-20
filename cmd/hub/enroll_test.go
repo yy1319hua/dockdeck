@@ -57,7 +57,7 @@ func TestInviteAndEnrollOverHTTP(t *testing.T) {
 
 	// 正确 enroll → 201，返回服务器 id。
 	resp, body = h.do(t, http.MethodPost, "/api/v1/servers/enroll",
-		`{"name":"web-01","base_url":"https://10.0.0.5:9527"}`, inv.Data.JoinSecret, "")
+		`{"name":"web-01","base_url":"https://10.0.0.5:9527","arch":"amd64","docker_ver":"29.1.3"}`, inv.Data.JoinSecret, "")
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("enroll 应 201，得 %d｜%s", resp.StatusCode, trim(body))
 	}
@@ -94,6 +94,9 @@ func TestInviteAndEnrollOverHTTP(t *testing.T) {
 	_, lb := h.get(t, "/api/v1/servers", "", cookie)
 	if !strings.Contains(string(lb), "web-01") || !strings.Contains(string(lb), "10.0.0.9") {
 		t.Fatalf("列表应含 web-01 且 base_url 已刷新：%s", trim(lb))
+	}
+	if !strings.Contains(string(lb), "amd64") || !strings.Contains(string(lb), "29.1.3") {
+		t.Fatalf("列表应含 Agent 上报的 arch/docker_ver：%s", trim(lb))
 	}
 	if strings.Contains(string(lb), inv.Data.JoinSecret) {
 		t.Fatal("列表泄漏了 join_secret")

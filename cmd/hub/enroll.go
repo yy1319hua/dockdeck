@@ -49,6 +49,8 @@ func (s *server) serverInvite(w http.ResponseWriter, r *http.Request) {
 }
 
 // serverEnroll 由 Agent 启动时调用：认领 join_secret、写入 servers 行。幂等。
+// 请求体可选带 arch / docker_ver（Agent 上报的 GOARCH 与 Engine 版本），写入 servers 行
+// 供服务器列表展示；缺失时留空，不阻断纳管。
 // 审计在本端点内完成（要记录生成的 server_id，middleware.Audit 从路径取不到），故不套审计中间件。
 func (s *server) serverEnroll(w http.ResponseWriter, r *http.Request) {
 	secret, ok := joinauth.Secret(r)
@@ -58,14 +60,16 @@ func (s *server) serverEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Name    string `json:"name"`
-		BaseURL string `json:"base_url"`
+		Name      string `json:"name"`
+		BaseURL   string `json:"base_url"`
+		Arch      string `json:"arch"`
+		DockerVer string `json:"docker_ver"`
 	}
 	if err := httpx.DecodeJSON(w, r, &body); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, "请求体解析失败")
 		return
 	}
-	id, err := s.st.EnrollServer(r.Context(), secret, body.Name, body.BaseURL)
+	id, err := s.st.EnrollServer(r.Context(), secret, body.Name, body.BaseURL, body.Arch, body.DockerVer)
 	s.writeEnrollAudit(r, id, body.Name, err)
 	if err != nil {
 		switch {

@@ -6,6 +6,8 @@
     * 不校验用户名/密码格式——后端对「用户不存在」与「密码错」统一回 invalid_credentials
       以免泄漏用户名是否存在，前端若再提示「用户名不存在」等于把后端的设计抹掉。
     * 不在本页显示 AccountLocked / AccountDisabled 的差异化文案——这些语义由后端 message 承载。
+    * 不无条件显示「创建首个账户」——仅 GET /auth/me 回报 setup_required=true（系统无账户）时
+      才显示；已建号的系统再挂这个入口，等于告诉访客「这系统还没设防」。
 -->
 <template>
   <div class="login">
@@ -51,7 +53,7 @@
         {{ auth.pending ? '登录中…' : '登录' }}
       </button>
 
-      <footer class="login__foot">
+      <footer v-if="setupRequired" class="login__foot">
         <span>系统还没有账户？</span>
         <RouterLink to="/setup">创建首个账户</RouterLink>
       </footer>
@@ -60,10 +62,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useUiStore } from '@/stores/ui'
+import { fetchMe } from '@/api/auth'
 
 const auth = useAuthStore()
 const ui = useUiStore()
@@ -72,6 +75,20 @@ const router = useRouter()
 
 const username = ref('')
 const password = ref('')
+
+// 仅当系统尚无任何账户时才显示「创建首个账户」入口：GET /auth/me 未登录也返 200，
+// setup_required=true 即「该建号」。探测失败一律按 false 处理（有账户也不该看见入口；
+// 真没有账户时 /setup 页自身仍可建号，这里不挡路）。
+const setupRequired = ref(false)
+onMounted(() => {
+  fetchMe()
+    .then((me) => {
+      setupRequired.value = me.setup_required
+    })
+    .catch(() => {
+      setupRequired.value = false
+    })
+})
 
 const canSubmit = computed(() => username.value !== '' && password.value !== '')
 

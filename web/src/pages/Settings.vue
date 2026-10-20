@@ -142,7 +142,31 @@
           </tr>
         </tbody>
       </table>
-      <p v-else class="st__empty">尚未签发任何 Token。</p>
+
+      <!-- 手机态卡片：M7 模式（桌面只见表格、手机只见卡片，与审计页同构）。
+            七列在 390px 视口必溢出，与其横向滚表格不如整卡重排，信息一列不少。 -->
+      <div v-if="st.tokens.length > 0" class="st__cards">
+        <div v-for="t in st.tokens" :key="t.id" class="st__tokcard">
+          <div class="st__tokcard-head">
+            <span class="st__tokname">{{ t.name }}</span>
+            <span class="st__badge" :class="t.active ? 'st__badge--ok' : 'st__badge--off'">{{
+              t.active ? '可用' : t.revokedAt ? '已撤销' : '已过期'
+            }}</span>
+          </div>
+          <dl class="st__tokcard-grid">
+            <dt>权限</dt>
+            <dd class="st__tokscopes">{{ t.scopes.join('、') }}</dd>
+            <dt>创建时间</dt>
+            <dd>{{ formatRFC3339(t.createdAt) }}</dd>
+            <dt>最后使用</dt>
+            <dd>{{ t.lastUsedAt ? formatRFC3339(t.lastUsedAt) : '从未' }}</dd>
+            <dt>过期</dt>
+            <dd>{{ t.expiresAt ? formatRFC3339(t.expiresAt) : '永不过期' }}</dd>
+          </dl>
+          <button v-if="t.active" type="button" class="link link--danger" @click="askRevoke(t)">撤销</button>
+        </div>
+      </div>
+      <p v-if="st.tokens.length === 0" class="st__empty">尚未签发任何 Token。</p>
     </section>
 
     <!-- ③ 保护名单 -->
@@ -663,6 +687,63 @@ async function copyText(text: string, label: string): Promise<void> {
   background: var(--bg-sunken);
   border: 1px solid var(--border-default);
   color: var(--fg-subtle);
+}
+
+/* ---------- Token 卡片（手机态，M7） ---------- */
+
+/* 桌面一律不渲染卡片；<768px 反转（表格隐、卡片显），与审计页同一套模式。 */
+.st__cards {
+  display: none;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.st__tokcard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--bg-elev-1);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+}
+
+.st__tokcard-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+/* 标签-值两列网格：标签不换行、值右对齐，时间串再长也只在本行内收缩。 */
+.st__tokcard-grid {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+  font-size: var(--text-sm);
+}
+
+.st__tokcard-grid dt {
+  color: var(--fg-subtle);
+  white-space: nowrap;
+}
+
+.st__tokcard-grid dd {
+  margin: 0;
+  color: var(--fg-muted);
+  text-align: right;
+  word-break: break-all;
+}
+
+@media (max-width: 767px) {
+  .st__table {
+    display: none;
+  }
+
+  .st__cards {
+    display: flex;
+  }
 }
 
 /* ---------- 保护名单 textarea / TLS 指纹 ---------- */

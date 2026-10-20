@@ -922,8 +922,10 @@ func (s *server) routes() http.Handler {
 		RateLimited: true,
 		Summary:     "Agent 自注册纳管", Tags: []string{"Servers"}, Body: &route.Body{},
 		Desc: "Agent 启动时以 Authorization: Bearer <join_secret> 调用：认领邀请、写入 servers 行，" +
-			"并以同一 secret 作为本机长期共享令牌（Hub 侧密文存储）。**幂等**：同一 join_secret " +
-			"重复调用返回既有服务器 id 并刷新 base_url（重启/改址自愈）。",
+			"并以同一 secret 作为本机长期共享令牌（Hub 侧密文存储）。请求体可带 arch / docker_ver " +
+			"（Agent 上报的 GOARCH 与 Engine 版本，写入服务器列表展示；缺失留空不阻断纳管）。" +
+			"**幂等**：同一 join_secret 重复调用返回既有服务器 id 并刷新 base_url（重启/改址自愈），" +
+			"非空的 arch / docker_ver 一并刷新。",
 		Responses: []route.Response{
 			{Status: 400, Desc: "请求体不合法"},
 			{Status: 401, Desc: "join_secret 无法识别"},

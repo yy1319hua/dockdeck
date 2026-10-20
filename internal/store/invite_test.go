@@ -48,7 +48,7 @@ func TestEnrollServerLifecycle(t *testing.T) {
 		t.Fatal("邀请行应按哈希存在")
 	}
 
-	id, err := st.EnrollServer(ctx, plain, "web-01", "https://10.0.0.5:9527")
+	id, err := st.EnrollServer(ctx, plain, "web-01", "https://10.0.0.5:9527", "amd64", "29.1.3")
 	if err != nil {
 		t.Fatalf("EnrollServer: %v", err)
 	}
@@ -62,9 +62,17 @@ func TestEnrollServerLifecycle(t *testing.T) {
 	if conn.BaseURL != "https://10.0.0.5:9527" {
 		t.Fatalf("base_url 不对：%q", conn.BaseURL)
 	}
+	var arch, dv string
+	if err := st.DB.QueryRowContext(ctx,
+		`SELECT arch, docker_ver FROM servers WHERE id=?`, id).Scan(&arch, &dv); err != nil {
+		t.Fatalf("查 arch/docker_ver: %v", err)
+	}
+	if arch != "amd64" || dv != "29.1.3" {
+		t.Fatalf("arch/docker_ver 应随 enroll 落库，得 %q / %q", arch, dv)
+	}
 
 	// 幂等重放：同 secret 再 enroll，返回同 id 且刷新 base_url。
-	id2, err := st.EnrollServer(ctx, plain, "web-01", "https://10.0.0.9:9527")
+	id2, err := st.EnrollServer(ctx, plain, "web-01", "https://10.0.0.9:9527", "arm64", "30.0.0")
 	if err != nil {
 		t.Fatalf("重放 EnrollServer: %v", err)
 	}
@@ -74,8 +82,15 @@ func TestEnrollServerLifecycle(t *testing.T) {
 	if conn2, _ := st.ServerConn(ctx, id); conn2.BaseURL != "https://10.0.0.9:9527" {
 		t.Fatalf("重放应刷新 base_url，得 %q", conn2.BaseURL)
 	}
+	if err := st.DB.QueryRowContext(ctx,
+		`SELECT arch, docker_ver FROM servers WHERE id=?`, id).Scan(&arch, &dv); err != nil {
+		t.Fatalf("查 arch/docker_ver: %v", err)
+	}
+	if arch != "arm64" || dv != "30.0.0" {
+		t.Fatalf("重放应刷新 arch/docker_ver，得 %q / %q", arch, dv)
+	}
 
-	if _, err := st.EnrollServer(ctx, "totally-unknown", "x", "https://x:1"); err != ErrInviteNotFound {
+	if _, err := st.EnrollServer(ctx, "totally-unknown", "x", "https://x:1", "", ""); err != ErrInviteNotFound {
 		t.Fatalf("未知 secret 应 ErrInviteNotFound，得 %v", err)
 	}
 }
@@ -85,10 +100,10 @@ func TestEnrollServerNameTaken(t *testing.T) {
 	st := newInviteStore(t)
 	a, _ := st.CreateInvite(ctx, "", time.Minute)
 	b, _ := st.CreateInvite(ctx, "", time.Minute)
-	if _, err := st.EnrollServer(ctx, a, "dup", "https://a:1"); err != nil {
+	if _, err := st.EnrollServer(ctx, a, "dup", "https://a:1", "", ""); err != nil {
 		t.Fatalf("首次 enroll: %v", err)
 	}
-	if _, err := st.EnrollServer(ctx, b, "dup", "https://b:1"); err != ErrServerNameTaken {
+	if _, err := st.EnrollServer(ctx, b, "dup", "https://b:1", "", ""); err != ErrServerNameTaken {
 		t.Fatalf("同名应 ErrServerNameTaken，得 %v", err)
 	}
 }
@@ -103,7 +118,7 @@ func TestEnrollServerExpired(t *testing.T) {
 		crypto.HashToken(plain), exp); err != nil {
 		t.Fatalf("insert: %v", err)
 	}
-	if _, err := st.EnrollServer(ctx, plain, "e", "https://e:1"); err != ErrInviteExpired {
+	if _, err := st.EnrollServer(ctx, plain, "e", "https://e:1", "", ""); err != ErrInviteExpired {
 		t.Fatalf("过期邀请应 ErrInviteExpired，得 %v", err)
 	}
 }

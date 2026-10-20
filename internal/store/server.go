@@ -177,3 +177,38 @@ func (s *Store) ServerConnByToken(ctx context.Context, token string) (*ServerCon
 	}
 	return found, nil
 }
+
+// DeleteServer 物理删除一台受管服务器，返回其名称（供调用方记日志/响应体）。
+//
+// 级联语义（db.Open 的 DSN 已开 foreign_keys(ON)，删除即生效）：
+//   - metrics_snapshots / metrics_latest / container_snapshots：ON DELETE CASCADE，
+//     历史指标一并清空；
+//   - audit_logs.server_id：ON DELETE SET NULL，审计记录留存、归属置空；
+//   - server_invites.server_id：ON DELETE SET NULL，该邀请自此落入 EnrollServer
+//     「已认领但其服务器已不存在」分支——旧 Agent 持旧 secret 重放被 410 正确拒绝。
+//
+// 删除同时释放 servers.name 唯一约束：同名节点可立即重新 enroll
+// （解 409 撞名卡死正是删除功能的核心用途之一）。
+//
+// 不存在返回 ErrNotFound（handler 映射 404）。先查名再删，两步之间
+// 极小概率的并发删除由 RowsAffected 兜底。
+func (s *Store) DeleteServer(ctx context.Context, id int64) (string, error) {
+	if id <= 0 {
+		return "", ErrNotFound
+	}
+	var name string
+	if err := s.DB.QueryRowContext(ctx, `SELECT name FROM servers WHERE id=?`, id).Scan(&name); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrNotFound
+		}
+		return "", err
+	}
+	res, err := s.DB.ExecContext(ctx, `DELETE FROM servers WHERE id=?`, id)
+	if err != nil {
+		return "", err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return "", ErrNotFound
+	}
+	return name, nil
+}

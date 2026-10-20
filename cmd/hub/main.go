@@ -934,6 +934,20 @@ func (s *server) routes() http.Handler {
 		},
 	}, s.serverEnroll)
 
+	// ---- 删除受管服务器（仅会话；物理删除，级联清 metrics，释放名字可重新纳管）----
+	tbl.Add(route.Entry{
+		Method: "DELETE", Path: "/api/v1/servers/{id}", AuthMode: route.AuthSession,
+		Summary: "删除受管服务器", Tags: []string{"Servers"},
+		Desc: "物理删除一台受管服务器：metrics 历史级联清空、审计留存（server_id 置空）；" +
+			"删除后同名可立即重新纳管。仅浏览器会话可调（与纳管邀请同口径：管理操作不开放 API Token）。",
+		Responses: []route.Response{
+			{Status: 401, Desc: "未登录，或携带 API Token"},
+			{Status: 404, Desc: "服务器不存在"},
+			{Status: 500, Desc: "删除失败"},
+		},
+		InternalRef: "cmd/hub/servers.go serverDelete",
+	}, middleware.Audit(s.st, "server.delete", s.serverDelete))
+
 	// ---- 构建元数据：设置页「版本信息」分区消费（仅会话；不写审计，理由见 handler）----
 	tbl.Add(route.Entry{
 		Method: "GET", Path: "/api/v1/system/version", AuthMode: route.AuthSession,

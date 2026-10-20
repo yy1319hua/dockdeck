@@ -56,17 +56,51 @@
           <td>{{ formatAgo(s.lastSeen) }}</td>
           <td class="sv__acts">
             <button type="button" class="link" @click.stop="goDetail(s)">详情</button>
+            <button type="button" class="link link--danger" @click.stop="askDelete(s)">删除</button>
           </td>
         </tr>
       </tbody>
     </table>
+
+    <!-- 删除确认：物理删除不可逆，要求手动输入服务器名称（防误删）。 -->
+    <teleport to="body">
+      <div v-if="del" class="sv__mask" @click.self="del = null">
+        <div class="sv__modal" role="dialog" aria-modal="true" aria-labelledby="sv-del-title">
+          <h2 id="sv-del-title" class="sv__modal-title">删除服务器</h2>
+          <p class="sv__modal-text">
+            将物理删除 <b>{{ del.name }}</b> 及其全部历史指标数据，删除后同名可重新纳管。此操作不可撤销。
+          </p>
+          <label class="sv__modal-label" for="sv-del-input">请输入服务器名称「{{ del.name }}」确认：</label>
+          <input
+            id="sv-del-input"
+            v-model="delInput"
+            class="sv__modal-input"
+            type="text"
+            autocomplete="off"
+            @keyup.enter="doDelete"
+          />
+          <p v-if="delError" class="sv__modal-err">{{ delError }}</p>
+          <div class="sv__modal-acts">
+            <button type="button" class="btn" @click="del = null">取消</button>
+            <button
+              type="button"
+              class="btn btn--danger"
+              :disabled="delBusy || delInput !== del.name"
+              @click="doDelete"
+            >
+              {{ delBusy ? '删除中…' : '确认删除' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </teleport>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { fetchServers, isOnline, type Server } from '@/api/servers'
+import { deleteServer, fetchServers, isOnline, type Server } from '@/api/servers'
 import { formatAgo } from '@/utils/format'
 
 /** 与后端采集周期对齐（30s）：在线状态以后端 last_seen 为准，轮询只刷清单。 */
@@ -129,6 +163,33 @@ function goDetail(s: Server): void {
 
 function goAddNode(): void {
   void router.push({ name: 'add-node' })
+}
+
+// —— 删除：物理删除 + 输入名称二次确认；成功后重新拉清单。 ——
+const del = ref<Server | null>(null)
+const delInput = ref('')
+const delBusy = ref(false)
+const delError = ref<string | null>(null)
+
+function askDelete(s: Server): void {
+  del.value = s
+  delInput.value = ''
+  delError.value = null
+}
+
+async function doDelete(): Promise<void> {
+  if (del.value === null || delBusy.value || delInput.value !== del.value.name) return
+  delBusy.value = true
+  delError.value = null
+  try {
+    await deleteServer(del.value.id)
+    del.value = null
+    await load()
+  } catch (e) {
+    delError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    delBusy.value = false
+  }
 }
 
 onMounted(start)
@@ -285,5 +346,86 @@ onUnmounted(stop)
   .sv__table tr {
     display: revert;
   }
+}
+
+/* 删除入口与确认弹窗（物理删除不可逆，交互从重）。 */
+.link--danger {
+  margin-left: var(--space-2);
+  color: var(--danger);
+}
+
+.sv__mask {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  background: rgb(0 0 0 / 60%);
+}
+
+.sv__modal {
+  width: 100%;
+  max-width: 420px;
+  padding: var(--space-5);
+  background: var(--bg-elev-1);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+}
+
+.sv__modal-title {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+}
+
+.sv__modal-text {
+  margin: 0 0 var(--space-4);
+  color: var(--fg-default);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
+
+.sv__modal-label {
+  display: block;
+  margin-bottom: var(--space-2);
+  color: var(--fg-subtle);
+  font-size: var(--text-sm);
+}
+
+.sv__modal-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  color: var(--fg-default);
+  font-size: var(--text-sm);
+}
+
+.sv__modal-err {
+  margin: var(--space-2) 0 0;
+  color: var(--danger);
+  font-size: var(--text-sm);
+}
+
+.sv__modal-acts {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.btn--danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+
+.btn--danger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 </style>

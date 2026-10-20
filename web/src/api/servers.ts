@@ -92,3 +92,13 @@ export async function createInvite(ttlMin = 15, nameHint?: string): Promise<Invi
   })
   return { joinSecret: w.join_secret, expiresIn: w.expires_in, warning: w.warning }
 }
+
+/**
+ * 物理删除一台受管服务器（DELETE /servers/{id}，仅浏览器会话可调）。
+ *
+ * 级联清 metrics 历史；删除后同名可重新纳管。
+ * 404 = 服务器不存在（已被别处删掉），调用方按「目标已消失」处理即可。
+ */
+export async function deleteServer(id: number): Promise<void> {
+  await request<void>(`/servers/${id}`, { method: 'DELETE' })
+}

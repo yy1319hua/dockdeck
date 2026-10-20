@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yy1319hua/dockdeck/internal/crypto"
 	"github.com/yy1319hua/dockdeck/internal/db"
@@ -153,5 +154,74 @@ func TestListServers_ReturnsAllIncludingDisabled(t *testing.T) {
 	}
 	if strings.Contains(buf.String(), "agent-tok-a") || strings.Contains(buf.String(), "agent-tok-b") {
 		t.Errorf("列表泄露了 Agent 令牌：%s", buf.String())
+	}
+}
+
+// TestDeleteServer 覆盖物理删除的级联语义、旧邀请失效与「删后同名可重新纳管」。
+func TestDeleteServer(t *testing.T) {
+	ctx := context.Background()
+	st := newServerStore(t)
+
+	// 经真实 invite→enroll 建一台。
+	plain, err := st.CreateInvite(ctx, "doomed", time.Minute)
+	if err != nil {
+		t.Fatalf("CreateInvite: %v", err)
+	}
+	id, err := st.EnrollServer(ctx, plain, "doomed", "reverse://doomed", "amd64", "29.1.3")
+	if err != nil {
+		t.Fatalf("EnrollServer: %v", err)
+	}
+
+	// 塞 metrics 历史（两表各一行），验证级联清空。
+	if _, err := st.DB.ExecContext(ctx,
+		`INSERT INTO metrics_snapshots(server_id, ts) VALUES(?,?)`,
+		id, "2026-10-20T00:00:00Z"); err != nil {
+		t.Fatalf("seed metrics_snapshots: %v", err)
+	}
+	if _, err := st.DB.ExecContext(ctx,
+		`INSERT INTO metrics_latest(server_id, ts, metrics) VALUES(?,?,?)`,
+		id, "2026-10-20T00:00:00Z", "{}"); err != nil {
+		t.Fatalf("seed metrics_latest: %v", err)
+	}
+
+	// 删除 → 返回名字、行消失、metrics 两表清空。
+	name, err := st.DeleteServer(ctx, id)
+	if err != nil {
+		t.Fatalf("DeleteServer: %v", err)
+	}
+	if name != "doomed" {
+		t.Fatalf("DeleteServer 返回名 %q，want doomed", name)
+	}
+	if ok, _ := st.ServerExists(ctx, id); ok {
+		t.Fatal("删除后服务器不应还存在")
+	}
+	for _, tbl := range []string{"metrics_snapshots", "metrics_latest"} {
+		var cnt int
+		if err := st.DB.QueryRowContext(ctx,
+			`SELECT COUNT(1) FROM `+tbl+` WHERE server_id=?`, id).Scan(&cnt); err != nil {
+			t.Fatalf("count %s: %v", tbl, err)
+		}
+		if cnt != 0 {
+			t.Fatalf("%s 应级联清空，剩 %d 行", tbl, cnt)
+		}
+	}
+
+	// 旧 secret 重放 → 邀请已不可用（server_id 置空后的 410 分支）。
+	if _, err := st.EnrollServer(ctx, plain, "doomed", "reverse://doomed", "", ""); !errors.Is(err, ErrInviteExpired) {
+		t.Fatalf("旧 secret 重放应 ErrInviteExpired，得 %v", err)
+	}
+
+	// 名字已释放：同名新邀请可立即 enroll（解 409 撞名卡死）。
+	plain2, err := st.CreateInvite(ctx, "doomed-again", time.Minute)
+	if err != nil {
+		t.Fatalf("CreateInvite #2: %v", err)
+	}
+	if _, err := st.EnrollServer(ctx, plain2, "doomed", "reverse://doomed", "", ""); err != nil {
+		t.Fatalf("删后同名应可重新 enroll: %v", err)
+	}
+
+	// 删不存在的 → ErrNotFound（handler 映射 404）。
+	if _, err := st.DeleteServer(ctx, id); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("删不存在的应 ErrNotFound，得 %v", err)
 	}
 }

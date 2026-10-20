@@ -6,9 +6,11 @@
      纳管是低频一次性动作，占一栏不值当。
    * 平台只做 Linux（用户拍板）：不设 Windows/macOS 占位 Tab，避免
      「点得动但没内容」的假入口。
-   * 8 个选项全部对应 Agent 真实参数（--bind-ip / --dir / --tag / --reverse /
-     --fs-roots / --compose-dirs / --self-container / --disk-mounts），
+   * 选项全部对应 Agent 真实参数（--dir / --tag / --fs-roots /
+     --compose-dirs / --self-container / --disk-mounts），
      不造页面自己的概念。
+   * 统一 wss 反向长连接（--reverse 恒发）：Agent 主动连 Hub，NAT 后 /
+     无公网 IP 均可；页面不提供正向（监听）模式入口。
    * Hub 地址取 window.location.origin：公网进就是隧道域名，内网进就是内网
      地址，**页面不硬编码任何域名**（入库文件不得出现真实域名/IP）。
    * join_secret 仅签发响应可见一次 + 有效期倒计时：到期后停止展示并提示
@@ -35,17 +37,11 @@
     <section class="card an__zone">
       <h2 class="an__zone-title">安装选项</h2>
       <p class="an__hint">
-        留空即用默认值。绑定 IP 建议填目标机的 <code>tailscale ip -4</code>；
-        反向模式（NAT 后 / 无公网 IP）可留空。
+        留空即用默认值。统一使用 wss 反向长连接：Agent 主动连接 Hub，
+        NAT 后 / 无公网 IP 均可，无需绑定监听端口。
       </p>
 
       <div class="an__grid">
-        <label class="an__field">
-          <span class="an__label">绑定 IP</span>
-          <input v-model.trim="opt.bindIp" class="an__input" placeholder="如 100.64.0.1" />
-          <span class="an__tip">{{ opt.reverse ? '反向模式下可留空（不监听端口）' : '留空 = 脚本自动取 tailscale IP' }}</span>
-        </label>
-
         <label class="an__field">
           <span class="an__label">安装目录</span>
           <input v-model.trim="opt.dir" class="an__input" placeholder="/opt/dockdeck" />
@@ -61,14 +57,6 @@
           <span class="an__label">镜像加速地址</span>
           <input v-model.trim="opt.mirror" class="an__input" placeholder="如 docker.m.daocloud.io（留空 = ghcr.io 原址）" />
           <span class="an__tip">可选。国内拉取 ghcr.io 不畅时填加速域名，会拼成 <code>加速域名/ghcr.io/…</code>；三种形态同步生效</span>
-        </label>
-
-        <label class="an__field an__field--check">
-          <span class="an__label">反向模式</span>
-          <span class="an__check">
-            <input v-model="opt.reverse" type="checkbox" />
-            <span>Agent 主动连 Hub（NAT 后 / 无公网 IP 时勾选）</span>
-          </span>
         </label>
 
         <label class="an__field">
@@ -167,11 +155,9 @@ const router = useRouter()
 const ui = useUiStore()
 
 const opt = reactive({
-  bindIp: '',
   dir: '/opt/dockdeck',
   tag: 'latest',
   mirror: '',
-  reverse: false,
   fsRoots: '',
   composeDirs: '',
   selfContainer: 'dockdeck-agent',
@@ -214,18 +200,14 @@ const countdownText = computed(() => {
 /** 安装脚本的参数：只列真实值，避免生成一堆「等于默认值」的噪音。 */
 const scriptArgs = computed(() => {
   const a: string[] = [`--hub-url ${hubUrl.value}`, '--join-secret <上方的 join_secret>']
-  if (opt.bindIp) {
-    a.push(`--bind-ip ${opt.bindIp}`)
-  }
+  // 统一 wss 反向长连接：Agent 主动连 Hub，不监听端口（NAT 后可用）。
+  a.push('--reverse')
   a.push(`--dir ${activeDir.value}`)
   if (activeTag.value !== 'latest') {
     a.push(`--tag ${activeTag.value}`)
   }
   if (activeMirror.value) {
     a.push(`--image ${agentImage.value}`)
-  }
-  if (opt.reverse) {
-    a.push('--reverse')
   }
   a.push(`--fs-roots ${activeFsRoots.value}`)
   a.push(`--compose-dirs ${activeComposeDirs.value}`)
@@ -262,14 +244,11 @@ const currentCommand = computed(() => {
       `-e DD_AGENT_COMPOSE_DIRS=${activeComposeDirs.value}`,
       `-e DD_AGENT_SELF_CONTAINER=${activeSelf.value}`,
     ]
-    if (opt.reverse) {
-      env.push('-e DD_AGENT_REVERSE=1')
-    } else if (opt.bindIp) {
-      env.push(`-e DD_AGENT_LISTEN=${opt.bindIp}:9527`)
-    }
     if (opt.diskMounts) {
       env.push(`-e DD_AGENT_DISK_MOUNTS=${opt.diskMounts}`)
     }
+    // 统一 wss 反向长连接：不监听端口，Agent 主动连 Hub。
+    env.push('-e DD_AGENT_REVERSE=1')
     return [
       `docker run -d --name ${activeSelf.value} --restart unless-stopped --network host \\`,
       '  -v /var/run/docker.sock:/var/run/docker.sock:ro \\',
@@ -289,9 +268,6 @@ const currentCommand = computed(() => {
     '      - --fs-root',
     `      - ${activeFsRoots.value}`,
   ]
-  if (!opt.reverse && opt.bindIp) {
-    cmdLines.unshift('      - --listen', `      - ${opt.bindIp}:9527`)
-  }
   const envLines = [
     `      DD_HUB_URL: ${hubUrl.value}`,
     `      DD_AGENT_TOKEN: ${secret}`,
@@ -299,12 +275,11 @@ const currentCommand = computed(() => {
     `      DD_AGENT_FS_ROOTS: ${activeFsRoots.value}`,
     `      DD_AGENT_COMPOSE_DIRS: ${activeComposeDirs.value}`,
   ]
-  if (opt.reverse) {
-    envLines.push('      DD_AGENT_REVERSE: "1"')
-  }
   if (opt.diskMounts) {
     envLines.push(`      DD_AGENT_DISK_MOUNTS: ${opt.diskMounts}`)
   }
+  // 统一 wss 反向长连接：不监听端口，Agent 主动连 Hub。
+  envLines.push('      DD_AGENT_REVERSE: "1"')
   return [
     'services:',
     `  ${activeSelf.value}:`,
@@ -458,14 +433,6 @@ onBeforeUnmount(stopTick)
   color: var(--fg-subtle);
   font-size: var(--text-xs);
   line-height: 1.45;
-}
-
-.an__check {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-size: var(--text-sm);
-  color: var(--fg-default);
 }
 
 .an__actions {

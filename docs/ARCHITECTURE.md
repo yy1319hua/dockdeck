@@ -1,14 +1,14 @@
 # DockDeck 架构
 
 多服务器监控与 Docker 管理面板，监控主线参照哪吒监控（Nezha）。一个 Hub 管 N 台宿主机，
-每台宿主机跑一个 Agent 采集主机指标、按需读写 docker.sock 与受限文件目录。
+每台宿主机跑一个 Agent 采集服务器指标、按需读写 docker.sock 与受限文件目录。
 Tailscale 私网或内网反代访问，不开任何公网端口。对外提供 OpenAPI，App 与浏览器 UI 共用同一组端点。
 
 ## 功能边界（2026-10-13 用户确认）
 
 | 含 | 不含 |
 | --- | --- |
-| 主机监控：CPU / 内存 / 磁盘 / 网络流量 / 负载 / 在线率 / 历史曲线 | 服务拨测（HTTP/TCP/Ping/SSL 证书） |
+| 服务器监控：CPU / 内存 / 磁盘 / 网络流量 / 负载 / 在线率 / 历史曲线 | 服务拨测（HTTP/TCP/Ping/SSL 证书） |
 | Docker 容器管理、日志、镜像、Compose | 告警通知（Telegram/邮件/Webhook） |
 | 文件管理（限定根白名单内） | Web 终端 / WebSSH |
 | 审计日志、OpenAPI + API Token | 免登录公开状态页（状态页须登录才显示） |
@@ -23,7 +23,7 @@ Tailscale 私网或内网反代访问，不开任何公网端口。对外提供 
                           ├─ SQLite（用户/服务器/会话/API令牌/审计/指标快照）
                           ├─ 鉴权：cookie 会话 + Bearer API Token（scope 制）
                           └─ Agent Client ──HTTP+Bearer+HMAC──► Agent(:9527, 每台宿主机)
-                                                                 ├─ /proc 主机指标
+                                                                 ├─ /proc 服务器指标
                                                                  ├─ Docker Engine API (unix socket)
                                                                  └─ 受限文件系统（根白名单）
 ```
@@ -73,7 +73,7 @@ Agent ──出站 wss──> Hub /api/v1/agent/link ──复用同一条 WS─
 - **Bearer API Token（App / 自动化）**：仅接受 `Authorization: Bearer <token>`。
   token 为服务端生成的随机串，**库里只存 SHA-256，明文仅在创建时显示一次**；
   带 scope 与过期时间，撤销后立即失效。scope：
-  `read:metrics`（主机与容器指标只读）、`read:containers`（容器/镜像/Compose 清单只读）、
+  `read:metrics`（服务器与容器指标只读）、`read:containers`（容器/镜像/Compose 清单只读）、
   `write:containers`（容器操作）、`read:files`（文件列表/元信息/读取）、`write:files`（文件写）、`read:audit`（审计只读）。
   Token 不能访问 UI 专属端点，cookie 会话不识别 Bearer 头——避免会话固定与 CSRF 面扩散。
 - Hub 侧：自签证书 + 指纹写入设置页；`DD_TLS_MODE=self|none`。
@@ -158,7 +158,7 @@ Hub API 前缀 `/api/v1`（`/api/v1/servers/{id}/…` 转发到对应 Agent，`/
 
 | p | scope | 说明 |
 | --- | --- | --- |
-| `GET /servers` | Token `read:metrics`（403） | 受管主机清单；`ServerSummary` 线上字段 PascalCase（无 JSON tag） |
+| `GET /servers` | Token `read:metrics`（403） | 受管服务器清单；`ServerSummary` 线上字段 PascalCase（无 JSON tag） |
 | `POST /servers/enroll` | Token `read:metrics`（403） | Agent 自注册纳管（201）；与 login/setup 同受 IP 限流 |
 | `GET /servers/{id}/metrics` | `read:metrics` | 实时指标快照（单时刻，无 since/until/step） |
 | `GET /servers/{id}/metrics/overview` | `read:metrics` | 历史曲线；窗口上限 8 天、`limit` 默认 720/上限 1440 |
@@ -295,7 +295,7 @@ Agent 路由（Hub 侧同构路径 `/api/v1/servers/{id}/files*` 已随 S5.5 落
   **只能追加，删不掉默认**；pattern 用 `path.Match`，逐段与整条相对路径各匹配一遍，宁严不宽；
   pattern 在构造期即校验合法性——留到请求期再「忽略 Match 错误」等于把保护静默关掉。
 
-## 主机指标采集
+## 服务器指标采集
 
 Agent 侧只读 `/proc`，不引入 gopsutil 这类额外依赖（交叉编译体积与可控性）：
 
@@ -357,7 +357,7 @@ Agent 侧只读 `/proc`，不引入 gopsutil 这类额外依赖（交叉编译�
 
 Vue 3 + Vite + TS，`vue-router` + `pinia`，图表 uPlot，无重型 UI 框架，自带深色设计系统。
 构建产物 `web/dist` 经 `go:embed` 进二进制，交付物仍是单个可执行文件。
-页面：**服务器监控总览（主视图）** / 单主机详情（指标·容器·日志·镜像·Compose·文件）/
+页面：**服务器监控总览（主视图）** / 单服务器详情（指标·容器·日志·镜像·Compose·文件）/
 审计 / API Token 与设置。状态与数据须登录才显示，无免登录公开页。
 危险操作二次确认，输入目标名才可提交。
 
@@ -388,12 +388,12 @@ Vue 3 + Vite + TS，`vue-router` + `pinia`，图表 uPlot，无重型 UI 框架�
 | 详情页的口径（S7.2） | ①**一图一指标，不塞多序列双 Y 轴**：四项指标量纲不同（百分比 vs 字节），双轴图像两个指标相关实则误导；网络上下行同量纲是唯一画两条线的例外，且画的是**速率**（相邻点差分，首点无前值留空断线，不画成 0）。②**进程只有总数**：后端无进程列表端点，详情页显示 `HostMetrics.processes` 总数并注明「明细待后端立项」，不造进程表。③**`loading` 与 `refreshing` 分开**：首载/切区间走 `loading`（区间按钮禁用防并发），后台轮询走 `refreshing`（只显示「刷新中…」，不动按钮）；轮询与首载共用同一条 `pull`（实时快照 + 当前区间曲线），口径不劈叉；轮询失败保留上次成功数据、只把原因记进 error——监控页被一次网络抖动清成空白比显示旧数据更糟。区间档 1h/6h/24h/7d 对应后端窗口上限 8 天，`limit` 取 720 |
 | 指标采集链路 | Agent 暴露 `/api/v1/metrics`，由 **Hub 侧 `internal/metricsync` 定时拉取**（默认 30s，可配）写入 `metrics_latest`（实时快照）+ `metrics_snapshots`（历史点）。单台超时 10s、一台失败不影响其余；容器指标拿不到降级为 `null`（前端据此区分「无容器」与「空列表」）；历史保留 14 天、每小时清过期。**没有这个轮询器，所有指标端点恒 404**——它是 S7 图表的唯一数据源 |
 | 容器页的口径（S7.3） | ①**两个数据源分开降级**：身份/状态来自 Agent 实时转发（`GET /servers/{id}/containers`，失败即错误）；CPU/内存占用来自 `metrics_latest` 的 `ContainerStat`（拿不到只显示「—」不算失败；`MemLimit=0` 表示未设上限，此时百分比无意义、不展示）。占用按容器 ID 合并，stats 的 ID 与清单不一致时退到按名字匹配。②**删除的 cid 用容器名**：后端 `guard.Confirm` 要求 confirm 与 URL 里的 cid 完全一致，让用户输名字而不是 64 位 ID（Engine 接受名字作容器引用）。③**确认范围**：remove 输名确认 + force/v 勾选；stop/kill 简单确认（kill 带信号下拉，白名单由后端校验）；start/restart/pause/unpause 直接执行、toast 回报。④**日志端点是全表唯一 NoEnvelope**：裸流 `text/plain`，成功无 `{data}` 信封、失败又是 `{error}` 信封，不能套 `request()`，单独直 fetch；follow 用 ReadableStream 边收边吐、AbortController 停止（流寿命归浏览器 ctx）；文本 2 MB 上限从头部截断。⑤**确认弹层的 Transition 拆两条**（遮罩淡入/面板滑入）——slide 的 transform 若包住 `position:fixed` 的面板，变换中的祖先会成为固定定位的包含块，面板错位 |
-| 镜像页的口径（S7.4） | ①**pull 的成败看流内 Err，不看状态码**——Engine 把拉取错误放在进度流里，HTTP 仍是 200，故 api 层把 `Err` 非空统一成 throw，上层与网络失败走同一条 catch。②**delete 的 ref 原样拼路径、不做 encodeURIComponent**——路由是尾通配符 `{ref...}`，编码后的 `%2F` 过不了匹配；字符集由后端 `ValidImageRef` 权威校验（Hub 拼 Agent 路径前、Agent 拼 Engine 路径前各一道），前端 `looksLikeImageRef` 只做「快速失败」不做权威判定（语义对错交给 Engine，404/400 原样透传）。③**prune 两段式在前端闭环**——后端 prune 无 dry-run 参数（S4.1 实测），「展示」与「确认」都在 UI：先 `GET images?dangling=true` 把将删清单拉进确认框（N 个、合计大小），用户确认后才 `POST prune`；结果按 Deleted（本体删掉）/Untagged（只解引用）分开计数——「删了 3 个镜像」与「解了 2 个 tag」不是一回事。④**RepoTags 为空即 dangling**（nil 与 [] 同判，UI 不区分）；显示口径与 `docker images` 习惯对齐：默认不含中间层（-a 才含），「只看悬空」是 prune 的预演。⑤**与容器页同构但不提前抽象**：全局页 + 主机切换器 + 30s 轮询 + loading/refreshing 分离，store 骨架复制 containers store 改字段（等第三个同类页再提炼共用 store）；`.link` 文字按钮样式在两页各存一份（scoped 隔离，提升为 forms.css 公共类留待 S7.6 文件页一起做） |
-| Compose 页的口径（S7.5） | ①**两段式写入**——diff 预览强制先行（`POST diff` 不落盘不备份）→ AppConfirm 带 `+added/-removed` 统计（解析跳过 `+++`/`---` 文件头行）与 `.bak.<RFC3339>` 备份说明 → `PUT`（Agent 侧备份落盘成功才覆盖原文件）→ toast 展示 backup_file 路径；写后编辑态保留可续编，`reload()` 刷新清单。②**动作确认映射**：up/restart/pull 直行 + toast 首行输出（完整 compose 输出进 `<details>` 折叠区）；down（停全部容器）简单确认。③**编辑态全部页面本地 ref、不进 store**——临时 UI 态跨路由存活会留下半个编辑会话，store 只持 servers/projects 清单数据；编辑中禁用主机切换器防误切丢态。④**零依赖编辑器**——纯 textarea + `--font-mono`（Tab 插两空格），diff 用 `<pre>` 按代码 diff 通行约定着色（增行绿删行红，与金融涨红跌绿口径相反、勿混）。⑤**项目名走 `encodeURIComponent`、镜像 ref 尾通配符不编码**——compose 路由是普通路径段（Go 1.22 ServeMux 解码 %XX），与 S7.4 镜像 ref 的 `{ref...}` 形态相反，两处差异由路由形态决定、代码注释互相注明。⑥**`ResolveProject` 按名取首个匹配**（后端现状）——白名单内跨目录重名时后者不可达，前端不自行造唯一键。**备份列表无端点**（备份只是宿主机文件 `<file>.bak.<RFC3339>`），已拆 S7.11 待后端立项 |
-| 文件管理页的口径（S7.6） | ①**单层列表 + 面包屑**——后端 `List(depth)` 返回**扁平列表而非树**，前端每层 `depth=1` 自己维护路径栈，面包屑可回跳任意层（不做懒加载整树）。②**根槽位静态探测**——后端**无「列根」端点**（根的数量与宿主机路径敏感、不外泄，root 只能按索引寻址），前端静态槽位 0..3 并行试列：200 亮、400 灰；**ok 槽的目录内容直接充当首屏**，不额外发请求；全 bad 时按主机在不在线区分 error（在线=未配 `--fs-root`，离线=网络问题），不静默显示空目录。③**危险操作确认**：delete **输名确认**（确认框要用户输入目标文件名——后端 delete **无备份不可恢复**，与 Compose 的覆盖写有 `.bak.<RFC3339>` 备份截然不同，确认文案须点明）；rename/mkdir 输入即执行；覆盖写在确认框说明备份行为。④**同页内嵌编辑面板**：预览 → 编辑 → `PUT`，**无 diff 段**（files 无 diff 端点，与 Compose 页两段式写入是不同形态，勿照抄）；二进制文件（content-type 嗅探非文本）只读展示 + 下载；**1 MiB 前端阈值就近拦断**（api 层另有 `protocol.MaxFileUploadBytes`=16 MiB 硬顶）。⑤**两处与前三页刻意分叉**：**无轮询**——文件清单非实时数据（容器状态会变、文件不会自己变），只有手动 refresh、无 timer；**目录位置进 store**（`currentRoot`/`currentPath`，面包屑/文件表/工具栏共享且切走回来停原目录是合理预期），编辑态仍是页面本地 ref（同 Compose 页纪律）。⑥**规则权威全在 Agent 侧**：`--fs-root` 多根白名单、`--fs-deny` 只能追加的内置黑名单（命中文件不出现在列表）、写前备份、软链末段拒写/删/改名——前端一律不复制这些规则，只做快速失败；**上传非端到端流式**（16 MiB，Hub/Agent 都读内存验签），故上传与编辑共用同一套前端阈值思路。⑦**截断两处**：`maxEntries`（默认 2000）截断清单、`--fs-max-file` 截断正文（`X-DD-Truncated: 1` 原样透传 UI 标注）。⑧**`.link` 提升为 forms.css 公共类**（S7.4 镜像页注释留话的落地）：Containers/Images/Compose 三页各删一份逐字重复的 scoped 定义，公共集取三页并集（`--warn` 仅 Containers 有、`--danger` 三页都有）；`format.ts` 补 `formatRFC3339`（`mod_time` 是 RFC3339 字符串，与 `formatWhen` 的 Unix 秒是两套口径，不混用）。**stat 端点刻意不接**（列表项已带 mode/size/mod_time 元信息），克制待需要时再接 |
-| 审计页的口径（S7.7） | ①**全局页、无主机切换器**——审计是 Hub 单点写入的全站数据（middleware.Audit 在 Hub 侧留痕，行上带 server_id 但语义是「哪台机上的操作」而非「按机查询的数据」），与 files/containers 的按机维度相反；server_id 只是过滤维度之一。②**倒序 + `before_id` 游标分页**——后端 `ORDER BY id DESC`，`next_before=0` 表示没有更多；append-only 表 id 单调，游标不因 from/to/server_id 等过滤维度漂移（与 offset 分页的本质区别）；limit 显式发 100 不吃后端缺省（改需前后端一起发版）。③**过滤 draft/applied 两态**——输入进 draft，点「查询」才 apply（action 是前缀文本输入，输入即查询会每字符发一次请求）；时间用 `datetime-local` 本地时区输入，api 层 `isoSeconds` 归一秒级 RFC3339 再发出（表 ts 是秒级 Z 后缀 TEXT、按字典序比较，带毫秒/偏移的串混比会错位——`'.' < 'Z'`；后端 handler 收到后再归一一遍，双保险）。④**无轮询 + 查询不写审计**——审计是「已发生事件」的记录不是实时状态，只手动刷新；后端查询端点刻意不包 middleware.Audit（高频读留痕会淹掉真操作记录），故刷新/翻页/导出都不留痕、前端无需节流。⑤**CSV 导出仅当前已加载行**——游标分页下没翻到的页不在文件里，导出按钮旁与翻页区两处明示「要全量先翻到底」；序列化在 `utils/csv.ts` 纯函数：RFC 4180 转义（含逗号/引号/换行才包引号、内部引号翻倍——target/detail/error 是自由文本，不转义会产出列数随数据漂移的废文件）+ UTF-8 BOM（Excel 认 BOM 才按 UTF-8 打开中文）+ CRLF 行尾。⑥**`server_id=0` 显示「—」、CSV 导原始 0**——UI 层的空值替换不进数据层（CSV 是给工具消费的）；**行展开是页面本地 ref**（「当前展开看哪一行」是易失 UI 态，同 S7.5/S7.6 纪律），过滤条件才进 store（切走回来停原过滤是合理预期） |
-| 设置页的口径（S7.8） | ①**单页五分区、全局页无主机切换器**——设置是 Hub 单点配置、不按机维度（与审计页同构、与 files/containers 按机维度相反），五块按「身份 → 凭据 → 边界 → 通道 → 兜底」排：改密 / API Token / 保护名单 / TLS 指纹 / 整库备份。②**四枚设置端点一律 AuthSession**——泄漏的 API Token 不得改安全配置、不得拖库（同 Token 管理端点口径；`ServeSession` 不查 scope，会话用户恒可用，受限的只有 Token）；PUT 与备份包 `middleware.Audit`（改安全配置与拖库是审计表一等公民，动作 `settings.protected.update` / `admin.backup`），两枚 GET 不包（读无副作用，留痕淹掉真操作记录）。③**保护名单存储 JSON 数组化**——逗号分隔会把含逗号正则（量词 `{2,3}`、字符类 `[a-z,0-9]`）切碎，那是放空安全边界的数据事故；`ParseList` JSON 数组优先，S7.8 前存量（逗号分隔/单条）读取兼容、不迁移，`[` 开头但非合法 JSON 回落整体一条；PUT 逐条 `regexp.Compile` 预检，坏正则 400 带「第 N 条」且库无写入，空数组清除；`containerGuard` 逐请求读 settings（保存即生效无需重启）。④**TLS 指纹不展示过期时间**——自签模式回 hex 冒号分隔 SHA-256 供人工比对，其余模式空串 + `self_signed=false` 并明说无指纹可比对；指纹来自 `tlsx.EnsureSelfSigned` 第三返回值（此前只打启动日志）。⑤**备份走 `VACUUM INTO` 一致快照**——临时文件落 `<dataDir>/backups/` 用完即删，`sqlQuote` 单引号翻倍拼 SQL 字面量，NoEnvelope 裸流下载（`application/vnd.sqlite3` + Content-Disposition）；前端明示「快照等同数据库副本」（含 master.key）的密级。⑥**改密成功后强制登出**——后端撤销全部会话（含当前），前端据此登出跳登录页而非留在页内；Token 一次性明文只在签发结果里带回，关闭面板即无处可查 |
-| 卷与网络页的口径（S7.9） | ①**单页两分区 + 全局页主机切换器**——卷与网络是按机维度的资源（与容器/镜像页同构，与审计/设置的无切换器相反）；一页两分区而非两个独立页：一次切换、一份 store、一个侧栏项，排查时通常连着看（「这个容器挂了什么卷、在哪个网络」）。②**只做只读两条、无写端点**——删除卷即删数据，prune 的 dangling 判定由 Engine 做出、误判不可逆，与「第一要务是不把现有容器和数据搞坏」冲突；清理走宿主机 docker CLI（有人工判断在场）。③**不做 inspect 端点**——`/volumes` 清单已含完整卷对象（含 UsageData）、`/networks` 清单已自带 Containers 映射，对本页展示零增量；按需再补（同 S7.6 stat 端点克制口径）。④**两个端点形态不同**：`/volumes` 是**对象包数组**、`/networks` 是**裸数组**，两处解码模板不通用；且网络自带接入容器名单（「谁接入」零额外请求）、卷只给 `UsageData.RefCount` 计数**不给名单**——差异源自 Engine 数据形态，UI 上注明以免被当成页面没做。⑤**卷的 Mountpoint 不进 DTO**（宿主机绝对路径，与文件模块「对外不回宿主机绝对路径」同口径；不解析就不存在、无从泄漏），有反射用例钉死该字段不许出现；**`UsageData` 用指针**——null 表示「Engine 没统计」，退化成值类型会被读成「0 个容器在用」，用户据此误判卷可删。⑥**前端两数据 `Promise.all` 一把拉**（任一失败整块报错重试——半屏空白「有卷无网」比整块重试更易被读成「这台机没有网络」）、**保留 30s 轮询**（与文件页「无轮询」分叉：文件不会自己变，容器启停会改网络接入名单）、展开看接入名单是页面本地 ref（易失 UI 态，同 S7.5/S7.6/S7.7 纪律）。**踩坑留档**：新页面的 CSS 令牌名必须逐个对照 `tokens.css`——本页初版用了 8 个不存在的名字（`--fg-strong`/`--bg-raised`/`--danger-soft`/`--border-danger`/`--font-xs\|sm\|base\|lg`），真实命名是 `--fg-default`/`--bg-elev-2`/`--danger-subtle`/`--danger-border`/`--text-xs\|sm\|base\|xl`；**构建与类型检查都不报、只在浏览器里静默回退** |
+| 镜像页的口径（S7.4） | ①**pull 的成败看流内 Err，不看状态码**——Engine 把拉取错误放在进度流里，HTTP 仍是 200，故 api 层把 `Err` 非空统一成 throw，上层与网络失败走同一条 catch。②**delete 的 ref 原样拼路径、不做 encodeURIComponent**——路由是尾通配符 `{ref...}`，编码后的 `%2F` 过不了匹配；字符集由后端 `ValidImageRef` 权威校验（Hub 拼 Agent 路径前、Agent 拼 Engine 路径前各一道），前端 `looksLikeImageRef` 只做「快速失败」不做权威判定（语义对错交给 Engine，404/400 原样透传）。③**prune 两段式在前端闭环**——后端 prune 无 dry-run 参数（S4.1 实测），「展示」与「确认」都在 UI：先 `GET images?dangling=true` 把将删清单拉进确认框（N 个、合计大小），用户确认后才 `POST prune`；结果按 Deleted（本体删掉）/Untagged（只解引用）分开计数——「删了 3 个镜像」与「解了 2 个 tag」不是一回事。④**RepoTags 为空即 dangling**（nil 与 [] 同判，UI 不区分）；显示口径与 `docker images` 习惯对齐：默认不含中间层（-a 才含），「只看悬空」是 prune 的预演。⑤**与容器页同构但不提前抽象**：全局页 + 服务器切换器 + 30s 轮询 + loading/refreshing 分离，store 骨架复制 containers store 改字段（等第三个同类页再提炼共用 store）；`.link` 文字按钮样式在两页各存一份（scoped 隔离，提升为 forms.css 公共类留待 S7.6 文件页一起做） |
+| Compose 页的口径（S7.5） | ①**两段式写入**——diff 预览强制先行（`POST diff` 不落盘不备份）→ AppConfirm 带 `+added/-removed` 统计（解析跳过 `+++`/`---` 文件头行）与 `.bak.<RFC3339>` 备份说明 → `PUT`（Agent 侧备份落盘成功才覆盖原文件）→ toast 展示 backup_file 路径；写后编辑态保留可续编，`reload()` 刷新清单。②**动作确认映射**：up/restart/pull 直行 + toast 首行输出（完整 compose 输出进 `<details>` 折叠区）；down（停全部容器）简单确认。③**编辑态全部页面本地 ref、不进 store**——临时 UI 态跨路由存活会留下半个编辑会话，store 只持 servers/projects 清单数据；编辑中禁用服务器切换器防误切丢态。④**零依赖编辑器**——纯 textarea + `--font-mono`（Tab 插两空格），diff 用 `<pre>` 按代码 diff 通行约定着色（增行绿删行红，与金融涨红跌绿口径相反、勿混）。⑤**项目名走 `encodeURIComponent`、镜像 ref 尾通配符不编码**——compose 路由是普通路径段（Go 1.22 ServeMux 解码 %XX），与 S7.4 镜像 ref 的 `{ref...}` 形态相反，两处差异由路由形态决定、代码注释互相注明。⑥**`ResolveProject` 按名取首个匹配**（后端现状）——白名单内跨目录重名时后者不可达，前端不自行造唯一键。**备份列表无端点**（备份只是宿主机文件 `<file>.bak.<RFC3339>`），已拆 S7.11 待后端立项 |
+| 文件管理页的口径（S7.6） | ①**单层列表 + 面包屑**——后端 `List(depth)` 返回**扁平列表而非树**，前端每层 `depth=1` 自己维护路径栈，面包屑可回跳任意层（不做懒加载整树）。②**根槽位静态探测**——后端**无「列根」端点**（根的数量与宿主机路径敏感、不外泄，root 只能按索引寻址），前端静态槽位 0..3 并行试列：200 亮、400 灰；**ok 槽的目录内容直接充当首屏**，不额外发请求；全 bad 时按服务器在不在线区分 error（在线=未配 `--fs-root`，离线=网络问题），不静默显示空目录。③**危险操作确认**：delete **输名确认**（确认框要用户输入目标文件名——后端 delete **无备份不可恢复**，与 Compose 的覆盖写有 `.bak.<RFC3339>` 备份截然不同，确认文案须点明）；rename/mkdir 输入即执行；覆盖写在确认框说明备份行为。④**同页内嵌编辑面板**：预览 → 编辑 → `PUT`，**无 diff 段**（files 无 diff 端点，与 Compose 页两段式写入是不同形态，勿照抄）；二进制文件（content-type 嗅探非文本）只读展示 + 下载；**1 MiB 前端阈值就近拦断**（api 层另有 `protocol.MaxFileUploadBytes`=16 MiB 硬顶）。⑤**两处与前三页刻意分叉**：**无轮询**——文件清单非实时数据（容器状态会变、文件不会自己变），只有手动 refresh、无 timer；**目录位置进 store**（`currentRoot`/`currentPath`，面包屑/文件表/工具栏共享且切走回来停原目录是合理预期），编辑态仍是页面本地 ref（同 Compose 页纪律）。⑥**规则权威全在 Agent 侧**：`--fs-root` 多根白名单、`--fs-deny` 只能追加的内置黑名单（命中文件不出现在列表）、写前备份、软链末段拒写/删/改名——前端一律不复制这些规则，只做快速失败；**上传非端到端流式**（16 MiB，Hub/Agent 都读内存验签），故上传与编辑共用同一套前端阈值思路。⑦**截断两处**：`maxEntries`（默认 2000）截断清单、`--fs-max-file` 截断正文（`X-DD-Truncated: 1` 原样透传 UI 标注）。⑧**`.link` 提升为 forms.css 公共类**（S7.4 镜像页注释留话的落地）：Containers/Images/Compose 三页各删一份逐字重复的 scoped 定义，公共集取三页并集（`--warn` 仅 Containers 有、`--danger` 三页都有）；`format.ts` 补 `formatRFC3339`（`mod_time` 是 RFC3339 字符串，与 `formatWhen` 的 Unix 秒是两套口径，不混用）。**stat 端点刻意不接**（列表项已带 mode/size/mod_time 元信息），克制待需要时再接 |
+| 审计页的口径（S7.7） | ①**全局页、无服务器切换器**——审计是 Hub 单点写入的全站数据（middleware.Audit 在 Hub 侧留痕，行上带 server_id 但语义是「哪台机上的操作」而非「按机查询的数据」），与 files/containers 的按机维度相反；server_id 只是过滤维度之一。②**倒序 + `before_id` 游标分页**——后端 `ORDER BY id DESC`，`next_before=0` 表示没有更多；append-only 表 id 单调，游标不因 from/to/server_id 等过滤维度漂移（与 offset 分页的本质区别）；limit 显式发 100 不吃后端缺省（改需前后端一起发版）。③**过滤 draft/applied 两态**——输入进 draft，点「查询」才 apply（action 是前缀文本输入，输入即查询会每字符发一次请求）；时间用 `datetime-local` 本地时区输入，api 层 `isoSeconds` 归一秒级 RFC3339 再发出（表 ts 是秒级 Z 后缀 TEXT、按字典序比较，带毫秒/偏移的串混比会错位——`'.' < 'Z'`；后端 handler 收到后再归一一遍，双保险）。④**无轮询 + 查询不写审计**——审计是「已发生事件」的记录不是实时状态，只手动刷新；后端查询端点刻意不包 middleware.Audit（高频读留痕会淹掉真操作记录），故刷新/翻页/导出都不留痕、前端无需节流。⑤**CSV 导出仅当前已加载行**——游标分页下没翻到的页不在文件里，导出按钮旁与翻页区两处明示「要全量先翻到底」；序列化在 `utils/csv.ts` 纯函数：RFC 4180 转义（含逗号/引号/换行才包引号、内部引号翻倍——target/detail/error 是自由文本，不转义会产出列数随数据漂移的废文件）+ UTF-8 BOM（Excel 认 BOM 才按 UTF-8 打开中文）+ CRLF 行尾。⑥**`server_id=0` 显示「—」、CSV 导原始 0**——UI 层的空值替换不进数据层（CSV 是给工具消费的）；**行展开是页面本地 ref**（「当前展开看哪一行」是易失 UI 态，同 S7.5/S7.6 纪律），过滤条件才进 store（切走回来停原过滤是合理预期） |
+| 设置页的口径（S7.8） | ①**单页五分区、全局页无服务器切换器**——设置是 Hub 单点配置、不按机维度（与审计页同构、与 files/containers 按机维度相反），五块按「身份 → 凭据 → 边界 → 通道 → 兜底」排：改密 / API Token / 保护名单 / TLS 指纹 / 整库备份。②**四枚设置端点一律 AuthSession**——泄漏的 API Token 不得改安全配置、不得拖库（同 Token 管理端点口径；`ServeSession` 不查 scope，会话用户恒可用，受限的只有 Token）；PUT 与备份包 `middleware.Audit`（改安全配置与拖库是审计表一等公民，动作 `settings.protected.update` / `admin.backup`），两枚 GET 不包（读无副作用，留痕淹掉真操作记录）。③**保护名单存储 JSON 数组化**——逗号分隔会把含逗号正则（量词 `{2,3}`、字符类 `[a-z,0-9]`）切碎，那是放空安全边界的数据事故；`ParseList` JSON 数组优先，S7.8 前存量（逗号分隔/单条）读取兼容、不迁移，`[` 开头但非合法 JSON 回落整体一条；PUT 逐条 `regexp.Compile` 预检，坏正则 400 带「第 N 条」且库无写入，空数组清除；`containerGuard` 逐请求读 settings（保存即生效无需重启）。④**TLS 指纹不展示过期时间**——自签模式回 hex 冒号分隔 SHA-256 供人工比对，其余模式空串 + `self_signed=false` 并明说无指纹可比对；指纹来自 `tlsx.EnsureSelfSigned` 第三返回值（此前只打启动日志）。⑤**备份走 `VACUUM INTO` 一致快照**——临时文件落 `<dataDir>/backups/` 用完即删，`sqlQuote` 单引号翻倍拼 SQL 字面量，NoEnvelope 裸流下载（`application/vnd.sqlite3` + Content-Disposition）；前端明示「快照等同数据库副本」（含 master.key）的密级。⑥**改密成功后强制登出**——后端撤销全部会话（含当前），前端据此登出跳登录页而非留在页内；Token 一次性明文只在签发结果里带回，关闭面板即无处可查 |
+| 卷与网络页的口径（S7.9） | ①**单页两分区 + 全局页服务器切换器**——卷与网络是按机维度的资源（与容器/镜像页同构，与审计/设置的无切换器相反）；一页两分区而非两个独立页：一次切换、一份 store、一个侧栏项，排查时通常连着看（「这个容器挂了什么卷、在哪个网络」）。②**只做只读两条、无写端点**——删除卷即删数据，prune 的 dangling 判定由 Engine 做出、误判不可逆，与「第一要务是不把现有容器和数据搞坏」冲突；清理走宿主机 docker CLI（有人工判断在场）。③**不做 inspect 端点**——`/volumes` 清单已含完整卷对象（含 UsageData）、`/networks` 清单已自带 Containers 映射，对本页展示零增量；按需再补（同 S7.6 stat 端点克制口径）。④**两个端点形态不同**：`/volumes` 是**对象包数组**、`/networks` 是**裸数组**，两处解码模板不通用；且网络自带接入容器名单（「谁接入」零额外请求）、卷只给 `UsageData.RefCount` 计数**不给名单**——差异源自 Engine 数据形态，UI 上注明以免被当成页面没做。⑤**卷的 Mountpoint 不进 DTO**（宿主机绝对路径，与文件模块「对外不回宿主机绝对路径」同口径；不解析就不存在、无从泄漏），有反射用例钉死该字段不许出现；**`UsageData` 用指针**——null 表示「Engine 没统计」，退化成值类型会被读成「0 个容器在用」，用户据此误判卷可删。⑥**前端两数据 `Promise.all` 一把拉**（任一失败整块报错重试——半屏空白「有卷无网」比整块重试更易被读成「这台机没有网络」）、**保留 30s 轮询**（与文件页「无轮询」分叉：文件不会自己变，容器启停会改网络接入名单）、展开看接入名单是页面本地 ref（易失 UI 态，同 S7.5/S7.6/S7.7 纪律）。**踩坑留档**：新页面的 CSS 令牌名必须逐个对照 `tokens.css`——本页初版用了 8 个不存在的名字（`--fg-strong`/`--bg-raised`/`--danger-soft`/`--border-danger`/`--font-xs\|sm\|base\|lg`），真实命名是 `--fg-default`/`--bg-elev-2`/`--danger-subtle`/`--danger-border`/`--text-xs\|sm\|base\|xl`；**构建与类型检查都不报、只在浏览器里静默回退** |
 | Compose 备份的口径（S7.11） | ①**做在 Compose 页编辑面板内，不新开页**——备份是项目的附属，与「选中项目 → 编辑面板」同构；懒加载，展开才拉清单（多数编辑会话根本不看备份）。②**预览复用现有 diff 端点**——拿备份正文去算「与当前文件的差」，与写入的两段式完全同款，**不新开预览端点**（Q1-A）。③**恢复前必须再备份当前内容**——恢复本身就是一次覆盖写，走 WriteFile 即自动带上这一步；不做的话回滚是**单向门**：恢复到旧版本后就回不去了（Q2-A）。④**恢复成功后重新拉当前文件并对齐草稿**——宿主机已被覆盖，若不对齐，「有未保存修改」就是假的，再点写入会把旧草稿盖回去，那等于一次无备份的破坏性写入。⑤**只回文件名/大小/时间**（Q4-A，与文件模块「不回宿主机绝对路径」同口径；compose 模块既有的 `ConfigFile`/`BackupFile` 是绝对路径，属历史形状、新端点不跟着）；**不提供删除**（Q3-A）。⑥**备份名含 `+` 与 `:`**（RFC3339 时区偏移），故读走查询串、恢复走请求体，不进 URL 路径段——与「项目名 `encodeURIComponent` 进路径段」是两套处理，别混（S7.5 已踩过一次编码坑）。⑦**备份态全部页面本地 ref、不进 store**（同编辑态纪律），换项目与退出面板时 `resetBackups()` 清空 |
 | 产物内嵌（go:embed） | 前端产物经 `go:embed` 进 Hub 二进制，交付物仍是单个可执行文件。**embed 声明在 `web/assets.go`（`package assets`，`//go:embed all:dist`），不在 `internal/assets`**——`go:embed` 的 pattern 只能引用当前包目录树内的路径（不许 `..`、不许跨包），在 assets 包里写 `all:web/dist` 编译不过。`internal/assets` 以别名 import `github.com/yy1319hua/dockdeck/web` 取用 |
 | 构建顺序与降级 | 打包前必须**先 `npm run build` 再 `go build`**，否则嵌进去的只是占位目录。`internal/assets` 取资源分两级：dist 内有 `index.html` → 用真产物；否则 → 回退 S1 占位页，**保证 fresh clone 只跑 `go build` 也能起 Hub 且不白屏**。该降级依赖 GAP-8（`web/dist` 目录随仓库存在，含入库的 `.gitkeep`）——目录没了，embed 会直接编译失败 |
@@ -426,13 +426,13 @@ Vue 3 + Vite + TS，`vue-router` + `pinia`，图表 uPlot，无重型 UI 框架�
 恢复：解包到同路径 → `compose up -d` → `verify.sh` 冒烟。备份文件内含 master.key，权限 0600 且不外发。
 面板内应急下载（S7.8）：`GET /admin/backup` 走 `VACUUM INTO` 出一致性快照经 HTTP 直下（仅会话 + 落审计），与 `backup.sh` 并存——快照等同数据库副本（含 master.key），密级与权限按 `secrets/` 对待，轮转仍归 backup.sh。
 
-## 已验证的现场事实（2026-10-13 实测，具体主机名/地址一律不入库）
+## 已验证的现场事实（2026-10-13 实测，具体服务器名/地址一律不入库）
 
-- tailnet：4 台 linux 节点在线且互相 `tailscale ping` 通；跨主机的常规管理端口被阻，
+- tailnet：4 台 linux 节点在线且互相 `tailscale ping` 通；跨服务器的常规管理端口被阻，
   因此一切通信只能由 Hub 主动发起的 tailnet HTTP 承担，不能指望反向 SSH。
   （2026-10-19 更新：已新增 Agent 主动反向长连接模式，该约束不再是唯一选项。）
 - 目标宿主机：tailscale 1.102.2、Docker Compose v2 系、运维账号具备 docker 组权限；
   已有多个长期运行容器（面板类、监控 agent 类、开发沙箱类），**这些就是必须保护的存量**。
 - 宿主机防火墙处于激活状态——部署阶段必须先验证 tailscale0 上的入站未被拦截，
   再决定是否需要 tailscale 自身的 `accept` 规则，**不改防火墙端口策略**。
-- 主机名、tailnet IP、账号名见工作区 `creds/`（工作树之外，绝不入库）。
+- 服务器名、tailnet IP、账号名见工作区 `creds/`（工作树之外，绝不入库）。

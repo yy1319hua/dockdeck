@@ -1,5 +1,5 @@
 <!--
-  S7.4 镜像列表：全局页 + 顶部主机切换器（与容器页同构，用户拍板）。
+  S7.4 镜像列表：全局页 + 顶部服务器切换器（与容器页同构，用户拍板）。
 
   四个操作的确认范围（用户拍板 2026-10-16）：
    * pull  —— 输入 ref 直接执行，toast 回报；业务失败看流内 Err（HTTP 200 也是失败，
@@ -19,7 +19,7 @@
       <div>
         <h1 class="im__title">镜像</h1>
         <p class="im__sub">
-          {{ im.selected ? im.selected.name : '未选择主机' }} · {{ im.images.length }} 个镜像<template v-if="im.refreshing"> · 刷新中…</template>
+          {{ im.selected ? im.selected.name : '未选择服务器' }} · {{ im.images.length }} 个镜像<template v-if="im.refreshing"> · 刷新中…</template>
         </p>
       </div>
       <button type="button" class="btn" :disabled="im.loading" @click="im.load()">刷新</button>
@@ -27,7 +27,7 @@
 
     <div class="im__bar">
       <label class="im__host">
-        主机
+        服务器
         <select
           class="field__input im__select"
           :value="im.selectedId"
@@ -127,7 +127,7 @@
 
     <div v-else-if="!im.loading && !im.error" class="im__empty">
       <template v-if="im.servers.length === 0">
-        <p class="im__empty-title">还没有纳管的主机</p>
+        <p class="im__empty-title">还没有纳管的服务器</p>
         <p class="im__empty-hint">纳管方式见 S5.8：Hub 签发 join_secret，Agent 启动时自注册。</p>
       </template>
       <template v-else-if="im.danglingOnly">

@@ -123,7 +123,7 @@ func TestDocsCoverEveryEndpoint(t *testing.T) {
 func TestDocsNoSensitiveData(t *testing.T) {
 	h := newHub(t)
 
-	// 允许出现的 http(s) 主机：spec 占位域名、许可证站点、安装脚本的 raw 源。
+	// 允许出现的 http(s) 域名：spec 占位域名、许可证站点、安装脚本的 raw 源。
 	// 前三者都在入库文件里公开可见，不含部署信息。
 	allowed := map[string]bool{
 		"hub.example.com":           true,
@@ -136,7 +136,7 @@ func TestDocsNoSensitiveData(t *testing.T) {
 		_, _, body := getRaw(t, h, p)
 		for _, m := range linkRe.FindAllStringSubmatch(body, -1) {
 			if !allowed[m[1]] {
-				t.Errorf("%s 出现未登记的主机 %q——文档不得泄露部署地址", p, m[1])
+				t.Errorf("%s 出现未登记的域名 %q——文档不得泄露部署地址", p, m[1])
 			}
 		}
 		// 内网段不依赖 host 白名单：即便以非 URL 形态出现也要拦住。

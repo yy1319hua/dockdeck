@@ -65,7 +65,7 @@ func (s *Store) ServerConn(ctx context.Context, id int64) (*ServerConn, error) {
 	return &c, nil
 }
 
-// ServerSummary 是受管主机在列表接口的公开投影：只含管理所需字段，
+// ServerSummary 是受管服务器在列表接口的公开投影：只含管理所需字段，
 // 绝不携带 Agent 令牌（token_cipher / 解密后的 Token 一律不入此结构）。
 type ServerSummary struct {
 	ID        int64
@@ -78,7 +78,7 @@ type ServerSummary struct {
 	LastError string
 }
 
-// ListServers 返回全部受管主机（含已禁用），供管理列表使用。
+// ListServers 返回全部受管服务器（含已禁用），供管理列表使用。
 // 与 ServerConn 不同，这里不解密 Agent 令牌、也不触达任何秘密字段。
 func (s *Store) ListServers(ctx context.Context) ([]ServerSummary, error) {
 	rows, err := s.DB.QueryContext(ctx,

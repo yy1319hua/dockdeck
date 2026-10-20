@@ -19,13 +19,13 @@ func sampleDoc() *openapi.Doc {
 			Description: "自托管 Docker 管理面板\n第二行也应被压成一行",
 		},
 		Tags: []openapi.Tag{
-			{Name: "Servers", Description: "受管主机"},
+			{Name: "Servers", Description: "受管服务器"},
 			{Name: "Containers"},
 		},
 		Paths: map[string]openapi.PathItem{
 			"/api/v1/servers": {
 				Get: &openapi.Operation{
-					Summary: "主机列表",
+					Summary: "服务器列表",
 					Tags:    []string{"Servers"},
 					Params:  []openapi.Param{{Name: "limit", In: "query", Description: "上限|含竖线"}},
 					Responses: map[string]openapi.Response{
@@ -55,7 +55,7 @@ func sampleDoc() *openapi.Doc {
 		},
 		Components: &openapi.Components{
 			Schemas: map[string]*openapi.Schema{
-				"ServerList": {Type: "object", Description: "主机列表响应"},
+				"ServerList": {Type: "object", Description: "服务器列表响应"},
 				"Untagged":   {Type: "object"},
 			},
 		},
@@ -126,7 +126,7 @@ func TestAPIMDStructure(t *testing.T) {
 		"**请求体**（必填）：application/json",
 		"| 201 | 已创建 |",
 		"## Schema",
-		"`ServerList` — 主机列表响应",
+		"`ServerList` — 服务器列表响应",
 		"`Untagged`",
 	}
 	for _, w := range wants {
@@ -139,7 +139,7 @@ func TestAPIMDStructure(t *testing.T) {
 // TestNoHardcodedHost 守红线：生成器不得凭空造出任何链接。
 //
 // 用「输出里不许有 http(s)://」而不是把真实地址写成黑名单：
-// sampleDoc 本身不含任何 URL，生成模板也不该硬编码主机——
+// sampleDoc 本身不含任何 URL，生成模板也不该硬编码域名——
 // 一旦有人往模板里塞地址，这条会直接红。而黑名单会把地址字面量带进源码，
 // 那本身就是一次泄露。
 func TestNoHardcodedHost(t *testing.T) {
@@ -147,7 +147,7 @@ func TestNoHardcodedHost(t *testing.T) {
 	linkRe := regexp.MustCompile(`https?://`)
 	for _, out := range []string{LLMSTxt(d), APIMD(d)} {
 		if loc := linkRe.FindString(out); loc != "" {
-			t.Errorf("文档出现硬编码链接（%s…），生成器不应自带主机", loc)
+			t.Errorf("文档出现硬编码链接（%s…），生成器不应自带服务器", loc)
 		}
 	}
 }

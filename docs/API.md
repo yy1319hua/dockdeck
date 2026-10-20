@@ -213,7 +213,7 @@ curl -sS -b "$JAR" -X DELETE "$HUB/api/v1/api-tokens/3" | jq    # {"data":{"revo
 `GET /api/v1/scopes` 是**唯一字典**（顺序与中文说明的定义处），App 的授权界面直接读它，别在本地硬编码。
 scope 是「端点级开关」，不是「角色」——它不表达「管理员/只读用户」，只表达「这枚 Token 能碰哪些资源」。
 
-**`read:metrics`** —— 读取主机指标与监控历史
+**`read:metrics`** —— 读取服务器指标与监控历史
 
 ```
 GET /api/v1/servers
@@ -328,7 +328,7 @@ GET /api/v1/audit_logs
 - 空清单编码为 `[]` 而不是 `null`。唯一例外：`metrics` 实时快照的 `containers` 为 `null` 表示
   「这台机器上还没有容器指标」，与「有指标但列表为空」不是一回事。
 - **字段命名不统一，以 spec 为准**：容器清单、镜像清单是 Engine 原生大写（`Id`/`Names`/`Image`/`State`…）；
-  受管主机清单也是 Go 字段名大写（`ID`/`Name`/`BaseURL`/`Arch`/`DockVer`/`Enabled`/`LastSeen`/`LastError`）；
+  受管服务器清单也是 Go 字段名大写（`ID`/`Name`/`BaseURL`/`Arch`/`DockVer`/`Enabled`/`LastSeen`/`LastError`）；
   其余是我们自己的 `snake_case`。别指望一个 `camelCase` 映射函数吃遍所有端点。
 - 服务器不存在 → 404；**服务器已禁用 → 403**：实时转发（容器/镜像/Compose/文件）对已禁用服务器一律拒绝，
   但历史指标仍可查（禁用拒绝的是「实时」，不是「历史」）。
@@ -353,10 +353,10 @@ curl -sS "$HUB/api/v1/health"                       # {"data":{"ok":true}}
 curl -sS "$HUB/api/v1/scopes" | jq -r '.data[] | "\(.scope)\t\(.description)"'
 ```
 
-**读：主机、指标、容器**
+**读：服务器、指标、容器**
 
 ```bash
-# 受管主机清单（字段是大写，见 §7）
+# 受管服务器清单（字段是大写，见 §7）
 curl -sS -H "Authorization: Bearer $TOKEN" "$HUB/api/v1/servers" \
   | jq -r '.data[] | "\(.ID)\t\(.Name)\t\(.Enabled)\t\(.LastSeen)"'
 
@@ -671,7 +671,7 @@ export class Hub {
   }
 }
 
-/** 受管主机清单：字段是 Go 字段名（大写），映射只做一次，别散落各处 */
+/** 受管服务器清单：字段是 Go 字段名（大写），映射只做一次，别散落各处 */
 interface ServerRow { ID: number; Name: string; Enabled: boolean; LastSeen: string }
 ```
 

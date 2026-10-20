@@ -1,5 +1,5 @@
 <!--
-  S7.2 单主机详情：实时指标 + 可切换区间的历史曲线 + 容器占用。
+  S7.2 单服务器详情：实时指标 + 可切换区间的历史曲线 + 容器占用。
 
   数据边界（诚实标注，不编造）：
    * 进程只有**总数**（HostMetrics.processes）——后端没有进程列表端点，
@@ -15,7 +15,7 @@
       <RouterLink class="host__back" to="/">← 总览</RouterLink>
       <div class="host__id">
         <span class="host__dot" :class="h.online ? 'host__dot--on' : 'host__dot--off'" />
-        <h1 class="host__name">{{ h.server?.name ?? `主机 #${id}` }}</h1>
+        <h1 class="host__name">{{ h.server?.name ?? `服务器 #${id}` }}</h1>
       </div>
       <span class="host__seen">{{ seenText }}</span>
       <span v-if="h.refreshing" class="host__poll">刷新中…</span>
@@ -133,7 +133,7 @@ onMounted(() => {
 
 onUnmounted(() => h.stop())
 
-// 同一路由组件在主机间切换（/servers/1 → /servers/2）不会重新挂载，必须 watch。
+// 同一路由组件在服务器间切换（/servers/1 → /servers/2）不会重新挂载，必须 watch。
 watch(id, (v) => {
   h.stop()
   h.reset()

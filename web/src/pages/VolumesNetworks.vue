@@ -1,7 +1,7 @@
 <!--
-  S7.9 卷与网络：全局页 + 顶部主机切换器（与容器/镜像页同构），页内两分区。
+  S7.9 卷与网络：全局页 + 顶部服务器切换器（与容器/镜像页同构），页内两分区。
 
-  Q1-A 单页两分区而非两个独立页：卷与网络是同族只读资源，一次主机切换、一份
+  Q1-A 单页两分区而非两个独立页：卷与网络是同族只读资源，一次服务器切换、一份
   store、一个侧栏项；排查时通常也是连着看（「这个容器挂了什么卷、在哪个网络」）。
 
   Q3-A 展示口径（两条，都由 Engine 的数据形态决定，不是实现偷懒）：
@@ -21,7 +21,7 @@
       <div>
         <h1 class="vn__title">卷与网络</h1>
         <p class="vn__sub">
-          {{ rs.selected ? rs.selected.name : '未选择主机' }} · {{ rs.volumes.length }} 个卷 ·
+          {{ rs.selected ? rs.selected.name : '未选择服务器' }} · {{ rs.volumes.length }} 个卷 ·
           {{ rs.networks.length }} 个网络<template v-if="rs.refreshing"> · 刷新中…</template>
         </p>
       </div>
@@ -30,7 +30,7 @@
 
     <div class="vn__bar">
       <label class="vn__host">
-        主机
+        服务器
         <select
           class="field__input vn__select"
           :value="rs.selectedId"

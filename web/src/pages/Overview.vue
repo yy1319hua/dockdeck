@@ -38,7 +38,7 @@
     <p v-if="ov.error" class="ov__err">{{ ov.error }}</p>
 
     <div v-if="ov.loaded && ov.total === 0" class="ov__empty">
-      <p class="ov__empty-title">还没有纳管的主机</p>
+      <p class="ov__empty-title">还没有纳管的服务器</p>
       <p class="ov__empty-hint">点「添加节点」生成一次性纳管命令，在目标机器上执行即可。</p>
       <button type="button" class="btn btn--primary ov__empty-btn" @click="goAddNode">添加节点</button>
     </div>

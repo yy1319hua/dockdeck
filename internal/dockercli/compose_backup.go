@@ -27,7 +27,7 @@ func backupPrefix(file string) string {
 // backupTimeLayout 是备份文件名里的时间戳格式：定宽 9 位奈秒（不足补零）。
 //
 // 为什么不用 time.RFC3339（秒级）：同一秒内两次写会算出同一个备份名，后一次
-// 覆盖前一份，用户静默丢一个备份（粗时钟主机上奈秒也可能撞，由 writeBackupExclusive
+// 覆盖前一份，用户静默丢一个备份（粗时钟服务器上奈秒也可能撞，由 writeBackupExclusive
 // 的 O_EXCL 兜底）。为什么定宽而不用 RFC3339Nano：后者小数位变长（末尾零被
 // 抹），会打破 backupNames「文件名倒字典序＝时间倒序」的假设——那里靠定长
 // 才不必解析时间，也就不会被解析失败搅乱顺序。

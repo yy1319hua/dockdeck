@@ -75,7 +75,7 @@ type Frame struct {
 	Msg  string            `json:"msg,omitempty"`
 	Caps []string          `json:"caps,omitempty"`
 	Seq  uint64            `json:"seq,omitempty"`
-	Host string            `json:"host,omitempty"` // hello 帧携带的 Agent 主机名
+	Host string            `json:"host,omitempty"` // hello 帧携带的 Agent 服务器名
 }
 
 // Encode 序列化并校验上限。

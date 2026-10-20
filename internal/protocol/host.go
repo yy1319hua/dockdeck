@@ -87,7 +87,7 @@ type LoadStat struct {
 
 // AgentInfo 是 Agent 自身的静态信息，由 /info 返回，Hub 在纳管时读取一次。
 //
-// 它变化极慢，因此与高频的 HostMetrics 分开，避免每条快照都重复带一遍主机名和内核版本。
+// 它变化极慢，因此与高频的 HostMetrics 分开，避免每条快照都重复带一遍服务器名和内核版本。
 type AgentInfo struct {
 	Hostname string `json:"hostname"`
 	OS       string `json:"os"`

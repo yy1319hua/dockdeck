@@ -17,7 +17,7 @@ func sampleEntries() []route.Entry {
 			Tags: []string{"Auth"}, Body: &route.Body{}},
 		{Method: "POST", Path: "/api/v1/auth/logout", AuthMode: route.AuthSession, Summary: "登出", Tags: []string{"Auth"}},
 		{Method: "GET", Path: "/api/v1/servers/{id}/metrics", AuthMode: route.AuthScope,
-			Scope: apitoken.ScopeReadMetrics, Summary: "主机指标", Tags: []string{"Metrics"},
+			Scope: apitoken.ScopeReadMetrics, Summary: "服务器指标", Tags: []string{"Metrics"},
 			Params: []route.Param{
 				{Name: "since", Desc: "起始时间", SchemaType: "string", SchemaFmt: "date-time"},
 				{Name: "step", Desc: "采样步长秒", Required: true, SchemaType: "integer", SchemaFmt: "int64", Example: "60"},

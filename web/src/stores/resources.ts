@@ -5,7 +5,7 @@ import { fetchVolumes, fetchNetworks, type Volume, type Network } from '@/api/re
 import { REFRESH_MS } from './overview'
 
 /**
- * 卷与网络页数据（S7.9）。与容器/镜像 store 同构：全局页 + 顶部主机切换器，
+ * 卷与网络页数据（S7.9）。与容器/镜像 store 同构：全局页 + 顶部服务器切换器，
  * 30s 轮询与采集周期对齐。
  *
  * 两个数据一把拉（Promise.all）：卷与网络同属一台机的资源，任一失败整块报错

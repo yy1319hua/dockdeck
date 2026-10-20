@@ -79,7 +79,7 @@ func TestListVolumes_Empty(t *testing.T) {
 
 // 样本里的地址段用 RFC 5737 文档段（203.0.113.0/24）而非 Docker 真实默认的
 // 网桥私有段：后者落在内网 IP 形态里，会被 pre-commit 的凭据扫描拦下——那是
-// 误报（公开文档值、不是本项目任何主机地址），但规矩不允许 --no-verify 绕过，
+// 误报（公开文档值、不是本项目任何服务器地址），但规矩不允许 --no-verify 绕过，
 // 故改用文档段。本用例只验证字段透传、不验证地址本身，故不损失断言价值。
 
 // TestListNetworks 钉住 /networks 的**裸数组**形态（与 /volumes 的对象包数组

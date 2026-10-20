@@ -81,7 +81,7 @@ func newConn(serverID int64, ws *websocket.Conn, hello Frame) *Conn {
 // ServerID 返回该连接对应的服务器 ID。
 func (c *Conn) ServerID() int64 { return c.serverID }
 
-// Host 返回 Agent 在 hello 帧里上报的主机名（仅用于日志）。
+// Host 返回 Agent 在 hello 帧里上报的服务器名（仅用于日志）。
 func (c *Conn) Host() string { return c.host }
 
 // Done 在连接关闭时关闭。

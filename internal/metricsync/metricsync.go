@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
-// Package metricsync 定时从各 Agent 拉取主机/容器指标并落库。
+// Package metricsync 定时从各 Agent 拉取服务器/容器指标并落库。
 //
 // 为什么单独成包而不是写在 cmd/hub：cmd/hub 是 main 包，逻辑放进来就测不了。
 // 本包的测试用 internal/fakeagent 起真实 HTTP 链路 + 真实 sqlite，
@@ -142,7 +142,7 @@ func (p *Poller) pollServer(ctx context.Context, id int64, name string) error {
 	return err
 }
 
-// collect 拉主机指标 + 容器指标，写入实时快照与历史点。
+// collect 拉服务器指标 + 容器指标，写入实时快照与历史点。
 func (p *Poller) collect(ctx context.Context, id int64, name string) error {
 	conn, err := p.st.ServerConn(ctx, id)
 	if err != nil {
@@ -163,11 +163,11 @@ func (p *Poller) collect(ctx context.Context, id int64, name string) error {
 
 	m, err := cli.Metrics(ctx2)
 	if err != nil {
-		return fmt.Errorf("拉取主机指标: %w", err)
+		return fmt.Errorf("拉取服务器指标: %w", err)
 	}
 
 	// 容器指标拿不到不算致命：Agent 可能没跑 Docker。
-	// 此时保留主机指标、容器留空（nil 编码为 null，前端据此区分「无容器」与「空列表」）。
+	// 此时保留服务器指标、容器留空（nil 编码为 null，前端据此区分「无容器」与「空列表」）。
 	containers, cerr := cli.ContainerStats(ctx2)
 	if cerr != nil {
 		p.logf("metricsync: 服务器 %d(%s) 容器指标不可用，按无容器处理: %v", id, name, cerr)

@@ -1,5 +1,5 @@
 <!--
-  S7.3 容器列表：全局页 + 顶部主机切换器（用户拍板），行内操作 + 二次确认，
+  S7.3 容器列表：全局页 + 顶部服务器切换器（用户拍板），行内操作 + 二次确认，
   日志走同页抽屉（tail/时间戳/follow/导出）。
 
   数据口径（两个来源，分开降级）：
@@ -18,7 +18,7 @@
       <div>
         <h1 class="ct__title">容器</h1>
         <p class="ct__sub">
-          {{ ct.selected ? ct.selected.name : '未选择主机' }} · {{ ct.rows.length }} 个容器<template v-if="ct.refreshing"> · 刷新中…</template>
+          {{ ct.selected ? ct.selected.name : '未选择服务器' }} · {{ ct.rows.length }} 个容器<template v-if="ct.refreshing"> · 刷新中…</template>
         </p>
       </div>
       <button type="button" class="btn" :disabled="ct.loading" @click="ct.load()">刷新</button>
@@ -26,7 +26,7 @@
 
     <div class="ct__bar">
       <label class="ct__host">
-        主机
+        服务器
         <select
           class="field__input ct__select"
           :value="ct.selectedId"
@@ -128,7 +128,7 @@
 
     <div v-if="!ct.loading && !ct.error && ct.rows.length === 0" class="ct__empty">
       <template v-if="ct.servers.length === 0">
-        <p class="ct__empty-title">还没有纳管的主机</p>
+        <p class="ct__empty-title">还没有纳管的服务器</p>
         <p class="ct__empty-hint">纳管方式见 S5.8：Hub 签发 join_secret，Agent 启动时自注册。</p>
       </template>
       <template v-else>

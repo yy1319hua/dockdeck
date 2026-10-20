@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
-// Package collector 从 /proc 采集主机指标。
+// Package collector 从 /proc 采集服务器指标。
 //
 // 只依赖标准库：/proc 文本读取 + statfs 系统调用，不引 gopsutil 这类库——
 // 交叉编译体积与可控性优先，也避免第三方库把 /proc 语义封装成黑盒。
@@ -25,7 +25,7 @@ const (
 	DefaultCPUSampleInterval = 200 * time.Millisecond
 )
 
-// Collector 采集主机指标，一次调用产出一个快照。
+// Collector 采集服务器指标，一次调用产出一个快照。
 type Collector struct {
 	// ProcRoot 指向 /proc；测试时指向存放样本文件的目录。
 	ProcRoot string

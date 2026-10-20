@@ -53,7 +53,7 @@ DockDeck Agent 安装脚本
 用法：install-agent.sh [选项]
 
   --hub-url <URL>         Hub 地址，含端口，如 https://100.64.0.1:8443
-  --server-name <NAME>    在 Hub 上显示的机器名，默认本机短主机名
+  --server-name <NAME>    在 Hub 上显示的机器名，默认本机短服务器名
   --join-secret <SECRET>  Hub「添加服务器」生成的一次性纳管密钥（30 分钟有效）
   --bind-ip <IP>          本机监听的具体 IP（默认取 tailscale ip -4 的第一条）
   --tag <TAG>             镜像 tag，默认 latest（已有 .env 时以 .env 为准）

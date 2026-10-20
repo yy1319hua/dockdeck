@@ -15,8 +15,11 @@ export interface NavItem {
 
 export const navItems: NavItem[] = [
   { label: '总览', icon: 'overview', to: 'home' },
-  // 主机详情页（/servers/:id）存在但要机 id，侧栏无法静态链接——入口在
-  // 总览卡片。v0.2.2 #11：删掉置灰的假入口（用户验收口径「点得动/不再出现」）。
+  // 服务器列表（/servers）：全局清单 + 在线状态，行点击进详情。
+  // 2026-10-20 用户要求进侧栏（原入口只在总览卡片，藏得太深）。
+  { label: '服务器列表', icon: 'host', to: 'servers' },
+  // 服务器详情页（/servers/:id）存在但要机 id，侧栏无法静态链接——入口在
+  // 总览卡片与服务器列表行。v0.2.2 #11：删掉置灰的假入口（用户验收口径「点得动/不再出现」）。
   { label: '容器', icon: 'container', to: 'containers' },
   { label: '镜像', icon: 'image', to: 'images' },
   { label: 'Compose', icon: 'compose', to: 'compose' },

@@ -143,7 +143,7 @@ func (c *Client) Info(ctx context.Context) (*protocol.AgentInfo, error) {
 	return &info, nil
 }
 
-// Metrics 拉取一次主机指标快照（读语义）。
+// Metrics 拉取一次服务器指标快照（读语义）。
 func (c *Client) Metrics(ctx context.Context) (*protocol.HostMetrics, error) {
 	var m protocol.HostMetrics
 	if _, err := c.do(ctx, http.MethodGet, "/api/v1/metrics", nil, &m); err != nil {

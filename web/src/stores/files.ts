@@ -15,7 +15,7 @@ import { fetchFiles, type FileEntry, type FilesPage } from '@/api/files'
  *
  * root 槽位探测（Q2=A）：后端没有「列根」端点（根数量与宿主机绝对路径属敏感
  * 信息），页面按静态槽位 0..3 逐个试列：200 → 可用，400 → 灰置。探测并行发，
- * ok 槽的目录内容直接充当首屏，不额外再发一次请求。探测本身失败（主机不在线）
+ * ok 槽的目录内容直接充当首屏，不额外再发一次请求。探测本身失败（服务器不在线）
  * 或全槽 400（未配 --fs-root）会置 error——「这台机没开文件管理」是真实状态，
  * 不能静默显示空目录。
  */
@@ -25,7 +25,7 @@ export const useFilesStore = defineStore('files', () => {
 
   /**
    * 在线状态轮询周期：与默认采集周期（30s）对齐。文件清单本身不轮询（文件不会自己变），
-   * 但主机「（离线）」标签以后端 last_seen 为准，不持续刷新就会与总览页矛盾（总览每
+   * 但服务器「（离线）」标签以后端 last_seen 为准，不持续刷新就会与总览页矛盾（总览每
    * 30s 刷 last_seen）——表现为「总览显示在线、文件页却标（离线）」。
    */
   const STATUS_REFRESH_MS = 30_000
@@ -64,7 +64,7 @@ export const useFilesStore = defineStore('files', () => {
 
   /**
    * 探测 0..3 槽位并把第一个 ok 槽的列表直接作首屏。
-   * 全 bad 时按「主机在不在线」给不同的 error：离线是网络问题，在线则说明该机
+   * 全 bad 时按「服务器在不在线」给不同的 error：离线是网络问题，在线则说明该机
    * 未配 --fs-root（Agent 一条文件路由都没注册）。
    */
   async function probeRoots(id: number): Promise<void> {
@@ -93,8 +93,8 @@ export const useFilesStore = defineStore('files', () => {
       truncated.value = false
       const srv = servers.value.find((s) => s.id === id)
       error.value = srv && isOnline(srv)
-        ? '该主机未配置文件管理根（Agent 未配 --fs-root，文件模块未启用）'
-        : '该主机不在线，无法探测文件根'
+        ? '该服务器未配置文件管理根（Agent 未配 --fs-root，文件模块未启用）'
+        : '该服务器不在线，无法探测文件根'
     } finally {
       probing.value = false
     }
@@ -121,7 +121,7 @@ export const useFilesStore = defineStore('files', () => {
     }
   }
 
-  /** 首载：拉主机清单 → 自动选中 → 探测根槽位（探测结果即首屏）。 */
+  /** 首载：拉服务器清单 → 自动选中 → 探测根槽位（探测结果即首屏）。 */
   async function load(): Promise<void> {
     loading.value = true
     try {
@@ -140,7 +140,7 @@ export const useFilesStore = defineStore('files', () => {
     }
   }
 
-  /** 手动刷新：顺带拉主机状态（切换器要显示在线/离线），再重拉当前目录。 */
+  /** 手动刷新：顺带拉服务器状态（切换器要显示在线/离线），再重拉当前目录。 */
   async function refresh(): Promise<void> {
     refreshing.value = true
     try {
@@ -154,8 +154,8 @@ export const useFilesStore = defineStore('files', () => {
   }
 
   /**
-   * 只刷主机在线状态（切换器的「（离线）」标签），不重拉文件清单。
-   * 失败静默：保留上次清单，别为一次抖动弹错或清空主机选择器（同其它 store 后台轮询口径）。
+   * 只刷服务器在线状态（切换器的「（离线）」标签），不重拉文件清单。
+   * 失败静默：保留上次清单，别为一次抖动弹错或清空服务器选择器（同其它 store 后台轮询口径）。
    */
   async function pollServers(): Promise<void> {
     try {
@@ -178,7 +178,7 @@ export const useFilesStore = defineStore('files', () => {
     }
   }
 
-  /** 切换主机：每台机的根配置不同，槽位全部作废重探。 */
+  /** 切换服务器：每台机的根配置不同，槽位全部作废重探。 */
   async function selectServer(id: number): Promise<void> {
     if (selectedId.value === id) {
       return

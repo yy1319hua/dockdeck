@@ -9,7 +9,7 @@ DockDeck 由两类角色组成，通过 Compose 单文件双 profile 部署：
 | 角色 | 职责 | 端口 | 挂 docker.sock | 数据 |
 |------|------|------|----------------|------|
 | **Hub** | 控制面：Web UI、账号/会话鉴权、API Token、审计、跨 Agent 聚合 | 8443 (TLS) | 否 | 命名卷 `dockdeck-hub-data`（SQLite / 主密钥 / 自签证书 / 整库备份）|
-| **Agent** | 每台被管主机一个：代理本机 Docker Engine | 9527 | 是（`:ro` 只读）| 无持久数据 |
+| **Agent** | 每台被管服务器一个：代理本机 Docker Engine | 9527 | 是（`:ro` 只读）| 无持久数据 |
 
 - Hub 与 Agent **通常不在同一台机器**；单机双角色（Hub + 本机 Agent）也受支持（两个 profile 一起带）。
 - Agent 通过 Hub 在「添加服务器」中生成的 **join secret**（30 分钟有效）自注册纳管；认领成功后该 secret 即成为该机的长期令牌。
@@ -47,7 +47,7 @@ cd deploy
 sudo ./install-agent.sh --hub-url https://100.64.0.1:8443 --server-name node2
 ```
 
-`--hub-url` 指向 Hub 的 Tailnet/内网地址；`--server-name` 是在 Hub 侧显示的主机名。
+`--hub-url` 指向 Hub 的 Tailnet/内网地址；`--server-name` 是在 Hub 侧显示的服务器名。
 
 ## 4. 安装脚本做了什么
 

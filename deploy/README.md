@@ -1,7 +1,7 @@
 # DockDeck Compose 部署
 
 `docker-compose.yml` 把 S9.2 的两份镜像（`Dockerfile.hub` / `Dockerfile.agent`）组成
-双角色部署模板：**Hub**（控制面，一台）与 **Agent**（每台被管主机一个）。两者通常
+双角色部署模板：**Hub**（控制面，一台）与 **Agent**（每台被管服务器一个）。两者通常
 不在同一台机器；单机双角色（Hub + 本机 Agent）也受支持。
 
 ## 用安装脚本（推荐）
@@ -71,7 +71,7 @@ Hub 数据（SQLite / 主密钥 / 自签证书 / 整库备份）在命名卷 `do
 | --- | --- | --- |
 | `network_mode: host` + 应用层 `--listen ${DD_BIND_IP}` | Hub 禁绑 0.0.0.0（`config.Validate`）；桥接网络容器 IP 运行时分配、写不进启动参数。host 下 tailscale0 直接可见，暴露面由应用绑定白名单把守，且少一层 docker-proxy | 桥接 + `-p BIND_IP:8443:8443`：要么 entrypoint 探测容器 IP，要么让应用绑 0.0.0.0 破自己的校验契约 |
 | `DD_BIND_IP` 必填（`${VAR:?…}` fail-fast） | 两个角色都需要它；compose 层报错比容器起来后应用层报错更早、更明确 | 留空默认：`:8443` 空 host 要等应用启动才炸 |
-| Agent token 走 `--token-file` 绑定挂载 | `docker inspect` 看不到文件内容；600 权限；路径不入库 | `DD_AGENT_TOKEN` 环境变量：`docker inspect` 可见，共享主机上即泄漏 |
+| Agent token 走 `--token-file` 绑定挂载 | `docker inspect` 看不到文件内容；600 权限；路径不入库 | `DD_AGENT_TOKEN` 环境变量：`docker inspect` 可见，共享服务器上即泄漏 |
 | socket `:ro` + Agent root | socket 属主 `root:docker`，非 root 摸不到；`:ro` 与自我保护名单双边界 | 入宿主 docker 组：GID 逐机不同、运行时才知 |
 | 固定 `container_name` + `--self-container` | guard 的 IsSelf 是双向前缀匹配；hostname 默认是容器短 ID（重建即变），固定名让「不动自己」稳定 | 默认 hostname：每次重建自我保护失效 |
 | 单文件双 profiles | 一份约定（镜像名 / 重启策略 / 日志）不重复；同机双角色一条命令 | 两份独立文件：约定重复易漂移，双角色两个 project 难管 |

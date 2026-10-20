@@ -1,5 +1,5 @@
 /*
- * 受管主机清单。
+ * 受管服务器清单。
  *
  * 注意：后端的 ServerSummary 没有 json tag，线上字段是 Go 的导出名（大写开头），
  * 所以这里有两套类型——Wire 照抄线上形态，Server 是前端用的 camelCase，

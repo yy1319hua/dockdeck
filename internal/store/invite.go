@@ -18,7 +18,7 @@ var (
 	ErrInviteNotFound = errors.New("store: 纳管邀请不存在")
 	// ErrInviteExpired 邀请未认领但已过期，或已认领但其服务器已不存在（皆不可再用）。
 	ErrInviteExpired = errors.New("store: 纳管邀请已过期或不可用")
-	// ErrServerNameTaken 同名主机已存在（servers.name UNIQUE）。
+	// ErrServerNameTaken 同名服务器已存在（servers.name UNIQUE）。
 	ErrServerNameTaken = errors.New("store: 服务器名称已存在")
 )
 

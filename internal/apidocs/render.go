@@ -178,7 +178,7 @@ func LLMSTxt(d *openapi.Doc) string {
 
 	b.WriteString("## 权限（scope）\n\n")
 	b.WriteString("| scope | 允许 |\n| --- | --- |\n")
-	b.WriteString("| `read:metrics` | 读主机指标 |\n")
+	b.WriteString("| `read:metrics` | 读服务器指标 |\n")
 	b.WriteString("| `read:containers` | 读容器 / 镜像 / Compose / 卷 / 网络 |\n")
 	b.WriteString("| `write:containers` | 启停删容器、拉镜像、操作 Compose |\n")
 	b.WriteString("| `read:files` | 列目录、读文件 |\n")
@@ -339,7 +339,7 @@ func renderEndpoint(b *strings.Builder, e endpoint) {
 var errorTable = [][3]string{
 	{"unauthenticated", "401", "未提供或无效的凭据（Bearer 失效 / 会话过期）"},
 	{"scope_denied", "403", "Token 缺少所需 scope，message 里写明缺哪个"},
-	{"not_found", "404", "资源不存在（主机 / 容器 / 文件 / 端点）"},
+	{"not_found", "404", "资源不存在（服务器 / 容器 / 文件 / 端点）"},
 	{"bad_request", "400", "请求体或参数不合法"},
 	{"too_large", "413", "请求体超过上限（默认 1 MiB，文件上传 16 MiB）"},
 	{"rate_limited", "429", "触发限流，按 Retry-After 退避"},

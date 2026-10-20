@@ -1,5 +1,5 @@
 <!--
-  S7.5 Compose 页：全局页 + 顶部主机切换器（与容器/镜像页同构，用户拍板）。
+  S7.5 Compose 页：全局页 + 顶部服务器切换器（与容器/镜像页同构，用户拍板）。
   消费 S4.2/S4.3/S4.7 已落地的六个端点：项目清单、四动作、读文件、diff、PUT。
 
   确认范围（用户拍板 2026-10-16，沿用 S7.3 房规）：
@@ -20,7 +20,7 @@
       <div>
         <h1 class="cp__title">Compose</h1>
         <p class="cp__sub">
-          {{ cp.selected ? cp.selected.name : '未选择主机' }} · {{ cp.projects.length }} 个项目<template v-if="cp.refreshing"> · 刷新中…</template>
+          {{ cp.selected ? cp.selected.name : '未选择服务器' }} · {{ cp.projects.length }} 个项目<template v-if="cp.refreshing"> · 刷新中…</template>
         </p>
       </div>
       <button type="button" class="btn" :disabled="cp.loading" @click="cp.load()">刷新</button>
@@ -28,12 +28,12 @@
 
     <div class="cp__bar">
       <label class="cp__host">
-        主机
+        服务器
         <select
           class="field__input cp__select"
           :value="cp.selectedId"
           :disabled="cp.servers.length === 0 || editing !== null"
-          :title="editing !== null ? '编辑文件期间不能切换主机' : ''"
+          :title="editing !== null ? '编辑文件期间不能切换服务器' : ''"
           @change="onSelectHost"
         >
           <option v-for="s in cp.servers" :key="s.id" :value="s.id">
@@ -41,7 +41,7 @@
           </option>
         </select>
       </label>
-      <span v-if="editing !== null" class="cp__bar-hint">正在编辑 {{ editing.name }}，返回列表后才能切换主机</span>
+      <span v-if="editing !== null" class="cp__bar-hint">正在编辑 {{ editing.name }}，返回列表后才能切换服务器</span>
     </div>
 
     <p v-if="cp.error && editing === null" class="cp__err">{{ cp.error }}</p>
@@ -229,7 +229,7 @@
 
 <div v-else-if="!cp.loading && !cp.error" class="cp__empty">
       <template v-if="cp.servers.length === 0">
-        <p class="cp__empty-title">还没有纳管的主机</p>
+        <p class="cp__empty-title">还没有纳管的服务器</p>
         <p class="cp__empty-hint">纳管方式见 S5.8：Hub 签发 join_secret，Agent 启动时自注册。</p>
       </template>
       <template v-else>

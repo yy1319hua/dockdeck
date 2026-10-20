@@ -1,5 +1,5 @@
 <!--
-  S7.6 文件管理：全局页 + 顶部主机切换器（与容器/镜像/Compose 页同构）。
+  S7.6 文件管理：全局页 + 顶部服务器切换器（与容器/镜像/Compose 页同构）。
 
   四项用户拍板（2026-10-16）的落点：
    * Q1=A 面包屑 + 单层列表——每进一层一次 depth=1 请求，截断按层清晰；
@@ -19,7 +19,7 @@
       <div>
         <h1 class="fl__title">文件</h1>
         <p class="fl__sub">
-          {{ fs.selected ? fs.selected.name : '未选择主机' }} · {{ pathLabel }} ·
+          {{ fs.selected ? fs.selected.name : '未选择服务器' }} · {{ pathLabel }} ·
           {{ fs.entries.length }} 项<template v-if="fs.refreshing"> · 刷新中…</template>
         </p>
       </div>
@@ -28,12 +28,12 @@
 
     <div class="fl__bar">
       <label class="fl__host">
-        主机
+        服务器
         <select
           class="field__input fl__select"
           :value="fs.selectedId"
           :disabled="fs.servers.length === 0 || editingActive"
-          :title="editingActive ? '编辑进行中，先关闭编辑面板再切主机' : ''"
+          :title="editingActive ? '编辑进行中，先关闭编辑面板再切服务器' : ''"
           @change="onSelectHost"
         >
           <option v-for="s in fs.servers" :key="s.id" :value="s.id">
@@ -150,12 +150,12 @@
 
       <div v-else-if="!fs.loading && !fs.probing" class="fl__empty">
         <template v-if="fs.servers.length === 0">
-          <p class="fl__empty-title">还没有纳管的主机</p>
+          <p class="fl__empty-title">还没有纳管的服务器</p>
           <p class="fl__empty-hint">纳管方式见 S5.8：Hub 签发 join_secret，Agent 启动时自注册。</p>
         </template>
         <template v-else-if="fs.rootSlots.length > 0 && fs.rootSlots.every((s) => s.status !== 'ok')">
           <p class="fl__empty-title">没有可用的文件根</p>
-          <p class="fl__empty-hint">该主机的 Agent 未配置 --fs-root（文件模块未启用），或主机不在线。</p>
+          <p class="fl__empty-hint">该服务器的 Agent 未配置 --fs-root（文件模块未启用），或服务器不在线。</p>
         </template>
         <template v-else>
           <p class="fl__empty-title">空目录</p>
@@ -242,7 +242,7 @@ onUnmounted(() => fs.stopStatusPoll())
 /** 任一写操作在飞时禁用全表操作按钮，防连点。 */
 const acting = ref(false)
 
-/** 编辑面板打开时禁用主机/根切换（防误切丢态，同 Compose 页纪律）。 */
+/** 编辑面板打开时禁用服务器/根切换（防误切丢态，同 Compose 页纪律）。 */
 const editingActive = computed(() => editing.value !== null)
 const canWrite = computed(() => fs.selectedId > 0 && !editingActive.value && !acting.value)
 

@@ -74,7 +74,7 @@ func (s *server) serverEnroll(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, store.ErrInviteNotFound):
 			httpx.WriteError(w, http.StatusUnauthorized, "invalid_join_secret", "join_secret 无法识别")
 		case errors.Is(err, store.ErrServerNameTaken):
-			httpx.WriteError(w, http.StatusConflict, protocol.CodeConflict, "同名主机已存在")
+			httpx.WriteError(w, http.StatusConflict, protocol.CodeConflict, "同名服务器已存在")
 		default:
 			httpx.WriteError(w, http.StatusInternalServerError, protocol.CodeInternal, "纳管失败")
 		}

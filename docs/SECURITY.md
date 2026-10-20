@@ -6,7 +6,7 @@
 
 - **信任域内**：Tailnet（如 Tailscale）或内网内、能访问 Hub/Agent 绑定 IP 的调用方。
 - **信任域外**：公网直接暴露不在支持范围。所有「谁都能访问」的端点都依赖网络层隔离把守。
-- Hub 持有全量数据（账号、Token、审计、被管主机连接）；Agent 持有本机 Docker 控制权。因此 Agent 只接受来自 Hub 的调用。
+- Hub 持有全量数据（账号、Token、审计、被管服务器连接）；Agent 持有本机 Docker 控制权。因此 Agent 只接受来自 Hub 的调用。
 
 ## 2. 鉴权模式概览
 

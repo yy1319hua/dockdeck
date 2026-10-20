@@ -5,7 +5,7 @@ import { fetchComposeProjects, type ComposeProject } from '@/api/compose'
 import { REFRESH_MS } from './overview'
 
 /**
- * Compose 页数据（S7.5）。与镜像/容器 store 同构：全局页 + 顶部主机切换器，
+ * Compose 页数据（S7.5）。与镜像/容器 store 同构：全局页 + 顶部服务器切换器，
  * 30s 轮询与采集周期对齐；项目清单一行就是一个 ComposeProject（含服务快照）。
  *
  * 边界说明——**编辑态不进 store**：当前文件内容、草稿、diff 预览、写入中标记

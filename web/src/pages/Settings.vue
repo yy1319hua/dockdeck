@@ -1,10 +1,10 @@
 <!--
-  S7.8 设置页：单页五分区（方案 Q1=A——设置是低频访问的聚合页，分区比多页
+  S7.8 设置页：单页六分区（方案 Q1=A——设置是低频访问的聚合页，分区比多页
   Tab 更直达；不搞路由嵌套，一个 /settings 全含）。
 
-  五分区与方案各条的落点：
-   * Q1 单页五分区：账号安全（改密）/ API Token 管理 / 保护名单 / TLS 指纹 /
-     整库备份，顺序按「身份 → 凭据 → 边界 → 通道 → 兜底」排；
+  分区与方案各条的落点：
+   * Q1 单页多分区：账号安全（改密）/ API Token 管理 / 保护名单 / TLS 指纹 /
+     整库备份 / 版本信息（2026-10-20 新增），顺序按「身份 → 凭据 → 边界 → 通道 → 兜底 → 信息」排；
    * Q2 保护名单存储格式改造 + 逐条编译校验：前端 textarea 一行一条，
      归一（trim/去空行）后整名单 PUT；坏正则 400 的「第 N 条」文案原样
      展示——它是用户改错的直接指引。保存即时生效（后端逐请求读 settings）；
@@ -25,7 +25,7 @@
     <header class="st__head">
       <div>
         <h1 class="st__title">设置</h1>
-        <p class="st__sub">账号安全、API Token、保护名单、TLS 指纹与整库备份。改动保存后即时生效。</p>
+        <p class="st__sub">账号安全、API Token、保护名单、TLS 指纹、整库备份与版本信息。改动保存后即时生效。</p>
       </div>
       <button type="button" class="btn" :disabled="st.loading || st.refreshing" @click="st.refresh()">刷新</button>
     </header>
@@ -187,7 +187,7 @@
     <section class="card st__zone">
       <h2 class="st__zone-title">整库备份</h2>
       <p class="st__zone-desc">
-        下载一份一致快照（SQLite VACUUM INTO 生成，中转文件用完即删）。快照含全部表：用户、会话、审计、受管主机与各服务器加密令牌——
+        下载一份一致快照（SQLite VACUUM INTO 生成，中转文件用完即删）。快照含全部表：用户、会话、审计、受管服务器与各服务器加密令牌——
         <b>它等同于一份数据库副本，请按同等密级存放</b>。下载动作记入审计。
       </p>
       <div class="st__acts">
@@ -195,6 +195,28 @@
           {{ backingUp ? '生成中…' : '下载快照' }}
         </button>
       </div>
+    </section>
+
+    <!-- ⑥ 版本信息（2026-10-20 新增）：Hub 构建元数据，GET /system/version。
+         拉不到只灰显本区（旧版 Hub 无此端点会 404），不影响其他分区。 -->
+    <section class="card st__zone">
+      <h2 class="st__zone-title">版本信息</h2>
+      <p class="st__zone-desc">当前 Hub 的构建版本（构建时注入）。Agent 版本请在目标机执行 <code>docker inspect</code> 查看镜像标签。</p>
+      <dl class="st__ver">
+        <div class="st__ver-row">
+          <dt>版本</dt>
+          <dd>{{ build?.version || '—' }}</dd>
+        </div>
+        <div class="st__ver-row">
+          <dt>Commit</dt>
+          <dd><code>{{ build?.commit || '—' }}</code></dd>
+        </div>
+        <div class="st__ver-row">
+          <dt>构建时间</dt>
+          <dd>{{ build?.date || '—' }}</dd>
+        </div>
+      </dl>
+      <p v-if="verError" class="st__ver-err">版本信息获取失败：{{ verError }}</p>
     </section>
 
     <!-- 撤销 Token：简单确认（破坏性——撤后该凭据即刻失效） -->
@@ -217,6 +239,7 @@ import AppConfirm from '@/components/AppConfirm.vue'
 import { ApiError } from '@/api/errors'
 import { changePassword } from '@/api/auth'
 import { downloadBackup, putProtectedContainers } from '@/api/settings'
+import { fetchBuildInfo, type BuildInfo } from '@/api/system'
 import { TOKEN_TTLS, createToken, revokeToken, type ApiToken, type TokenTtl } from '@/api/tokens'
 import { useSettingsStore } from '@/stores/settings'
 import { useAuthStore } from '@/stores/auth'
@@ -229,6 +252,19 @@ const ui = useUiStore()
 const router = useRouter()
 
 onMounted(() => void st.load())
+
+/* ---------- ⑥ 版本信息：与 st.load() 并行，互不阻塞 ---------- */
+
+const build = ref<BuildInfo | null>(null)
+const verError = ref('')
+
+void fetchBuildInfo()
+  .then((b) => {
+    build.value = b
+  })
+  .catch((e: unknown) => {
+    verError.value = e instanceof Error ? e.message : String(e)
+  })
 
 /* ---------- ① 改密 ---------- */
 
@@ -652,5 +688,37 @@ async function copyText(text: string, label: string): Promise<void> {
   font-family: var(--font-mono);
   font-size: var(--text-sm);
   word-break: break-all;
+}
+
+/* ---------- ⑥ 版本信息 ---------- */
+
+.st__ver {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.st__ver-row {
+  display: flex;
+  gap: var(--space-3);
+  align-items: baseline;
+  font-size: var(--text-sm);
+}
+
+.st__ver-row dt {
+  flex: 0 0 5.5rem;
+  color: var(--fg-subtle);
+}
+
+.st__ver-row dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  word-break: break-all;
+}
+
+.st__ver-err {
+  margin: var(--space-3) 0 0;
+  color: var(--danger);
+  font-size: var(--text-sm);
 }
 </style>

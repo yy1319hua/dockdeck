@@ -298,7 +298,7 @@ func (s *server) routes() http.Handler {
 	tbl.Add(route.Entry{
 		Method: "GET", Path: "/api/v1/servers/{id}/metrics", OKSchema: "MetricsEnvelope", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadMetrics,
 		Summary: "实时指标快照", Tags: []string{"Servers"},
-		Desc:   "返回最近一次采集的主机指标与每容器占用。服务器不存在或从未采集时 404。",
+		Desc:   "返回最近一次采集的服务器指标与每容器占用。服务器不存在或从未采集时 404。",
 		Params: []route.Param{{Name: "id", Desc: "服务器 ID", Required: true, Example: "1", SchemaType: "integer", SchemaFmt: "int64"}},
 		Responses: []route.Response{
 			{Status: 400, Desc: "非法服务器 ID"},
@@ -310,7 +310,7 @@ func (s *server) routes() http.Handler {
 	tbl.Add(route.Entry{
 		Method: "GET", Path: "/api/v1/servers/{id}/metrics/overview", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadMetrics,
 		Summary: "历史指标曲线", Tags: []string{"Servers"},
-		Desc: "返回 [from,to] 内主机与容器历史点（升序）。默认最近 1 小时，窗口上限 8 天（保留期 7 天），" +
+		Desc: "返回 [from,to] 内服务器与容器历史点（升序）。默认最近 1 小时，窗口上限 8 天（保留期 7 天），" +
 			"limit 限定点数（默认 720，上限 1440，超出取最新）。",
 		Params: []route.Param{
 			{Name: "id", Desc: "服务器 ID", Required: true, Example: "1", SchemaType: "integer", SchemaFmt: "int64"},
@@ -876,7 +876,7 @@ func (s *server) routes() http.Handler {
 		NoEnvelope: true, ContentType: "application/vnd.sqlite3",
 		Summary: "下载整库快照", Tags: []string{"Settings"},
 		Desc: "VACUUM INTO 生成一致快照后流式下载（临时文件中转，用完即删）。" +
-			"文件含全部表——用户、会话、审计、受管主机与各服务器加密令牌；" +
+			"文件含全部表——用户、会话、审计、受管服务器与各服务器加密令牌；" +
 			"一份快照等于一份需要同等保护的数据库副本，仅会话可调正是为此。",
 		Responses: []route.Response{
 			{Status: 401, Desc: "未登录，或携带 API Token"},
@@ -885,21 +885,21 @@ func (s *server) routes() http.Handler {
 		InternalRef: "cmd/hub/settings.go backupDB",
 	}, middleware.Audit(s.st, "admin.backup", s.backupDB))
 
-	// 受管主机清单：直接读 servers 表，不做实时探测（在线状态以 last_seen 为准）。
+	// 受管服务器清单：直接读 servers 表，不做实时探测（在线状态以 last_seen 为准）。
 	// 列表只投影管理所需字段，绝不回带 Agent 令牌等秘密；纳管（写入 servers）机制见`docs/ARCHITECTURE.md` 的纳管设计裁定。
 	tbl.Add(route.Entry{
 		Method: "GET", Path: "/api/v1/servers", OKSchema: "ServerList", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadMetrics,
-		Summary: "受管主机清单", Tags: []string{"Servers"},
-		Desc: "返回全部受管主机（含已禁用）。列表不暴露 Agent 令牌等秘密字段；在线状态以 last_seen 为准。" +
+		Summary: "受管服务器清单", Tags: []string{"Servers"},
+		Desc: "返回全部受管服务器（含已禁用）。列表不暴露 Agent 令牌等秘密字段；在线状态以 last_seen 为准。" +
 			"纳管（写入 servers 表）机制见`docs/ARCHITECTURE.md` 的纳管设计裁定。",
 		Responses: []route.Response{
 			{Status: 403, Desc: "缺少 read:metrics 权限"},
-			{Status: 500, Desc: "读取受管主机清单失败"},
+			{Status: 500, Desc: "读取受管服务器清单失败"},
 		},
 	}, middleware.Audit(s.st, "server.list", func(w http.ResponseWriter, r *http.Request) {
 		list, err := s.st.ListServers(r.Context())
 		if err != nil {
-			httpx.WriteError(w, http.StatusInternalServerError, protocol.CodeInternal, "读取受管主机清单失败")
+			httpx.WriteError(w, http.StatusInternalServerError, protocol.CodeInternal, "读取受管服务器清单失败")
 			return
 		}
 		httpx.WriteJSON(w, http.StatusOK, list)
@@ -927,10 +927,22 @@ func (s *server) routes() http.Handler {
 		Responses: []route.Response{
 			{Status: 400, Desc: "请求体不合法"},
 			{Status: 401, Desc: "join_secret 无法识别"},
-			{Status: 409, Desc: "同名主机已存在"},
+			{Status: 409, Desc: "同名服务器已存在"},
 			{Status: 410, Desc: "邀请已过期或已不可用"},
 		},
 	}, s.serverEnroll)
+
+	// ---- 构建元数据：设置页「版本信息」分区消费（仅会话；不写审计，理由见 handler）----
+	tbl.Add(route.Entry{
+		Method: "GET", Path: "/api/v1/system/version", AuthMode: route.AuthSession,
+		Summary: "构建版本信息", Tags: []string{"System"},
+		Desc: "返回 Hub 的构建元数据（version / commit / date），由构建时 -ldflags 注入 internal/version；" +
+			"未注入的本地构建回退占位值（dev / unknown）。",
+		Responses: []route.Response{
+			{Status: 401, Desc: "未登录"},
+		},
+		InternalRef: "cmd/hub/version.go systemVersion",
+	}, s.systemVersion)
 
 	// ---- PLAN-NODE-DOCS B：文档三件套（公开只读，从同一份 spec 动态生成）----
 	// 见 cmd/hub/docs.go 顶部注释：为什么挂 /docs 而不走 route.Table。
@@ -956,7 +968,7 @@ func (s *server) spec() *openapi.Doc {
 	return openapi.Generate(openapi.Info{
 		Title:   "DockDeck Hub API",
 		Version: version.Version,
-		Description: "自研多主机监控与 Docker 管理面板的服务端接口。\n\n" +
+		Description: "自研多服务器监控与 Docker 管理面板的服务端接口。\n\n" +
 			"**访问方式**：默认绑定 tailnet / 内网的具体 IP；确需监听所有网卡必须显式开启 " +
 			"`--allow-insecure-bind`（默认拒绝 0.0.0.0）。公网入口由 Cloudflare Tunnel 提供——" +
 			"cloudflared 主动出站，不开放任何入站端口。" +

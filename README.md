@@ -1,13 +1,13 @@
 # DockDeck
 
 多服务器**监控与 Docker 管理**面板，监控主线参照哪吒监控。**一个 Hub，管 N 台宿主机**——
-每台宿主机跑一个轻量 Go Agent，采集主机指标、只读 Docker socket 并在受限目录内做文件操作；
+每台宿主机跑一个轻量 Go Agent，采集服务器指标、只读 Docker socket 并在受限目录内做文件操作；
 Hub 负责登录、聚合、审计与界面，并对外提供 OpenAPI 供 App 直连调用。
 
 - 技术栈：Go（`net/http` 标准库路由）+ Vue 3 + SQLite（`modernc.org/sqlite`，纯 Go 无 CGO）
 - 架构：兼容 `linux/arm64` 与 `linux/amd64`，`CGO_ENABLED=0` 静态编译
 - 访问：账号密码登录 + Tailscale 私网或内网反代，**不开任何公网端口、不改防火墙**
-- 含：主机监控（CPU/内存/磁盘/网络/负载/在线率/历史曲线）、容器管理、日志、镜像、Compose、
+- 含：服务器监控（CPU/内存/磁盘/网络/负载/在线率/历史曲线）、容器管理、日志、镜像、Compose、
   文件管理、审计日志、OpenAPI + API Token
 - 不含（明确排除）：服务拨测、告警通知、Web 终端、免登录公开状态页
 

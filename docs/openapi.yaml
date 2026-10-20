@@ -3,7 +3,7 @@ info:
   title: "DockDeck Hub API"
   version: "dev"
   description: |-
-    自研多主机监控与 Docker 管理面板的服务端接口。
+    自研多服务器监控与 Docker 管理面板的服务端接口。
 
     **访问方式**：默认绑定 tailnet / 内网的具体 IP；确需监听所有网卡必须显式开启 `--allow-insecure-bind`（默认拒绝 0.0.0.0）。公网入口由 Cloudflare Tunnel 提供——cloudflared 主动出站，不开放任何入站端口。浏览器用 cookie 会话，App / 脚本用 `Authorization: Bearer ddk_...`。
 
@@ -67,7 +67,7 @@ paths:
     get:
       operationId: "getApiV1AdminBackup"
       summary: "下载整库快照"
-      description: "VACUUM INTO 生成一致快照后流式下载（临时文件中转，用完即删）。文件含全部表——用户、会话、审计、受管主机与各服务器加密令牌；一份快照等于一份需要同等保护的数据库副本，仅会话可调正是为此。"
+      description: "VACUUM INTO 生成一致快照后流式下载（临时文件中转，用完即删）。文件含全部表——用户、会话、审计、受管服务器与各服务器加密令牌；一份快照等于一份需要同等保护的数据库副本，仅会话可调正是为此。"
       tags:
         - "Settings"
       responses:
@@ -657,9 +657,9 @@ paths:
   "/api/v1/servers":
     get:
       operationId: "getApiV1Servers"
-      summary: "受管主机清单"
+      summary: "受管服务器清单"
       description: |-
-        返回全部受管主机（含已禁用）。列表不暴露 Agent 令牌等秘密字段；在线状态以 last_seen 为准。纳管（写入 servers 表）机制见`docs/ARCHITECTURE.md` 的纳管设计裁定。
+        返回全部受管服务器（含已禁用）。列表不暴露 Agent 令牌等秘密字段；在线状态以 last_seen 为准。纳管（写入 servers 表）机制见`docs/ARCHITECTURE.md` 的纳管设计裁定。
 
         API Token 须具备 scope `read:metrics`；浏览器会话不受此限制。
       tags:
@@ -696,7 +696,7 @@ paths:
               schema:
                 "$ref": "#/components/schemas/ErrorBody"
         "500":
-          description: "读取受管主机清单失败"
+          description: "读取受管服务器清单失败"
           content:
             "application/json":
               schema:
@@ -754,7 +754,7 @@ paths:
               schema:
                 "$ref": "#/components/schemas/ErrorBody"
         "409":
-          description: "同名主机已存在"
+          description: "同名服务器已存在"
           content:
             "application/json":
               schema:
@@ -2654,7 +2654,7 @@ paths:
       operationId: "getApiV1ServersIdMetrics"
       summary: "实时指标快照"
       description: |-
-        返回最近一次采集的主机指标与每容器占用。服务器不存在或从未采集时 404。
+        返回最近一次采集的服务器指标与每容器占用。服务器不存在或从未采集时 404。
 
         API Token 须具备 scope `read:metrics`；浏览器会话不受此限制。
       tags:
@@ -2710,7 +2710,7 @@ paths:
       operationId: "getApiV1ServersIdMetricsOverview"
       summary: "历史指标曲线"
       description: |-
-        返回 [from,to] 内主机与容器历史点（升序）。默认最近 1 小时，窗口上限 8 天（保留期 7 天），limit 限定点数（默认 720，上限 1440，超出取最新）。
+        返回 [from,to] 内服务器与容器历史点（升序）。默认最近 1 小时，窗口上限 8 天（保留期 7 天），limit 限定点数（默认 720，上限 1440，超出取最新）。
 
         API Token 须具备 scope `read:metrics`；浏览器会话不受此限制。
       tags:
@@ -3040,6 +3040,47 @@ paths:
       security:
         -
           cookieAuth: []
+  "/api/v1/system/version":
+    get:
+      operationId: "getApiV1SystemVersion"
+      summary: "构建版本信息"
+      description: "返回 Hub 的构建元数据（version / commit / date），由构建时 -ldflags 注入 internal/version；未注入的本地构建回退占位值（dev / unknown）。"
+      tags:
+        - "System"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "请求体或参数不合法"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "未登录"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "身份成立但无权执行"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "目标不存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          cookieAuth: []
 components:
   securitySchemes:
     bearerAuth:
@@ -3288,7 +3329,7 @@ components:
           type: "boolean"
     HostMetrics:
       type: "object"
-      description: "主机实时指标快照。CPU 由 Agent 对 /proc/stat 两次采样取差值。"
+      description: "服务器实时指标快照。CPU 由 Agent 对 /proc/stat 两次采样取差值。"
       properties:
         collected_at:
           type: "string"
@@ -3392,7 +3433,7 @@ components:
           "$ref": "#/components/schemas/MetricsSnapshot"
     MetricsSnapshot:
       type: "object"
-      description: "GET /servers/{id}/metrics 的 data：主机指标 + 每容器占用。"
+      description: "GET /servers/{id}/metrics 的 data：服务器指标 + 每容器占用。"
       properties:
         containers:
           type: "array"
@@ -3458,7 +3499,7 @@ components:
             "$ref": "#/components/schemas/ServerSummary"
     ServerSummary:
       type: "object"
-      description: "受管主机。不含任何令牌字段。"
+      description: "受管服务器。不含任何令牌字段。"
       properties:
         Arch:
           type: "string"
@@ -3506,10 +3547,13 @@ tags:
     description: "容器网络只读清单（含接入容器名单）。"
   -
     name: "Servers"
-    description: "受管主机纳管（UI 专属）。"
+    description: "受管服务器纳管（UI 专属）。"
   -
     name: "Settings"
     description: "面板安全设置：保护名单、TLS 指纹、整库快照——仅浏览器会话可用。"
+  -
+    name: "System"
+    description: "Hub 构建元数据（版本 / commit / 构建时间），仅浏览器会话可用。"
   -
     name: "Tokens"
     description: "API Token 管理（仅浏览器会话可用）。"

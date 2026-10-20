@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
-// Command agent 运行在每台被纳管的宿主机上，只做一件事：对 Hub 提供主机指标与
+// Command agent 运行在每台被纳管的宿主机上，只做一件事：对 Hub 提供服务器指标与
 // 受限操作接口。它不保存历史数据，重装即可恢复。
 package main
 
@@ -174,7 +174,7 @@ func buildHandler(token string, col *collector.Collector, src collector.Containe
 
 // containerStatsHandler 返回每容器资源占用快照。
 //
-// 降级语义与主机指标一致：源出错时返回 200 + 空列表并记日志，而不是 5xx——
+// 降级语义与服务器指标一致：源出错时返回 200 + 空列表并记日志，而不是 5xx——
 // 容器曲线缺失不该让 Hub 误判机器离线；NilSource 天然走这条路径。
 func containerStatsHandler(src collector.ContainerStatsSource) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -190,7 +190,7 @@ func containerStatsHandler(src collector.ContainerStatsSource) http.HandlerFunc 
 	}
 }
 
-// metricsHandler 返回一次主机指标快照。
+// metricsHandler 返回一次服务器指标快照。
 //
 // 部分指标缺失时仍返回 200：少一项只是少一条曲线，返回 5xx 会让 Hub
 // 把这台机器判成离线——那是比缺指标严重得多的误判。

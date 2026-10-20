@@ -5,7 +5,7 @@ import { fetchImages, type Image } from '@/api/images'
 import { REFRESH_MS } from './overview'
 
 /**
- * 镜像页数据（S7.4）。与容器 store 同构：全局页 + 顶部主机切换器，
+ * 镜像页数据（S7.4）。与容器 store 同构：全局页 + 顶部服务器切换器，
  * 30s 轮询与采集周期对齐；镜像没有「实时占用」第二数据源，一行就是一条 Image。
  *
  * 两个显示口径（与 docker images 的习惯对齐）：

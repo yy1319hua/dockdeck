@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import AppShell from '@/components/layout/AppShell.vue'
 import Overview from '@/pages/Overview.vue'
+import Servers from '@/pages/Servers.vue'
 import HostDetail from '@/pages/HostDetail.vue'
 import Containers from '@/pages/Containers.vue'
 import Images from '@/pages/Images.vue'
@@ -45,34 +46,43 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '总览 · DockDeck', requiresAuth: true },
       },
       {
+        // 服务器列表：全局清单 + 在线状态（2026-10-20 用户要求进侧栏）。
+        // 精确路径 'servers' 与下面的 'servers/:id' 不冲突（前者精确命中、
+        // 后者带 id 参数），注册顺序无先后依赖。
+        path: 'servers',
+        name: 'servers',
+        component: Servers,
+        meta: { title: '服务器列表 · DockDeck', requiresAuth: true },
+      },
+      {
         path: 'servers/:id',
         name: 'host-detail',
         component: HostDetail,
-        meta: { title: '主机详情 · DockDeck', requiresAuth: true },
+        meta: { title: '服务器详情 · DockDeck', requiresAuth: true },
       },
       {
-        // S7.3 容器页：全局页 + 顶部主机切换器（清单按机维度，切换在页内做）。
+        // S7.3 容器页：全局页 + 顶部服务器切换器（清单按机维度，切换在页内做）。
         path: 'containers',
         name: 'containers',
         component: Containers,
         meta: { title: '容器 · DockDeck', requiresAuth: true },
       },
       {
-        // S7.4 镜像页：全局页 + 顶部主机切换器（与容器页同构，用户拍板）。
+        // S7.4 镜像页：全局页 + 顶部服务器切换器（与容器页同构，用户拍板）。
         path: 'images',
         name: 'images',
         component: Images,
         meta: { title: '镜像 · DockDeck', requiresAuth: true },
       },
       {
-        // S7.5 Compose 页：全局页 + 顶部主机切换器（同构）；编辑面板与两段式写入在页内。
+        // S7.5 Compose 页：全局页 + 顶部服务器切换器（同构）；编辑面板与两段式写入在页内。
         path: 'compose',
         name: 'compose',
         component: Compose,
         meta: { title: 'Compose · DockDeck', requiresAuth: true },
       },
       {
-        // S7.9 卷与网络页：全局页 + 顶部主机切换器（与容器/镜像页同构），页内
+        // S7.9 卷与网络页：全局页 + 顶部服务器切换器（与容器/镜像页同构），页内
         // 两分区（数据卷 / 容器网络），**只读**——不提供创建与删除；网络行展开
         // 看接入名单是页面本地 ref（易失 UI 态，同 S7.5/S7.6/S7.7 纪律）。
         path: 'volumes-networks',
@@ -81,7 +91,7 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '卷与网络 · DockDeck', requiresAuth: true },
       },
       {
-        // S7.6 文件页：全局页 + 顶部主机切换器（同构）；目录位置进 store（切走回来停原目录），
+        // S7.6 文件页：全局页 + 顶部服务器切换器（同构）；目录位置进 store（切走回来停原目录），
         // 编辑态是页面本地 ref。无轮询——文件非实时数据，只留手动刷新。
         path: 'files',
         name: 'files',
@@ -89,7 +99,7 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '文件 · DockDeck', requiresAuth: true },
       },
       {
-        // S7.7 审计页：全局页（无主机切换器——审计是 Hub 单点写入的全站数据，
+        // S7.7 审计页：全局页（无服务器切换器——审计是 Hub 单点写入的全站数据，
         // server_id 只是过滤维度）；过滤条件进 store、行展开是页面本地 ref；
         // 无轮询——审计是已发生事件的记录，只留手动刷新。
         path: 'audit',
@@ -107,7 +117,7 @@ const routes: RouteRecordRaw[] = [
       },
       {
         // S7.8 设置页：单页五分区（改密 / API Token / 保护名单 / TLS 指纹 /
-        // 整库备份）。全局页无主机切换器——设置是 Hub 单点配置，不按机维度
+        // 整库备份）。全局页无服务器切换器——设置是 Hub 单点配置，不按机维度
         // （与审计页同构）；表单草稿进 store，一次性明文等易失态留页面本地。
         path: 'settings',
         name: 'settings',

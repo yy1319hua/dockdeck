@@ -35,7 +35,7 @@ type License struct {
 	URL  string `json:"url,omitempty"`
 }
 
-// Server 不写死主机：面板只绑 tailnet / 内网的具体 IP，把具体地址写进 spec 等于分发私密信息。
+// Server 不写死服务器：面板只绑 tailnet / 内网的具体 IP，把具体地址写进 spec 等于分发私密信息。
 type Server struct {
 	URL         string `json:"url"`
 	Description string `json:"description,omitempty"`
@@ -124,8 +124,8 @@ const (
 // tagDesc 是分组的说明文字。未登记的 tag 只出现在 UI 分组里，不报错。
 var tagDesc = map[string]string{
 	"Auth":       "登录、建号、改密——仅浏览器会话可用，API Token 不能调用。",
-	"Servers":    "受管主机纳管（UI 专属）。",
-	"Metrics":    "主机指标与监控历史，监控主线，App 可直连。",
+	"Servers":    "受管服务器纳管（UI 专属）。",
+	"Metrics":    "服务器指标与监控历史，监控主线，App 可直连。",
 	"Containers": "容器清单、操作与日志。",
 	"Images":     "镜像与清理。",
 	"Compose":    "Compose 项目与 YAML。",
@@ -136,6 +136,7 @@ var tagDesc = map[string]string{
 	"Volumes":    "数据卷只读清单（Engine 只给使用计数，不给接入名单）。",
 	"Networks":   "容器网络只读清单（含接入容器名单）。",
 	"Meta":       "健康检查、spec 本体、scope 字典。",
+	"System":     "Hub 构建元数据（版本 / commit / 构建时间），仅浏览器会话可用。",
 }
 
 // Generate 把登记表编译成 spec。entries 须来自同一张登记表。
@@ -415,7 +416,7 @@ func schemas() map[string]*Schema {
 		},
 		"ServerSummary": {
 			Type:        "object",
-			Description: "受管主机。不含任何令牌字段。",
+			Description: "受管服务器。不含任何令牌字段。",
 			Properties: map[string]*Schema{
 				"ID":        {Type: "integer", Format: "int64"},
 				"Name":      {Type: "string"},
@@ -600,7 +601,7 @@ func schemas() map[string]*Schema {
 		},
 		"HostMetrics": {
 			Type:        "object",
-			Description: "主机实时指标快照。CPU 由 Agent 对 /proc/stat 两次采样取差值。",
+			Description: "服务器实时指标快照。CPU 由 Agent 对 /proc/stat 两次采样取差值。",
 			Properties: map[string]*Schema{
 				"collected_at": {Type: "string", Format: "date-time"},
 				"cpu":          schemaRef("CPUStat"),
@@ -629,7 +630,7 @@ func schemas() map[string]*Schema {
 		},
 		"MetricsSnapshot": {
 			Type:        "object",
-			Description: "GET /servers/{id}/metrics 的 data：主机指标 + 每容器占用。",
+			Description: "GET /servers/{id}/metrics 的 data：服务器指标 + 每容器占用。",
 			Properties: map[string]*Schema{
 				"server_id": {Type: "integer", Format: "int64"},
 				"ts":        {Type: "string", Format: "date-time"},

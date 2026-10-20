@@ -25,7 +25,7 @@ var Version = "dev"
 // Info 返回 /info 的 handler，上报 Agent 自身与宿主机的静态信息。
 //
 // 这些信息变化极慢，与高频指标分开返回：Hub 纳管时拉一次即可，
-// 不必让每条指标快照都重复携带主机名和内核版本。
+// 不必让每条指标快照都重复携带服务器名和内核版本。
 func Info() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, CollectInfo(time.Now))

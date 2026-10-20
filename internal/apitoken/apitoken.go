@@ -45,7 +45,7 @@ var AllScopes = []string{
 // ScopeDesc 是 scope → 中文说明。写在这里而不是 openapi 包：
 // openapi 依赖 apitoken，反过来会成环；字典由本包拥有，spec 与 UI 都读它。
 var ScopeDesc = map[string]string{
-	ScopeReadMetrics:     "读取主机指标与监控历史",
+	ScopeReadMetrics:     "读取服务器指标与监控历史",
 	ScopeReadContainers:  "读取容器/镜像/Compose 清单与日志",
 	ScopeWriteContainers: "启停容器、执行 Compose 操作",
 	ScopeReadFiles:       "读取白名单根目录内的文件列表与内容",

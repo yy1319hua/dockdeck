@@ -62,7 +62,7 @@ function toProject(w: ComposeProjectWire): ComposeProject {
   }
 }
 
-/** 列举主机上白名单目录内的 compose 项目（空清单为 [] 非 null）。 */
+/** 列举服务器上白名单目录内的 compose 项目（空清单为 [] 非 null）。 */
 export async function fetchComposeProjects(serverId: number): Promise<ComposeProject[]> {
   const rows = await request<ComposeProjectWire[]>(`/servers/${serverId}/compose`)
   return (rows ?? []).map(toProject)

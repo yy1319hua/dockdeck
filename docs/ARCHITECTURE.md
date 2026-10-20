@@ -62,6 +62,9 @@ Agent ──出站 wss──> Hub /api/v1/agent/link ──复用同一条 WS─
   **路由、鉴权、错误映射与 HTTP 模式完全一致**（不复制 handler）。
 - 心跳 25s（`--link-ping`），必须明显小于反代空闲超时（Cloudflare 约 100s）。
 - M1 只承载非流式请求：请求 ≤1 MiB、响应 ≤8 MiB；流式日志与大文件在 M2。
+- **面板「添加节点」统一只生成反向（wss）命令**（2026-10-20 起）：正向（监听）模式
+  仅保留在 CLI 层，不再作为部署选项暴露；Agent 的 `--bind-ip` / `--listen`
+  只剩 Hub 侧与手工 CLI 场景会用。
 
 ## 认证
 

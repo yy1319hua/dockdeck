@@ -46,7 +46,12 @@ FROM ${RUN_IMAGE}
 #  v2 CLI（exec.Command("docker","compose",...)）。不装的话
 # Compose 全系端点永远「compose 未知」。v0.2.2 #5：镜像内置 docker-cli +
 # compose 插件（+60MB，用户已接受——功能正确优先于镜像体积）。
-RUN apk add --no-cache docker-cli docker-cli-compose
+# 时区同 Hub 口径：alpine 无 tzdata 时 TZ 静默回落 UTC，面板时间戳按东 8
+# 区展示，与 docker-cli 同一层装掉（用户拍板走 Dockerfile，不动 compose）。
+RUN apk add --no-cache tzdata docker-cli docker-cli-compose \
+ && cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
+ && echo "Asia/Shanghai" > /etc/timezone
+ENV TZ=Asia/Shanghai
 COPY --from=builder /out/dockdeck-agent /usr/local/bin/dockdeck-agent
 EXPOSE 9527
 ENTRYPOINT ["dockdeck-agent"]

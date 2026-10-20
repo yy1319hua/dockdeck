@@ -64,6 +64,13 @@ FROM ${RUN_IMAGE}
 RUN adduser -D -u 10000 dockdeck \
  && mkdir -p /data/secrets \
  && chown -R dockdeck:dockdeck /data
+# 时区：alpine 基础镜像不带 tzdata，光设 TZ 会解析失败、静默回落 UTC。
+# 面板时间戳（指标/审计/容器事件）按东 8 区展示，在此固化——用户拍板走
+# Dockerfile，不靠 compose 挂 /etc/localtime（镜像缺 zoneinfo 时那是断链）。
+RUN apk add --no-cache tzdata \
+ && cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
+ && echo "Asia/Shanghai" > /etc/timezone
+ENV TZ=Asia/Shanghai
 COPY --from=builder /out/dockdeck-hub /usr/local/bin/dockdeck-hub
 # 数字 UID 而非用户名：宿主 bind mount 场景 /etc/passwd 解析不到名字（hadolint DL3066）
 USER 10000

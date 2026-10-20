@@ -9,8 +9,9 @@
    * 选项全部对应 Agent 真实参数（--dir / --tag / --fs-roots /
      --compose-dirs / --self-container / --disk-mounts），
      不造页面自己的概念。
-   * 统一 wss 反向长连接（--reverse 恒发）：Agent 主动连 Hub，NAT 后 /
-     无公网 IP 均可；页面不提供正向（监听）模式入口。
+   * 统一 wss 反向长连接：Agent 主动连 Hub，NAT 后 / 无公网 IP 均可；
+     页面不提供正向（监听）模式入口。v0.2.6 起反向是 Agent 唯一形态，
+     --reverse / DD_AGENT_REVERSE 开关已整个删除，命令里不再出现。
    * Hub 地址取 window.location.origin：公网进就是隧道域名，内网进就是内网
      地址，**页面不硬编码任何域名**（入库文件不得出现真实域名/IP）。
    * join_secret 仅签发响应可见一次 + 有效期倒计时：到期后停止展示并提示
@@ -200,8 +201,6 @@ const countdownText = computed(() => {
 /** 安装脚本的参数：只列真实值，避免生成一堆「等于默认值」的噪音。 */
 const scriptArgs = computed(() => {
   const a: string[] = [`--hub-url ${hubUrl.value}`, '--join-secret <上方的 join_secret>']
-  // 统一 wss 反向长连接：Agent 主动连 Hub，不监听端口（NAT 后可用）。
-  a.push('--reverse')
   a.push(`--dir ${activeDir.value}`)
   if (activeTag.value !== 'latest') {
     a.push(`--tag ${activeTag.value}`)
@@ -226,12 +225,13 @@ const currentCommand = computed(() => {
   }
   const secret = invite.value.joinSecret
   if (tab.value === 'script') {
-    // 脚本用 $SCRIPT_DIR 找同目录的 docker-compose.yml，所以两个文件必须落在同一目录。
+    // 脚本用 $SCRIPT_DIR 找同目录的 docker-compose.agent.yml（v0.2.6 起 Agent
+    // 独立模板），所以两个文件必须落在同一目录。
     const args = scriptArgs.value.map((x) => x.replace('<上方的 join_secret>', secret))
     return [
       '# 两条 curl + 一条执行；脚本幂等，重跑安全',
       `curl -fsSL -o /tmp/dd-agent.sh ${RAW_BASE}/install-agent.sh`,
-      `curl -fsSL -o /tmp/docker-compose.yml ${RAW_BASE}/docker-compose.yml`,
+      `curl -fsSL -o /tmp/docker-compose.agent.yml ${RAW_BASE}/docker-compose.agent.yml`,
       'sudo bash /tmp/dd-agent.sh \\',
       ...args.map((x, i) => (i === args.length - 1 ? `  ${x}` : `  ${x} \\`)),
     ].join('\n')
@@ -247,8 +247,7 @@ const currentCommand = computed(() => {
     if (opt.diskMounts) {
       env.push(`-e DD_AGENT_DISK_MOUNTS=${opt.diskMounts}`)
     }
-    // 统一 wss 反向长连接：不监听端口，Agent 主动连 Hub。
-    env.push('-e DD_AGENT_REVERSE=1')
+    // v0.2.6 起反向是唯一形态：不监听端口，Agent 启动即主动连 Hub，无需开关。
     return [
       `docker run -d --name ${activeSelf.value} --restart unless-stopped --network host \\`,
       '  -v /var/run/docker.sock:/var/run/docker.sock:ro \\',
@@ -278,8 +277,7 @@ const currentCommand = computed(() => {
   if (opt.diskMounts) {
     envLines.push(`      DD_AGENT_DISK_MOUNTS: ${opt.diskMounts}`)
   }
-  // 统一 wss 反向长连接：不监听端口，Agent 主动连 Hub。
-  envLines.push('      DD_AGENT_REVERSE: "1"')
+  // v0.2.6 起反向是唯一形态：不监听端口，Agent 启动即主动连 Hub，无需开关。
   return [
     'services:',
     `  ${activeSelf.value}:`,

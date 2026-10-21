@@ -56,8 +56,24 @@
 
         <label class="an__field">
           <span class="an__label">镜像加速地址</span>
-          <input v-model.trim="opt.mirror" class="an__input" placeholder="如 docker.m.daocloud.io（留空 = ghcr.io 原址）" />
-          <span class="an__tip">可选。国内拉取 ghcr.io 不畅时填加速域名，会拼成 <code>加速域名/ghcr.io/…</code>；三种形态同步生效</span>
+          <select v-model="opt.mirror" class="an__input">
+            <option v-for="p in MIRROR_PRESETS" :key="p.value" :value="p.value">
+              {{ p.label }}
+            </option>
+            <option value="__custom__">自定义…</option>
+          </select>
+          <input
+            v-if="opt.mirror === '__custom__'"
+            v-model.trim="customMirror"
+            class="an__input"
+            placeholder="如 ghcr.nju.edu.cn（只填域名，不要带 https://）"
+          />
+          <span class="an__tip">
+            可选。国内拉取 ghcr.io 不畅时选加速地址，会拼成
+            <code>加速域名/yy1319hua/…</code>（原 <code>ghcr.io/</code> 前缀被替换），两种形态同步生效。
+            加速地址会随第三方服务策略变动，可用性请查
+            <a :href="MIRROR_STATUS_URL" target="_blank" rel="noopener noreferrer">{{ MIRROR_STATUS_URL }}</a>
+          </span>
         </label>
 
         <label class="an__field">
@@ -141,16 +157,31 @@ import { ApiError } from '@/api/errors'
 import { createInvite, type Invite } from '@/api/servers'
 import { useUiStore } from '@/stores/ui'
 
-type TabKey = 'script' | 'docker' | 'compose'
+type TabKey = 'docker' | 'compose'
 
 const TABS: { key: TabKey; label: string }[] = [
-  { key: 'script', label: '安装脚本' },
   { key: 'docker', label: 'docker run' },
   { key: 'compose', label: 'compose' },
 ]
 
-/** 脚本来源：公开库 raw 地址（不含任何部署机域名/IP）。 */
-const RAW_BASE = 'https://raw.githubusercontent.com/yy1319hua/dockdeck/main/deploy'
+/**
+ * 镜像加速地址预设。
+ *
+ * 选免鉴权的：nju 走匿名直接取 manifest（HTTP 200，无需 token 握手），
+ * 部署机上不会残留任何 GHCR 凭据。需要鉴权的加速站（token 端点非标准
+ * /auth/token）不在此列——它们会要求部署机持有凭据，违背「凭据越少越好」。
+ *
+ * 加速地址会随第三方服务策略变动：可用性以官方状态页为准（见 MIRROR_STATUS_URL）。
+ */
+const MIRROR_PRESETS: { label: string; value: string }[] = [
+  { label: '直连 ghcr.io（默认）', value: '' },
+  { label: '南京大学 ghcr.nju.edu.cn', value: 'ghcr.nju.edu.cn' },
+]
+
+/**
+ * 加速地址可用性查询页。集中成常量：日后换更好的地址，只改这一处。
+ */
+const MIRROR_STATUS_URL = 'https://status.daocloud.io/status/docker'
 
 const router = useRouter()
 const ui = useUiStore()
@@ -165,7 +196,9 @@ const opt = reactive({
   diskMounts: '',
 })
 
-const tab = ref<TabKey>('script')
+const tab = ref<TabKey>('docker')
+/** 自定义加速域名：选了「自定义…」才生效；值本身存 opt.mirror 会与预设值混淆，故分开存。 */
+const customMirror = ref('')
 const invite = ref<Invite | null>(null)
 const remaining = ref(0)
 const gen = reactive({ loading: false, error: '' })
@@ -179,13 +212,17 @@ const activeFsRoots = computed(() => opt.fsRoots || activeDir.value)
 const activeComposeDirs = computed(() => opt.composeDirs || activeDir.value)
 const activeTag = computed(() => opt.tag || 'latest')
 const activeSelf = computed(() => opt.selfContainer || 'dockdeck-agent')
-/** 镜像加速前缀：去掉首尾空白与末尾斜杠；留空 = 直连 ghcr.io 原址。 */
-const activeMirror = computed(() => opt.mirror.trim().replace(/\/+$/, ''))
-/** 完整镜像引用：配了加速域名则拼成 pull-through 形式「加速域名/ghcr.io/…:tag」，
- *  否则用 ghcr.io 原址。三种形态（脚本 / docker run / compose）共用这一个值。 */
+/** 镜像加速前缀：去掉首尾空白与末尾斜杠；留空 = 直连 ghcr.io 原址。
+ *  选了「自定义…」时取自定义输入框的值。 */
+const activeMirror = computed(() => {
+  const raw = opt.mirror === '__custom__' ? customMirror.value : opt.mirror
+  return raw.trim().replace(/\/+$/, '')
+})
+/** 完整镜像引用：配了加速域名则把 ghcr.io 前缀替换掉，拼成「加速域名/yy1319hua/…:tag」，
+ *  否则用 ghcr.io 原址。两种形态（docker run / compose）共用这一个值。 */
 const agentImage = computed(() =>
   activeMirror.value
-    ? `${activeMirror.value}/ghcr.io/yy1319hua/dockdeck-agent:${activeTag.value}`
+    ? `${activeMirror.value}/yy1319hua/dockdeck-agent:${activeTag.value}`
     : `ghcr.io/yy1319hua/dockdeck-agent:${activeTag.value}`,
 )
 
@@ -198,44 +235,11 @@ const countdownText = computed(() => {
   return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
 })
 
-/** 安装脚本的参数：只列真实值，避免生成一堆「等于默认值」的噪音。 */
-const scriptArgs = computed(() => {
-  const a: string[] = [`--hub-url ${hubUrl.value}`, '--join-secret <上方的 join_secret>']
-  a.push(`--dir ${activeDir.value}`)
-  if (activeTag.value !== 'latest') {
-    a.push(`--tag ${activeTag.value}`)
-  }
-  if (activeMirror.value) {
-    a.push(`--image ${agentImage.value}`)
-  }
-  a.push(`--fs-roots ${activeFsRoots.value}`)
-  a.push(`--compose-dirs ${activeComposeDirs.value}`)
-  if (activeSelf.value !== 'dockdeck-agent') {
-    a.push(`--self-container ${activeSelf.value}`)
-  }
-  if (opt.diskMounts) {
-    a.push(`--disk-mounts ${opt.diskMounts}`)
-  }
-  return a
-})
-
 const currentCommand = computed(() => {
   if (!invite.value) {
     return ''
   }
   const secret = invite.value.joinSecret
-  if (tab.value === 'script') {
-    // 脚本用 $SCRIPT_DIR 找同目录的 docker-compose.agent.yml（v0.2.6 起 Agent
-    // 独立模板），所以两个文件必须落在同一目录。
-    const args = scriptArgs.value.map((x) => x.replace('<上方的 join_secret>', secret))
-    return [
-      '# 两条 curl + 一条执行；脚本幂等，重跑安全',
-      `curl -fsSL -o /tmp/dd-agent.sh ${RAW_BASE}/install-agent.sh`,
-      `curl -fsSL -o /tmp/docker-compose.agent.yml ${RAW_BASE}/docker-compose.agent.yml`,
-      'sudo bash /tmp/dd-agent.sh \\',
-      ...args.map((x, i) => (i === args.length - 1 ? `  ${x}` : `  ${x} \\`)),
-    ].join('\n')
-  }
   if (tab.value === 'docker') {
     const env: string[] = [
       `-e DD_HUB_URL=${hubUrl.value}`,
@@ -296,11 +300,8 @@ const currentCommand = computed(() => {
 })
 
 const currentHint = computed(() => {
-  if (tab.value === 'script') {
-    return '脚本会做预检、拉镜像、写 .env 与令牌、启动并探活；已有 .env 不会被覆盖（重跑只拉新 tag）。'
-  }
   if (tab.value === 'docker') {
-    return 'token 走环境变量，docker inspect 能看到——多机生产建议用安装脚本形态（token 落 600 文件）。'
+    return 'token 走环境变量，docker inspect 能看到——生产环境请注意容器与环境的可见范围。'
   }
   return '合并进现有 compose 后执行 docker compose up -d；token 在环境变量里，注意 .env 权限。'
 })

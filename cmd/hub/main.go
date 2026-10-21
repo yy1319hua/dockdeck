@@ -723,6 +723,22 @@ func (s *server) routes() http.Handler {
 	}, middleware.Audit(s.st, "file.list", s.fileList))
 
 	tbl.Add(route.Entry{
+		Method: "GET", Path: "/api/v1/servers/{id}/files/roots", OKSchema: "FilesRoots", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadFiles,
+		Summary: "文件根列表", Tags: []string{"Files"},
+		Desc: "返回该服务器 --fs-root 白名单的序号、宿主机绝对路径与当前是否存在。" +
+			"面板据此把「根 0/1/2」显示为可读路径；路径不可用的根应置灰并给移除入口。" +
+			"老 Agent 无此端点（404），面板回退为按序号探测。",
+		Params: []route.Param{
+			{Name: "id", Desc: "服务器 ID", Required: true, Example: "1", SchemaType: "integer", SchemaFmt: "int64"},
+		},
+		Responses: []route.Response{
+			{Status: 403, Desc: "服务器已禁用"},
+			{Status: 502, Desc: "Agent 不可达或返回异常"},
+		},
+		InternalRef: "cmd/hub/files.go fileRoots",
+	}, middleware.Audit(s.st, "file.roots", s.fileRoots))
+
+	tbl.Add(route.Entry{
 		Method: "GET", Path: "/api/v1/servers/{id}/files/stat", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadFiles,
 		Summary: "文件元信息", Tags: []string{"Files"},
 		Desc: "取文件或目录的元信息（大小、类型、修改时间、是否被截断）。不返回正文——正文走 content 流式下载。",

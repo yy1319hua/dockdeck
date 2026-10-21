@@ -43,19 +43,44 @@
       </label>
 
       <div class="fl__roots">
-        <span class="fl__roots-label">根</span>
+        <span class="fl__roots-label">访问根</span>
         <button
-          v-for="slot in fs.rootSlots"
+          v-for="slot in visibleRoots"
           :key="slot.index"
           type="button"
           class="btn fl__root"
-          :class="{ 'btn--primary': slot.index === fs.currentRoot }"
+          :class="{
+            'btn--primary': slot.index === fs.currentRoot,
+            'fl__root--bad': slot.status !== 'ok',
+          }"
           :disabled="slot.status !== 'ok' || editingActive"
-          :title="slot.status === 'ok' ? `文件根 ${slot.index}` : '该根不可用（未配置或超出范围）'"
+          :title="
+            slot.path
+              ? `${slot.path}${slot.status === 'ok' ? '' : '（目录已不存在）'}`
+              : `文件根 ${slot.index}`
+          "
           @click="fs.setRoot(slot.index)"
         >
-          {{ slot.index }}
+          <span class="fl__root-path">{{ slot.path || `根 ${slot.index}` }}</span>
+          <span v-if="slot.status !== 'ok'" class="fl__root-flag">已不存在</span>
         </button>
+        <select
+          v-if="fs.rootSlots.length > MAX_ROOT_CHIPS"
+          class="field__input fl__root-more"
+          :value="fs.currentRoot"
+          :disabled="editingActive"
+          title="根目录较多，选择一个"
+          @change="onPickRoot"
+        >
+          <option
+            v-for="slot in fs.rootSlots"
+            :key="slot.index"
+            :value="slot.index"
+            :disabled="slot.status !== 'ok'"
+          >
+            {{ slot.path || `根 ${slot.index}` }}{{ slot.status === 'ok' ? '' : '（已不存在）' }}
+          </option>
+        </select>
         <span v-if="fs.probing" class="fl__probing">探测中…</span>
       </div>
 
@@ -246,7 +271,28 @@ const acting = ref(false)
 const editingActive = computed(() => editing.value !== null)
 const canWrite = computed(() => fs.selectedId > 0 && !editingActive.value && !acting.value)
 
-const pathLabel = computed(() => (fs.currentPath === '' ? '根目录' : fs.currentPath))
+/** 根多时只铺前几个 chip，其余收进下拉——手机上不挤成两行。 */
+const MAX_ROOT_CHIPS = 3
+
+/** 当前根的宿主路径；老 Agent 回退模式为空，退回「根目录」文案。 */
+const pathLabel = computed(() => {
+  const root = fs.currentRootPath
+  if (fs.currentPath === '') {
+    return root || '根目录'
+  }
+  return root ? `${root}/${fs.currentPath}` : fs.currentPath
+})
+
+const visibleRoots = computed(() =>
+  fs.rootSlots.length > MAX_ROOT_CHIPS ? fs.rootSlots.slice(0, MAX_ROOT_CHIPS) : fs.rootSlots,
+)
+
+function onPickRoot(e: Event): void {
+  const v = Number((e.target as HTMLSelectElement).value)
+  if (!Number.isNaN(v)) {
+    void fs.setRoot(v)
+  }
+}
 
 function onSelectHost(e: Event): void {
   const v = Number((e.target as HTMLSelectElement).value)
@@ -513,6 +559,7 @@ async function onConfirmDelete(): Promise<void> {
 .fl__roots {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-2);
   color: var(--fg-muted);
   font-size: var(--text-sm);
@@ -528,8 +575,35 @@ async function onConfirmDelete(): Promise<void> {
 
 .fl__root {
   min-width: 34px;
+  max-width: 220px;
   padding: 0 var(--space-2);
-  font-variant-numeric: tabular-nums;
+}
+
+/* 长路径优先保留可读性：超宽时省略结尾，完整路径看 title。 */
+.fl__root-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 目录已不存在：虚线 + 删除线，点不动，避免点进去看到一片空白。 */
+.fl__root--bad {
+  border-style: dashed;
+  color: var(--fg-subtle);
+  text-decoration: line-through;
+}
+
+.fl__root-flag {
+  margin-left: 6px;
+  font-size: var(--text-xs);
+  text-decoration: none;
+}
+
+.fl__root-more {
+  height: 32px;
+  width: auto;
+  max-width: 220px;
+  padding: 0 var(--space-2);
 }
 
 .fl__probing {

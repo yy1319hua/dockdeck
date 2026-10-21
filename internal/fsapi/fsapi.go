@@ -26,6 +26,8 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+
+	"github.com/yy1319hua/dockdeck/internal/protocol"
 )
 
 // 哨兵错误。cmd/agent 负责把它们映射成 protocol 错误码与 HTTP 状态码——
@@ -131,8 +133,22 @@ func NewGuard(roots, deny []string, maxFile int64, maxDepth, maxEntries int) (*G
 	}, nil
 }
 
-// Roots 返回根的数量。对外只暴露序号，不暴露绝对路径。
+// Roots 返回根的数量。
 func (g *Guard) Roots() int { return len(g.roots) }
+
+// RootInfos 返回各根的序号、宿主路径与当前是否存在。
+//
+// 只做 os.Stat，不解析符号链接：这里回答的是「这个根现在还在不在」，
+// 不是「某个请求能不能通过校验」。Exists=false 时面板应置灰并给出移除入口，
+// 而不是让用户点进去看到一片空白。
+func (g *Guard) RootInfos() []protocol.FileRoot {
+	out := make([]protocol.FileRoot, 0, len(g.roots))
+	for i, p := range g.roots {
+		_, err := os.Stat(p)
+		out = append(out, protocol.FileRoot{Index: i, Path: p, Exists: err == nil})
+	}
+	return out
+}
 
 // MaxFile 返回单文件上限（字节）。
 func (g *Guard) MaxFile() int64 { return g.maxFile }

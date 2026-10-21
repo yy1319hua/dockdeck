@@ -95,6 +95,28 @@ export async function fetchFiles(
   }
 }
 
+/** 一个文件根：序号 + 宿主机绝对路径 + 当前是否存在。 */
+export interface FileRoot {
+  index: number
+  path: string
+  exists: boolean
+}
+
+interface FileRootsWire {
+  roots?: { index: number; path: string; exists: boolean }[]
+}
+
+/**
+ * 取文件根列表（GET /files/roots）。
+ *
+ * 老 Agent（无此端点）会 404——调用方据此回退到「按序号探测」的旧逻辑，
+ * 所以这里不吞异常，让上层的 try/catch 看见状态。
+ */
+export async function fetchFileRoots(serverId: number): Promise<FileRoot[]> {
+  const res = await request<FileRootsWire>(`/servers/${serverId}/files/roots`)
+  return res.roots ?? []
+}
+
 /** content 裸流的一次读取结果。Body 的关闭责任在调用方。 */
 export interface FileContent {
   blob: Blob

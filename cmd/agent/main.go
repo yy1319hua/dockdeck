@@ -118,6 +118,7 @@ func buildHandler(token string, col *collector.Collector, src collector.Containe
 	if fapi != nil {
 		fsAuth := agenthttp.AuthN(token, nil, fapi.maxBody)
 		mux.Handle("GET /api/v1/files", fsAuth(http.HandlerFunc(fapi.list)))
+		mux.Handle("GET /api/v1/files/roots", fsAuth(http.HandlerFunc(fapi.roots)))
 		mux.Handle("GET /api/v1/files/stat", fsAuth(http.HandlerFunc(fapi.stat)))
 		mux.Handle("GET /api/v1/files/content", fsAuth(http.HandlerFunc(fapi.content)))
 		mux.Handle("PUT /api/v1/files/content", fsAuth(http.HandlerFunc(fapi.contentPut)))

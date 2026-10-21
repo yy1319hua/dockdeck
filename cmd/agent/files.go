@@ -82,6 +82,14 @@ func (a *filesAPI) rootIndex(q url.Values) (int, error) {
 	return n, nil
 }
 
+// roots 实现 GET /api/v1/files/roots：下发各根的序号、宿主路径与是否存在。
+//
+// 只读、无参数。面板用它把「根 0/1/2」渲染成可读路径；路径本身不构成新的权限面
+// ——能调这个端点的人本来就能读写这些目录（同一套 token 鉴权）。
+func (a *filesAPI) roots(w http.ResponseWriter, _ *http.Request) {
+	httpx.WriteJSON(w, http.StatusOK, protocol.FileRoots{Roots: a.g.RootInfos()})
+}
+
 // depthParam 解析 ?depth=（缺省 1，只列直接子项）。
 func depthParam(q url.Values) (int, error) {
 	raw := q.Get("depth")

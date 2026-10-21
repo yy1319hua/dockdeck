@@ -86,6 +86,20 @@ func (s *server) fileList(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, list)
 }
 
+// fileRoots 实现 GET /api/v1/servers/{id}/files/roots。
+func (s *server) fileRoots(w http.ResponseWriter, r *http.Request) {
+	cl, ok := s.agentFor(w, r)
+	if !ok {
+		return
+	}
+	roots, err := cl.FileRoots(r.Context())
+	if err != nil {
+		writeAgentError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, roots)
+}
+
 // fileStat 实现 GET /api/v1/servers/{id}/files/stat?root=&path=。
 func (s *server) fileStat(w http.ResponseWriter, r *http.Request) {
 	cl, ok := s.agentFor(w, r)

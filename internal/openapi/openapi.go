@@ -507,6 +507,22 @@ func schemas() map[string]*Schema {
 				"mod_time": {Type: "string", Format: "date-time"},
 			},
 		},
+		"FileRoot": {
+			Type:        "object",
+			Description: "一个文件管理根（--fs-root 白名单项）。",
+			Properties: map[string]*Schema{
+				"index":  {Type: "integer", Format: "int64"},
+				"path":   {Type: "string", Description: "宿主机绝对路径"},
+				"exists": {Type: "boolean", Description: "当前是否仍存在"},
+			},
+		},
+		"FilesRoots": {
+			Type:        "object",
+			Description: "GET /files/roots 的 data。老 Agent 无此端点（404）。",
+			Properties: map[string]*Schema{
+				"roots": {Type: "array", Items: schemaRef("FileRoot")},
+			},
+		},
 		"FilesList": {
 			Type: "object",
 			Description: "GET /files 的 data。truncated=true 时 entries 只是前 N 条，" +

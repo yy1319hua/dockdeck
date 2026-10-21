@@ -1,7 +1,7 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { fetchServers, isOnline, type Server } from '@/api/servers'
-import { fetchFiles, type FileEntry, type FilesPage } from '@/api/files'
+import { fetchFileRoots, fetchFiles, type FileEntry, type FilesPage } from '@/api/files'
 
 /**
  * 文件管理页数据（S7.6）。与容器/镜像/Compose store 的两处刻意分叉：
@@ -13,14 +13,13 @@ import { fetchFiles, type FileEntry, type FilesPage } from '@/api/files'
  *    合理预期）；而「打开哪个文件的编辑面板、草稿改了什么」是进行中的易失会话，
  *    与 Compose 页同理留在页面本地 ref，写入成功后页面调 refresh。
  *
- * root 槽位探测（Q2=A）：后端没有「列根」端点（根数量与宿主机绝对路径属敏感
- * 信息），页面按静态槽位 0..3 逐个试列：200 → 可用，400 → 灰置。探测并行发，
- * ok 槽的目录内容直接充当首屏，不额外再发一次请求。探测本身失败（服务器不在线）
- * 或全槽 400（未配 --fs-root）会置 error——「这台机没开文件管理」是真实状态，
- * 不能静默显示空目录。
+ * 根列表（S7.7）：优先 GET /files/roots 拿「序号 + 宿主路径 + 是否存在」，页面
+ * 直接显示可读路径；老 Agent（无此端点，404）回退到静态槽位 0..3 逐个试列
+ * （200 → 可用，400 → 灰置），此时只能显示「根 N」。回退是给未升级 Agent 的
+ * 兼容路径，不是常态。根目录不存在时置 bad，页面置灰并给移除入口，不显示空白。
  */
 export const useFilesStore = defineStore('files', () => {
-  /** 静态探测槽位数：拍板值。坏槽由探测收敛，多配的根超出部分看不到（后端无列根端点）。 */
+  /** 老 Agent 回退探测的槽位数：拍板值。仅在没有 /files/roots 端点时使用。 */
   const ROOT_SLOTS = 4
 
   /**
@@ -33,7 +32,9 @@ export const useFilesStore = defineStore('files', () => {
 
   const servers = ref<Server[]>([])
   const selectedId = ref(0)
-  const rootSlots = ref<{ index: number; status: 'unknown' | 'ok' | 'bad' }[]>([])
+  const rootSlots = ref<
+    { index: number; path: string; exists: boolean; status: 'unknown' | 'ok' | 'bad' }[]
+  >([])
   const currentRoot = ref(0)
   /** 相对当前根的路径；'' = 根自身。分段用 '/'（后端 FileEntry.Path 同口径）。 */
   const currentPath = ref('')
@@ -45,6 +46,11 @@ export const useFilesStore = defineStore('files', () => {
   const error = ref<string | null>(null)
 
   const selected = computed(() => servers.value.find((s) => s.id === selectedId.value) ?? null)
+
+  /** 当前根的宿主机路径；老 Agent 回退模式为空串（页面退回「根目录」文案）。 */
+  const currentRootPath = computed(
+    () => rootSlots.value.find((s) => s.index === currentRoot.value)?.path ?? '',
+  )
 
   /** 默认选中：第一台在线机 → 第一台启用机 → 第一台。用户选过就被 autoSelect 放过。 */
   function autoSelect(): void {
@@ -67,14 +73,55 @@ export const useFilesStore = defineStore('files', () => {
    * 全 bad 时按「服务器在不在线」给不同的 error：离线是网络问题，在线则说明该机
    * 未配 --fs-root（Agent 一条文件路由都没注册）。
    */
+  /** 拉根列表。成功返回 true；老 Agent 404 或网络失败返回 false（走回退探测）。 */
+  async function loadRoots(id: number): Promise<boolean> {
+    try {
+      const roots = await fetchFileRoots(id)
+      rootSlots.value = roots.map((r) => ({
+        index: r.index,
+        path: r.path,
+        exists: r.exists,
+        status: r.exists ? ('ok' as const) : ('bad' as const),
+      }))
+      return true
+    } catch {
+      return false
+    }
+  }
+
   async function probeRoots(id: number): Promise<void> {
     probing.value = true
     try {
+      if (await loadRoots(id)) {
+        const first = rootSlots.value.find((s) => s.status === 'ok')
+        if (!first) {
+          currentRoot.value = 0
+          currentPath.value = ''
+          entries.value = []
+          truncated.value = false
+          const srv = servers.value.find((s) => s.id === id)
+          error.value = srv && isOnline(srv)
+            ? '该服务器配置的文件根目录都不存在了（可能已被删除），请检查 --fs-root 配置'
+            : '该服务器不在线，无法读取文件根'
+          return
+        }
+        currentRoot.value = first.index
+        currentPath.value = ''
+        const page = await fetchFiles(id, first.index, '')
+        entries.value = page.entries
+        truncated.value = page.truncated
+        error.value = null
+        return
+      }
+
+      // 老 Agent：无 /files/roots，按静态槽位逐个试列，只能拿到序号。
       const results = await Promise.allSettled(
         Array.from({ length: ROOT_SLOTS }, (_, i) => fetchFiles(id, i, '', true)),
       )
       rootSlots.value = results.map((r, i) => ({
         index: i,
+        path: '',
+        exists: r.status === 'fulfilled',
         status: r.status === 'fulfilled' ? ('ok' as const) : ('bad' as const),
       }))
       const firstOk = results.findIndex((r) => r.status === 'fulfilled')
@@ -145,6 +192,19 @@ export const useFilesStore = defineStore('files', () => {
     refreshing.value = true
     try {
       await pullServers()
+      const id = selectedId.value
+      // 先刷根列表：目录被删掉后根会变 exists=false，页面据此置灰；当前根失效时
+      // 自动落到第一个可用根，免得对着一个已消失的目录刷新。
+      if (id && (await loadRoots(id))) {
+        const cur = rootSlots.value.find((s) => s.index === currentRoot.value)
+        if (!cur || cur.status !== 'ok') {
+          const first = rootSlots.value.find((s) => s.status === 'ok')
+          if (first) {
+            currentRoot.value = first.index
+            currentPath.value = ''
+          }
+        }
+      }
       await loadDir(currentPath.value)
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e)
@@ -225,6 +285,7 @@ export const useFilesStore = defineStore('files', () => {
     selected,
     rootSlots,
     currentRoot,
+    currentRootPath,
     currentPath,
     entries,
     truncated,

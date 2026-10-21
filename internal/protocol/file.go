@@ -85,6 +85,22 @@ type FilesList struct {
 	Truncated bool        `json:"truncated"`
 }
 
+// FileRoot 是一个文件管理根的对外描述。
+//
+// Path 是该根的宿主机绝对路径。S7.6 之前刻意只下发序号，面板只能显示 0/1/2/3，
+// 首次使用无法判断「根 0」是哪个目录（用户反馈不可读）。路径对已登录管理员可见，
+// 与本页「可读写这些目录」的权限等价，故不再隐藏。
+type FileRoot struct {
+	Index  int    `json:"index"`
+	Path   string `json:"path"`
+	Exists bool   `json:"exists"`
+}
+
+// FileRoots 是根列表（GET /api/v1/files/roots 的响应体）。
+type FileRoots struct {
+	Roots []FileRoot `json:"roots"`
+}
+
 // MaxFileUploadBytes 是文件上传的共享上限（16 MiB）。
 //
 // 放在 protocol 而不是两侧各自定义：Hub 与 Agent 必须用同一个数字。

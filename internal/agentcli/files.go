@@ -80,6 +80,17 @@ func (c *Client) FileList(ctx context.Context, root int, path string, depth int)
 	return &res, nil
 }
 
+// FileRoots 取文件根列表（GET /api/v1/files/roots）。
+//
+// 老 Agent 没有这个端点（404），调用方据此回退到「按序号探测」的旧逻辑。
+func (c *Client) FileRoots(ctx context.Context) (*protocol.FileRoots, error) {
+	var res protocol.FileRoots
+	if _, err := c.do(ctx, http.MethodGet, "/api/v1/files/roots", nil, &res); err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
+
 // FileStat 取文件或目录的元信息（GET /api/v1/files/stat?root=&path=）。
 func (c *Client) FileStat(ctx context.Context, root int, path string) (*protocol.FileMeta, error) {
 	var res protocol.FileMeta

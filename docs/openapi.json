@@ -3357,6 +3357,99 @@
         ]
       }
     },
+    "/api/v1/servers/{id}/files/roots": {
+      "get": {
+        "operationId": "getApiV1ServersIdFilesRoots",
+        "summary": "文件根列表",
+        "description": "返回该服务器 --fs-root 白名单的序号、宿主机绝对路径与当前是否存在。面板据此把「根 0/1/2」显示为可读路径；路径不可用的根应置灰并给移除入口。老 Agent 无此端点（404），面板回退为按序号探测。\n\nAPI Token 须具备 scope `read:files`；浏览器会话不受此限制。",
+        "tags": [
+          "Files"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "服务器 ID",
+            "example": "1",
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FilesRoots"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求体或参数不合法",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未登录，或凭据无效/已过期",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "服务器已禁用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "目标不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Agent 不可达或返回异常",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/api/v1/servers/{id}/files/stat": {
       "get": {
         "operationId": "getApiV1ServersIdFilesStat",
@@ -5029,6 +5122,24 @@
           }
         }
       },
+      "FileRoot": {
+        "type": "object",
+        "description": "一个文件管理根（--fs-root 白名单项）。",
+        "properties": {
+          "exists": {
+            "type": "boolean",
+            "description": "当前是否仍存在"
+          },
+          "index": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "path": {
+            "type": "string",
+            "description": "宿主机绝对路径"
+          }
+        }
+      },
       "FilesList": {
         "type": "object",
         "description": "GET /files 的 data。truncated=true 时 entries 只是前 N 条，客户端必须提示「还有更多」，不能当成完整清单。",
@@ -5044,6 +5155,18 @@
           },
           "truncated": {
             "type": "boolean"
+          }
+        }
+      },
+      "FilesRoots": {
+        "type": "object",
+        "description": "GET /files/roots 的 data。老 Agent 无此端点（404）。",
+        "properties": {
+          "roots": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FileRoot"
+            }
           }
         }
       },

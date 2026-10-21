@@ -175,21 +175,34 @@
       </thead>
       <tbody>
         <tr v-for="p in cp.projects" :key="p.name">
-          <td class="cp__name" :title="p.path">{{ p.name }}</td>
+          <td class="cp__name" :title="p.path">
+            {{ p.name }}
+            <span class="cp__srcs">
+              <span
+                v-for="s in sourceLabels(p)"
+                :key="s.key"
+                class="cp__src"
+                :class="`cp__src--${s.key}`"
+                :title="s.title"
+              >{{ s.label }}</span>
+              <span v-if="p.conflict" class="cp__src cp__src--conflict" :title="conflictTitle(p)">同名冲突</span>
+            </span>
+          </td>
           <td>
             <span class="cp__badge" :class="`cp__badge--${p.status}`">{{ statusLabel(p.status) }}</span>
           </td>
           <td class="num">{{ p.services.length }}</td>
           <td class="cp__file" :title="p.configFile">{{ fileBase(p.configFile) }}</td>
           <td class="cp__acts">
-            <button type="button" class="link" :disabled="acting" @click="openEdit(p)">编辑</button>
+            <button type="button" class="link" :disabled="acting || p.conflict" :title="p.conflict ? conflictTitle(p) : ''" @click="openEdit(p)">编辑</button>
             <button
               v-for="a in ACTIONS"
               :key="a.name"
               type="button"
               class="link"
               :class="a.danger ? 'link--danger' : ''"
-              :disabled="acting"
+              :disabled="acting || p.conflict"
+              :title="p.conflict ? conflictTitle(p) : ''"
               @click="askAction(a, p)"
             >
               {{ a.label }}
@@ -207,18 +220,29 @@
           <span class="cp__badge" :class="`cp__badge--${p.status}`">{{ statusLabel(p.status) }}</span>
         </header>
         <p class="pcard__meta">
+          <span class="cp__srcs">
+            <span
+              v-for="s in sourceLabels(p)"
+              :key="s.key"
+              class="cp__src"
+              :class="`cp__src--${s.key}`"
+              :title="s.title"
+            >{{ s.label }}</span>
+            <span v-if="p.conflict" class="cp__src cp__src--conflict" :title="conflictTitle(p)">同名冲突</span>
+          </span>
           <span>{{ p.services.length }} 个服务</span>
           <span class="pcard__file" :title="p.configFile">{{ fileBase(p.configFile) }}</span>
         </p>
         <footer class="pcard__acts">
-          <button type="button" class="link" :disabled="acting" @click="openEdit(p)">编辑</button>
+          <button type="button" class="link" :disabled="acting || p.conflict" :title="p.conflict ? conflictTitle(p) : ''" @click="openEdit(p)">编辑</button>
           <button
             v-for="a in ACTIONS"
             :key="a.name"
             type="button"
             class="link"
             :class="a.danger ? 'link--danger' : ''"
-            :disabled="acting"
+            :disabled="acting || p.conflict"
+            :title="p.conflict ? conflictTitle(p) : ''"
             @click="askAction(a, p)"
           >
             {{ a.label }}
@@ -234,7 +258,10 @@
       </template>
       <template v-else>
         <p class="cp__empty-title">没有 compose 项目</p>
-        <p class="cp__empty-hint">Agent 只扫描宿主机 compose 白名单目录下的 docker-compose.yml / compose.yaml，未发现项目。</p>
+        <p class="cp__empty-hint">
+          Agent 扫描宿主机 compose 白名单目录下的 docker-compose.yml / compose.yaml，并从运行中容器的 compose label
+          反推项目目录，两处都没发现项目。可在「添加节点」页确认 compose 目录配置。
+        </p>
       </template>
     </div>
 
@@ -303,6 +330,7 @@ import {
   type ComposeActionName,
   type ComposeBackup,
   type ComposeProject,
+  type ComposeSource,
   type ComposeStatus,
 } from '@/api/compose'
 import { isOnline } from '@/api/servers'
@@ -356,6 +384,44 @@ function fileBase(path: string): string {
 
 function statusLabel(s: ComposeStatus): string {
   return STATUS_LABELS[s] ?? s
+}
+
+interface SourceBadge {
+  key: string
+  label: string
+  title: string
+}
+
+/**
+ * sourceLabels 把项目的发现来源翻成徽标。
+ *
+ * 「白名单」= 运维在添加节点页填的 compose 目录里扫到的；
+ * 「label」= 从运行中容器的 compose label 反推目录扫到的（宿主上确实在跑）。
+ * 两者同时命中说明「人工配过 + 引擎也认」，是可信度最高的一种。
+ */
+function sourceLabels(p: ComposeProject): SourceBadge[] {
+  const out: SourceBadge[] = []
+  const has = (k: ComposeSource): boolean => (p.sources ?? []).includes(k)
+  if (has('whitelist')) {
+    out.push({ key: 'whitelist', label: '白名单', title: '来自运维配置的 compose 白名单目录扫描' })
+  }
+  if (has('label')) {
+    out.push({ key: 'label', label: 'label', title: '来自运行中容器的 compose label 反推目录扫描' })
+  }
+  if (out.length === 0) {
+    out.push({ key: 'unknown', label: '来源未知', title: '后端未标注该项目的发现来源' })
+  }
+  return out
+}
+
+/**
+ * conflictTitle 拼出同名冲突的说明：compose 项目名相同但文件分处不同目录，
+ * compose 会把它们当成同一个项目，操作其一实际作用到另一组容器。
+ */
+function conflictTitle(p: ComposeProject): string {
+  const paths = (p.conflictPaths ?? []).join('\n')
+  const name = p.composeName || p.name
+  return `compose 项目名「${name}」在多个目录下重名：\n${paths}\ncompose 会把它们当成同一个项目，操作其一实际作用到另一组容器，故已禁用写操作。请先在宿主机消除重名。`
 }
 
 const downTarget = ref<ComposeProject | null>(null)
@@ -844,6 +910,44 @@ function onSelectHost(e: Event): void {
   background: var(--bg-elev-1);
   border: 1px dashed var(--border-default);
   color: var(--fg-subtle);
+}
+
+/* ---------- 来源与冲突徽标 ---------- */
+
+.cp__srcs {
+  display: inline-flex;
+  gap: var(--space-1);
+  margin-left: var(--space-2);
+  vertical-align: middle;
+}
+
+.cp__src {
+  display: inline-block;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  line-height: 1.8;
+  border: 1px solid var(--border-default);
+  color: var(--fg-muted);
+  background: var(--bg-elev-1);
+}
+
+.cp__src--whitelist {
+  border-color: var(--border-default);
+  color: var(--fg-subtle);
+}
+
+.cp__src--label {
+  border-color: var(--info-border, var(--border-default));
+  color: var(--info, var(--fg-subtle));
+  background: var(--info-subtle, var(--bg-elev-1));
+}
+
+.cp__src--conflict {
+  border-color: var(--danger-border, var(--border-default));
+  color: var(--danger, var(--fg-muted));
+  background: var(--danger-subtle, var(--bg-elev-1));
+  cursor: help;
 }
 
 /* ---------- 空态 ---------- */

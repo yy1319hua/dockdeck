@@ -50,13 +50,41 @@ export interface ComposeProject {
   configFile: string
   status: ComposeStatus
   services: ComposeService[]
+  /**
+   * compose 自己认的项目名（compose 文件顶层 name:，无则目录名）。
+   *
+   * 与 name 可能不同：name 是面板路由用的「目录名-角色后缀」，而 compose
+   * 执行时以文件里的 name: 为准。两者不一致时面板看到的与实际操作的
+   * 不是同一个对象，故单独展示出来供核对。
+   */
+  composeName?: string
+  /** 发现来源：白名单目录扫描 / 容器 label 反推，可同时命中两个。 */
+  sources?: ComposeSource[]
+  /**
+   * 同名冲突：同一个 compose 项目名出现在多个目录下。
+   *
+   * compose 按项目名管理容器，故这几份文件在 compose 眼里是同一个项目，
+   * 操作其一实际作用到另一组容器。冲突项目的写操作被后端拒绝。
+   */
+  conflict?: boolean
+  /** 冲突的其它 compose 文件绝对路径。 */
+  conflictPaths?: string[]
 }
+
+/** compose 项目的发现来源。 */
+export type ComposeSource = 'whitelist' | 'label'
+
+const COMPOSE_SOURCES: readonly string[] = ['whitelist', 'label']
 
 interface ComposeProjectWire {
   name: string
   path: string
   config_file: string
   status: string
+  compose_name?: string
+  sources?: string[]
+  conflict?: boolean
+  conflict_paths?: string[]
   services?: {
     name: string
     state: string
@@ -66,12 +94,21 @@ interface ComposeProjectWire {
   }[]
 }
 
+/** 后端给的来源值只认这两个；其余一律忽略（未知来源不该让前端崩）。 */
+function toSource(s: string): ComposeSource | null {
+  return COMPOSE_SOURCES.includes(s) ? (s as ComposeSource) : null
+}
+
 function toProject(w: ComposeProjectWire): ComposeProject {
   return {
     name: w.name,
     path: w.path,
     configFile: w.config_file,
     status: toStatus(w.status),
+    composeName: w.compose_name,
+    sources: (w.sources ?? []).map(toSource).filter((s): s is ComposeSource => s !== null),
+    conflict: w.conflict === true,
+    conflictPaths: w.conflict_paths ?? [],
     services: (w.services ?? []).map((s) => ({
       name: s.name,
       state: s.state,

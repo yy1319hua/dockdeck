@@ -200,7 +200,7 @@
     </table>
 
         <!-- 手机态（<768px，M7）：项目表转卡片。 -->
-    <div v-else-if="cp.projects.length > 0" class="cp__cards">
+    <div v-if="cp.projects.length > 0" class="cp__cards">
       <article v-for="p in cp.projects" :key="p.name" class="pcard">
         <header class="pcard__head">
           <span class="pcard__name" :title="p.path">{{ p.name }}</span>
@@ -227,7 +227,7 @@
       </article>
     </div>
 
-<div v-else-if="!cp.loading && !cp.error" class="cp__empty">
+<div v-if="!cp.loading && !cp.error && cp.projects.length === 0" class="cp__empty">
       <template v-if="cp.servers.length === 0">
         <p class="cp__empty-title">还没有纳管的服务器</p>
         <p class="cp__empty-hint">纳管方式见 S5.8：Hub 签发 join_secret，Agent 启动时自注册。</p>

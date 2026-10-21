@@ -147,15 +147,21 @@ func (s *engineStatsSource) statFor(c dockercli.ContainerSummary, raw dockercli.
 		name = strings.TrimPrefix(c.Names[0], "/")
 	}
 	return protocol.ContainerStat{
-		ID:         c.ID,
-		Name:       name,
+		ID:   c.ID,
+		Name: name,
+		// CPUPercent 单核百分比（docker stats 口径），可超过 100%。
 		CPUPercent: cpuPct,
-		MemUsage:   raw.MemoryStats.Usage,
-		MemLimit:   raw.MemoryStats.Limit,
-		MemPercent: memPct(raw.MemoryStats.Usage, raw.MemoryStats.Limit),
-		NetRx:      rx,
-		NetTx:      tx,
-		PIDS:       raw.PIDsStats.Current,
+		// CPUCores 占用核数：与主机侧 busy_cores 同量纲，可直接对照。
+		CPUCores: cpuPct / 100,
+		// CPUPercentNormalized 整机归一口径：与主机侧 usage_percent 同量纲，
+		// 可与同屏的主机值直接比较（不分母是可见核数，兜底已保证 >=1）。
+		CPUPercentNormalized: cpuPct / float64(cur.online),
+		MemUsage:             raw.MemoryStats.Usage,
+		MemLimit:             raw.MemoryStats.Limit,
+		MemPercent:           memPct(raw.MemoryStats.Usage, raw.MemoryStats.Limit),
+		NetRx:                rx,
+		NetTx:                tx,
+		PIDS:                 raw.PIDsStats.Current,
 	}
 }
 

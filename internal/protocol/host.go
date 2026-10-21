@@ -28,8 +28,26 @@ type HostMetrics struct {
 // User/System/IOWait/Steal/Idle 是自开机以来的累计 jiffies（原始值，便于事后核对口径）；
 // UsagePercent 由 Agent 对 /proc/stat 做两次采样取差值算出，是 UI 实际展示的那个数。
 type CPUStat struct {
+	// Cores 是逻辑线程数（/proc/stat 里 cpu0/cpu1… 单核行的条数）。
+	//
+	// 注意它不等于物理核数：开了超线程（SMT）时两个线程共享一个物理核，
+	// 例如「1 物理核 / 2 线程」的机器上这里是 2。
 	Cores int `json:"cores"`
+	// CoresPhysical 是物理核数（同一物理核上的多个超线程算 1 个）。
+	// 0 = 未能采集（拓扑信息不可读），此时前端显示「未知」，
+	// 绝不回退成 Cores——那正是「2 核实际只有 1 核」的误解来源。
+	CoresPhysical int `json:"cores_physical"`
+	// BusyCores 是被占用的核数（可为小数）：= UsagePercent/100 × Cores。
+	//
+	// 这是把整机百分比翻译成「核」的那个数：UsagePercent 是整机归一口径
+	// （所有核加总的占比），容器侧 cpu_percent 是单核口径（100% = 吃满
+	// 一个核），两者量纲不同、不能直接比；BusyCores 与容器的 cpu_cores
+	// 同量纲，可以直接对照。
+	BusyCores float64 `json:"busy_cores"`
 	// UsagePercent 取值 0–100，含 user/system/iowait/steal。
+	//
+	// 口径：整机归一——所有逻辑线程加总的忙碌占比。100% 表示全部线程都在
+	// 忙，与容器侧单核口径（可超过 100%）不是一回事，两者不可直接相加。
 	UsagePercent float64 `json:"usage_percent"`
 	User         uint64  `json:"user"`
 	System       uint64  `json:"system"`

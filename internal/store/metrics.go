@@ -80,17 +80,17 @@ func (s *Store) SaveMetricsSnapshot(ctx context.Context, serverID int64, m *prot
 	defer txDB.Rollback()
 
 	if _, err := txDB.ExecContext(ctx,
-		`INSERT INTO metrics_snapshots(server_id,ts,cpu_pct,mem_bytes,mem_total,disk_bytes,disk_total,net_rx,net_tx,load1,extra)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-		serverID, tsStr, m.CPU.UsagePercent, int64(m.Memory.Used), int64(m.Memory.Total),
+		`INSERT INTO metrics_snapshots(server_id,ts,cpu_pct,busy_cores,mem_bytes,mem_total,disk_bytes,disk_total,net_rx,net_tx,load1,extra)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+		serverID, tsStr, m.CPU.UsagePercent, m.CPU.BusyCores, int64(m.Memory.Used), int64(m.Memory.Total),
 		diskUsed, diskTotal, rx, tx, m.Load.One, string(extra)); err != nil {
 		return fmt.Errorf("store: 写 host 快照失败: %w", err)
 	}
 	for _, c := range containers {
 		if _, err := txDB.ExecContext(ctx,
-			`INSERT INTO container_snapshots(server_id,ts,cid,name,cpu_pct,mem_bytes,mem_limit,mem_pct,net_rx,net_tx,pids)
-			 VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-			serverID, tsStr, c.ID, c.Name, c.CPUPercent, int64(c.MemUsage), int64(c.MemLimit),
+			`INSERT INTO container_snapshots(server_id,ts,cid,name,cpu_pct,cpu_cores,mem_bytes,mem_limit,mem_pct,net_rx,net_tx,pids)
+			 VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+			serverID, tsStr, c.ID, c.Name, c.CPUPercent, c.CPUCores, int64(c.MemUsage), int64(c.MemLimit),
 			c.MemPercent, int64(c.NetRx), int64(c.NetTx), int64(c.PIDS)); err != nil {
 			return fmt.Errorf("store: 写容器快照失败: %w", err)
 		}
@@ -189,29 +189,39 @@ const MaxOverviewPoints = 1440
 
 // HostPoint 是 host 历史曲线上的一个点，列与 metrics_snapshots 一一对应。
 type HostPoint struct {
-	Ts        time.Time `json:"ts"`
-	CPUPct    float64   `json:"cpu_pct"`
-	Mem       int64     `json:"mem_bytes"`
-	MemTotal  int64     `json:"mem_total"`
-	Disk      int64     `json:"disk_bytes"`
-	DiskTotal int64     `json:"disk_total"`
-	NetRx     int64     `json:"net_rx"`
-	NetTx     int64     `json:"net_tx"`
-	Load1     float64   `json:"load1"`
+	Ts     time.Time `json:"ts"`
+	CPUPct float64   `json:"cpu_pct"`
+	// BusyCores 是占用核数（= cpu_pct/100 × cores）。旧行该列为 NULL，
+	// 读出为 0 并带 BusyCoresKnown=false——「当时没这个口径」与「占用 0 核」
+	// 是两回事，不该混为一谈。
+	BusyCores      float64 `json:"busy_cores"`
+	BusyCoresKnown bool    `json:"busy_cores_known"`
+	Mem            int64   `json:"mem_bytes"`
+	MemTotal       int64   `json:"mem_total"`
+	Disk           int64   `json:"disk_bytes"`
+	DiskTotal      int64   `json:"disk_total"`
+	NetRx          int64   `json:"net_rx"`
+	NetTx          int64   `json:"net_tx"`
+	Load1          float64 `json:"load1"`
 }
 
 // ContainerPoint 是每容器历史曲线上的一个点。
 type ContainerPoint struct {
-	Ts       time.Time `json:"ts"`
-	CID      string    `json:"cid"`
-	Name     string    `json:"name"`
-	CPUPct   float64   `json:"cpu_pct"`
-	Mem      int64     `json:"mem_bytes"`
-	MemLimit int64     `json:"mem_limit"`
-	MemPct   float64   `json:"mem_pct"`
-	NetRx    int64     `json:"net_rx"`
-	NetTx    int64     `json:"net_tx"`
-	PIDs     int64     `json:"pids"`
+	Ts   time.Time `json:"ts"`
+	CID  string    `json:"cid"`
+	Name string    `json:"name"`
+	// CPUPct 是单核百分比（docker stats 口径），可超过 100%。
+	CPUPct float64 `json:"cpu_pct"`
+	// CPUCores 是占用核数（= cpu_pct/100）。旧行该列为 NULL，读出为 0
+	// 并带 CPUCoresKnown=false。
+	CPUCores      float64 `json:"cpu_cores"`
+	CPUCoresKnown bool    `json:"cpu_cores_known"`
+	Mem           int64   `json:"mem_bytes"`
+	MemLimit      int64   `json:"mem_limit"`
+	MemPct        float64 `json:"mem_pct"`
+	NetRx         int64   `json:"net_rx"`
+	NetTx         int64   `json:"net_tx"`
+	PIDs          int64   `json:"pids"`
 }
 
 // ServerExists 判断服务器是否存在。禁用的服务器也返回 true——
@@ -239,8 +249,8 @@ func (s *Store) MetricsHostRange(ctx context.Context, serverID int64, from, to t
 	}
 	// 子查询取最新 N 点再升序排回：曲线要的是时间正向序列。
 	rows, err := s.DB.QueryContext(ctx,
-		`SELECT ts,cpu_pct,mem_bytes,mem_total,disk_bytes,disk_total,net_rx,net_tx,load1 FROM (
-		   SELECT ts,cpu_pct,mem_bytes,mem_total,disk_bytes,disk_total,net_rx,net_tx,load1
+		`SELECT ts,cpu_pct,busy_cores,mem_bytes,mem_total,disk_bytes,disk_total,net_rx,net_tx,load1 FROM (
+		   SELECT ts,cpu_pct,busy_cores,mem_bytes,mem_total,disk_bytes,disk_total,net_rx,net_tx,load1
 		   FROM metrics_snapshots WHERE server_id=? AND ts>=? AND ts<=?
 		   ORDER BY ts DESC LIMIT ?
 		 ) ORDER BY ts ASC`,
@@ -254,9 +264,12 @@ func (s *Store) MetricsHostRange(ctx context.Context, serverID int64, from, to t
 		var tsStr string
 		var p HostPoint
 		var disk, diskTotal sql.NullInt64
-		if err := rows.Scan(&tsStr, &p.CPUPct, &p.Mem, &p.MemTotal, &disk, &diskTotal, &p.NetRx, &p.NetTx, &p.Load1); err != nil {
+		var busyCores sql.NullFloat64
+		if err := rows.Scan(&tsStr, &p.CPUPct, &busyCores, &p.Mem, &p.MemTotal, &disk, &diskTotal, &p.NetRx, &p.NetTx, &p.Load1); err != nil {
 			return nil, err
 		}
+		p.BusyCores = busyCores.Float64
+		p.BusyCoresKnown = busyCores.Valid
 		if p.Ts, err = time.Parse(time.RFC3339, tsStr); err != nil {
 			return nil, fmt.Errorf("store: ts 解析失败: %w", err)
 		}
@@ -274,8 +287,8 @@ func (s *Store) MetricsContainerRange(ctx context.Context, serverID int64, from,
 		limit = MaxOverviewPoints
 	}
 	rows, err := s.DB.QueryContext(ctx,
-		`SELECT ts,cid,name,cpu_pct,mem_bytes,mem_limit,mem_pct,net_rx,net_tx,pids FROM (
-		   SELECT ts,cid,name,cpu_pct,mem_bytes,mem_limit,mem_pct,net_rx,net_tx,pids
+		`SELECT ts,cid,name,cpu_pct,cpu_cores,mem_bytes,mem_limit,mem_pct,net_rx,net_tx,pids FROM (
+		   SELECT ts,cid,name,cpu_pct,cpu_cores,mem_bytes,mem_limit,mem_pct,net_rx,net_tx,pids
 		   FROM container_snapshots WHERE server_id=? AND ts>=? AND ts<=?
 		   ORDER BY ts DESC LIMIT ?
 		 ) ORDER BY ts ASC, cid ASC`,
@@ -288,12 +301,15 @@ func (s *Store) MetricsContainerRange(ctx context.Context, serverID int64, from,
 	for rows.Next() {
 		var tsStr string
 		var p ContainerPoint
-		if err := rows.Scan(&tsStr, &p.CID, &p.Name, &p.CPUPct, &p.Mem, &p.MemLimit, &p.MemPct, &p.NetRx, &p.NetTx, &p.PIDs); err != nil {
+		var cpuCores sql.NullFloat64
+		if err := rows.Scan(&tsStr, &p.CID, &p.Name, &p.CPUPct, &cpuCores, &p.Mem, &p.MemLimit, &p.MemPct, &p.NetRx, &p.NetTx, &p.PIDs); err != nil {
 			return nil, err
 		}
 		if p.Ts, err = time.Parse(time.RFC3339, tsStr); err != nil {
 			return nil, err
 		}
+		p.CPUCores = cpuCores.Float64
+		p.CPUCoresKnown = cpuCores.Valid
 		out = append(out, p)
 	}
 	return out, rows.Err()

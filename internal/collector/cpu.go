@@ -77,6 +77,45 @@ func readCPUStat(path string) (cpuSnapshot, error) {
 	return snap, nil
 }
 
+// physicalCores 统计物理核数：/proc/cpuinfo 里不同的 core id 的个数。
+//
+// 为什么需要它：Cores 数的是逻辑线程（cpu0/cpu1…），开了超线程的机器上
+// 两个线程共享一个物理核——「1 物理核 / 2 线程」的机器 Cores=2，
+// 用户看到「2 核」却以为是 2 个物理核。物理核数是这个误解的正解。
+//
+// 读 /proc/cpuinfo 而不是 /sys 的 thread_siblings_list：前者在容器里
+// 必然可读（Agent 本来就读 /proc/stat），后者依赖 /sys 透传，
+// 容器内常常读不到——读不到就返回 0（未知），绝不拿 Cores 顶替。
+//
+// core id 缺失（部分 ARM/虚拟化环境不提供）时返回 0：此时无法判定物理核，
+// 显示「未知」比给个假数字诚实。
+func physicalCores(path string) int {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	ids := make(map[string]bool)
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		k, v, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(k) != "core id" {
+			continue
+		}
+		// core id 是全局唯一的物理核编号（同一核的多个线程共享它），
+		// 故不同 core id 的个数即物理核数。
+		if v = strings.TrimSpace(v); v != "" {
+			ids[v] = true
+		}
+	}
+	return len(ids)
+}
+
 // cpuUsage 对 /proc/stat 采两次，用差值算占用率。
 //
 // idle 只计 idle、不计 iowait：按架构规定「占用含 user/system/iowait/steal」，
@@ -109,6 +148,11 @@ func (c *Collector) cpuUsage() (protocol.CPUStat, error) {
 		Idle:   second.idle,
 	}
 	stat.UsagePercent = usageBetween(first, second)
+	// 物理核数读 /proc/cpuinfo（与 /proc/stat 同根，容器内必然可读）。
+	stat.CoresPhysical = physicalCores(filepath.Join(root, "cpuinfo"))
+	// 占用核数 = 整机百分比 × 逻辑线程数。usage_percent 是整机归一口径，
+	// 乘线程数才得到「吃掉了几个核」，与容器侧的 cpu_cores 同量纲。
+	stat.BusyCores = stat.UsagePercent / 100 * float64(stat.Cores)
 	return stat, nil
 }
 

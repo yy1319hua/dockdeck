@@ -185,14 +185,22 @@ func NormalizeTimeParam(s string) (string, bool) {
 // CPUPercent/MemPercent 是 0–100。MemLimit 为 0 表示未设内存上限，
 // 此时 MemPercent 无意义，UI 不应展示百分比。
 type ContainerStat struct {
-	ID         string  `json:"id"`
-	Name       string  `json:"name"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// CPUPercent 是单核百分比，与 docker stats 同口径：100% = 吃满一个核，
+	// 多核并行时可以超过 100%（上限为该机逻辑核数）。
 	CPUPercent float64 `json:"cpu_percent"`
-	MemUsage   uint64  `json:"mem_usage"`
-	MemLimit   uint64  `json:"mem_limit"`
-	MemPercent float64 `json:"mem_percent"`
-	NetRx      uint64  `json:"net_rx"`
-	NetTx      uint64  `json:"net_tx"`
+	// CPUCores 是该容器占用的核数（= CPUPercent/100，可为小数）。
+	// 与主机侧的 busy_cores 同量纲，可直接对照。
+	CPUCores float64 `json:"cpu_cores"`
+	// CPUPercentNormalized 是整机归一口径（= CPUPercent / 可见核数），
+	// 与主机侧 usage_percent 同量纲，可与同屏的主机值直接比较。
+	CPUPercentNormalized float64 `json:"cpu_percent_normalized"`
+	MemUsage             uint64  `json:"mem_usage"`
+	MemLimit             uint64  `json:"mem_limit"`
+	MemPercent           float64 `json:"mem_percent"`
+	NetRx                uint64  `json:"net_rx"`
+	NetTx                uint64  `json:"net_tx"`
 	// PIDS 是容器内进程数。
 	PIDS uint64 `json:"pids"`
 }

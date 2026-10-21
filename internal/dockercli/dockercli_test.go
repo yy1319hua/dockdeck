@@ -40,6 +40,10 @@ type fakeEngine struct {
 	// 不通用」——把它们写成同一个样子的测试就抓不到抄错。
 	volumes  []byte
 	networks []byte
+	// networkDetails 是 GET /networks/{id} 的响应体，按网络 ID 索引。
+	// Engine 29 起接入容器名单只在详情端点给，清单端点一律 null——
+	// 没有它就测不出「名单缺失」这个真实故障。
+	networkDetails map[string][]byte
 }
 
 func newFakeEngine(t *testing.T, apiVersion string) (*fakeEngine, string) {
@@ -151,6 +155,21 @@ func newFakeEngine(t *testing.T, apiVersion string) (*fakeEngine, string) {
 			return
 		}
 		_, _ = w.Write(f.networks)
+	})
+	// 网络详情端点：接入容器名单只在这里给（Engine 29 行为）。
+	mux.HandleFunc("/networks/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		id := strings.TrimPrefix(r.URL.Path, "/networks/")
+		body, ok := f.networkDetails[id]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
 	})
 	// Engine 对版本前缀路由：/v1.51/version 与 /version 等价。
 	// 剥掉 /vX.Y 前缀后再进 mux，模拟 Engine 的真实路由行为。

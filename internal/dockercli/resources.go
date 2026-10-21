@@ -4,6 +4,9 @@ package dockercli
 
 import (
 	"context"
+	"log"
+	"net/url"
+	"sync"
 
 	"github.com/yy1319hua/dockdeck/internal/protocol"
 )
@@ -32,12 +35,50 @@ func (c *Client) ListVolumes(ctx context.Context) ([]protocol.VolumeSummary, err
 
 // ListNetworks 取网络清单（Engine GET /networks），响应是**裸数组**。
 //
-// 每项自带 Containers 映射（接入容器名 + IPv4/Mac），故「哪些容器接入了」
-// 不需要额外请求——这是与卷最大的形态差别，前端据此直接展示名单。
+// 接入容器名单（Containers 映射）**不在清单响应里**：Engine 29 起
+// GET /networks 只给网络元信息，Containers 一律为 null；接入名单要逐个调
+// GET /networks/{id} 详情端点才拿得到（实测 Engine 29.1.3：清单端点与
+// ?verbose=1 变体都返回 null，详情端点才有 komari/komari-agent 等接入记录）。
+// 旧实现在清单端点直接读 Containers，于是面板一律显示「未接入容器」——
+// 连确有容器接入的 host 网络也误报。
+//
+// 故本实现两段走：清单拿元信息 + 逐个详情补 Containers。
+// 详情请求并发执行（一个网络一次请求，数量级为个位数，无需限流）。
+// 单个详情失败**不拖垮整次列举**——名单缺失只影响该行的展示，
+// 网络元信息（名称/子网/驱动）仍要拿得到。
 func (c *Client) ListNetworks(ctx context.Context) ([]protocol.NetworkSummary, error) {
 	out := []protocol.NetworkSummary{}
 	if err := c.getJSON(ctx, "/networks", &out); err != nil {
 		return nil, err
 	}
+	c.fillNetworkContainers(ctx, out)
 	return out, nil
+}
+
+// fillNetworkContainers 逐个取网络详情，补齐 Containers 映射。
+// 并发执行，单个失败只记日志不中断（名单缺失不致命，元信息才是主线）。
+func (c *Client) fillNetworkContainers(ctx context.Context, list []protocol.NetworkSummary) {
+	if len(list) == 0 {
+		return
+	}
+	var wg sync.WaitGroup
+	for i := range list {
+		if list[i].ID == "" {
+			continue
+		}
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			var detail protocol.NetworkSummary
+			path := "/networks/" + url.PathEscape(list[idx].ID)
+			if err := c.getJSON(ctx, path, &detail); err != nil {
+				// 详情拿不到就保留清单里的原值（通常是 nil map，
+				// 前端显示「未接入容器」——诚实反映「没取到」而非编造）。
+				log.Printf("dockercli: 取网络 %s 详情失败，接入名单缺失: %v", list[idx].ID, err)
+				return
+			}
+			list[idx].Containers = detail.Containers
+		}(i)
+	}
+	wg.Wait()
 }

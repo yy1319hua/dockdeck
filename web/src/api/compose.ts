@@ -31,10 +31,18 @@ export interface ComposeService {
   name: string
   state: string
   image: string
+  /** 容器名（compose ps 的 Name/Names 首段；老版本 compose 可能不给）。 */
+  container?: string
+  /** 容器短 ID（compose ps 的 ID）。 */
+  containerId?: string
 }
 
 export interface ComposeProject {
-  /** 目录名（白名单内标识；跨目录重名时后端按首个匹配解析，后者不可达）。 */
+  /**
+   * 白名单内的唯一标识（前端拿它做路由段与列表 key）。
+   * 目录名；同目录多份 compose 时为「目录名-角色后缀」（如 dockdeck-agent）；
+   * 再同名则后端追加 -2、-3 序号，保证每个项目都能被解析到。
+   */
   name: string
   /** 项目目录绝对路径（只读展示）。 */
   path: string
@@ -49,7 +57,13 @@ interface ComposeProjectWire {
   path: string
   config_file: string
   status: string
-  services?: { name: string; state: string; image: string }[]
+  services?: {
+    name: string
+    state: string
+    image: string
+    container?: string
+    container_id?: string
+  }[]
 }
 
 function toProject(w: ComposeProjectWire): ComposeProject {
@@ -58,7 +72,13 @@ function toProject(w: ComposeProjectWire): ComposeProject {
     path: w.path,
     configFile: w.config_file,
     status: toStatus(w.status),
-    services: (w.services ?? []).map((s) => ({ name: s.name, state: s.state, image: s.image })),
+    services: (w.services ?? []).map((s) => ({
+      name: s.name,
+      state: s.state,
+      image: s.image,
+      container: s.container,
+      containerId: s.container_id,
+    })),
   }
 }
 

@@ -3232,7 +3232,7 @@ components:
           description: "compose 文件绝对路径"
         name:
           type: "string"
-          description: "目录名（白名单内唯一）"
+          description: "白名单内唯一标识：目录名；同目录多份 compose 时为「目录名-角色后缀」；再同名追加 -2 序号"
         path:
           type: "string"
           description: "项目目录绝对路径"
@@ -3246,6 +3246,12 @@ components:
     ComposeService:
       type: "object"
       properties:
+        container:
+          type: "string"
+          description: "容器名（compose ps 的 Name/Names 首段）"
+        container_id:
+          type: "string"
+          description: "容器短 ID（compose ps 的 ID）"
         image:
           type: "string"
         name:

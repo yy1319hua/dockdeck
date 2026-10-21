@@ -475,15 +475,17 @@ func schemas() map[string]*Schema {
 		"ComposeService": {
 			Type: "object",
 			Properties: map[string]*Schema{
-				"name":  {Type: "string"},
-				"state": {Type: "string", Description: "running / exited / paused …"},
-				"image": {Type: "string"},
+				"name":         {Type: "string"},
+				"state":        {Type: "string", Description: "running / exited / paused …"},
+				"image":        {Type: "string"},
+				"container":    {Type: "string", Description: "容器名（compose ps 的 Name/Names 首段）"},
+				"container_id": {Type: "string", Description: "容器短 ID（compose ps 的 ID）"},
 			},
 		},
 		"ComposeProject": {
 			Type: "object",
 			Properties: map[string]*Schema{
-				"name":        {Type: "string", Description: "目录名（白名单内唯一）"},
+				"name":        {Type: "string", Description: "白名单内唯一标识：目录名；同目录多份 compose 时为「目录名-角色后缀」；再同名追加 -2 序号"},
 				"path":        {Type: "string", Description: "项目目录绝对路径"},
 				"config_file": {Type: "string", Description: "compose 文件绝对路径"},
 				"status":      {Type: "string", Description: "running / partial / stopped / unknown"},

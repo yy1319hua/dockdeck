@@ -48,7 +48,7 @@ func TestRun_RejectsMissingToken(t *testing.T) {
 }
 
 func TestBuildHandler_Unauthenticated(t *testing.T) {
-	srv := httptest.NewServer(buildHandler(smokeToken, smokeCollector(t), nil, newContainersAPI("", ""), newImagesAPI(""), newComposeAPI(nil), nil, newResourcesAPI("")))
+	srv := httptest.NewServer(buildHandler(smokeToken, smokeCollector(t), nil, newContainersAPI("", ""), newImagesAPI(""), newComposeAPI(nil, ""), nil, newResourcesAPI("")))
 	defer srv.Close()
 	for _, path := range []string{"/api/v1/info", "/api/v1/metrics"} {
 		resp, err := srv.Client().Get(srv.URL + path)
@@ -63,7 +63,7 @@ func TestBuildHandler_Unauthenticated(t *testing.T) {
 }
 
 func TestBuildHandler_InfoAuthenticated(t *testing.T) {
-	srv := httptest.NewServer(buildHandler(smokeToken, smokeCollector(t), nil, newContainersAPI("", ""), newImagesAPI(""), newComposeAPI(nil), nil, newResourcesAPI("")))
+	srv := httptest.NewServer(buildHandler(smokeToken, smokeCollector(t), nil, newContainersAPI("", ""), newImagesAPI(""), newComposeAPI(nil, ""), nil, newResourcesAPI("")))
 	defer srv.Close()
 
 	resp, err := srv.Client().Do(authed(t, http.MethodGet, srv.URL+"/api/v1/info", "/api/v1/info", nil))
@@ -91,7 +91,7 @@ func TestBuildHandler_InfoAuthenticated(t *testing.T) {
 // TestBuildHandler_MetricsAuthenticated 端到端验证采集链路：
 // 真读 /proc，确认返回的指标结构完整可用。
 func TestBuildHandler_MetricsAuthenticated(t *testing.T) {
-	srv := httptest.NewServer(buildHandler(smokeToken, smokeCollector(t), nil, newContainersAPI("", ""), newImagesAPI(""), newComposeAPI(nil), nil, newResourcesAPI("")))
+	srv := httptest.NewServer(buildHandler(smokeToken, smokeCollector(t), nil, newContainersAPI("", ""), newImagesAPI(""), newComposeAPI(nil, ""), nil, newResourcesAPI("")))
 	defer srv.Close()
 
 	resp, err := srv.Client().Do(authed(t, http.MethodGet, srv.URL+"/api/v1/metrics", "/api/v1/metrics", nil))
@@ -159,7 +159,7 @@ func TestBuildHandler_ContainersStats(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			srv := httptest.NewServer(buildHandler(smokeToken, smokeCollector(t), tc.src, newContainersAPI("", ""), newImagesAPI(""), newComposeAPI(nil), nil, newResourcesAPI("")))
+			srv := httptest.NewServer(buildHandler(smokeToken, smokeCollector(t), tc.src, newContainersAPI("", ""), newImagesAPI(""), newComposeAPI(nil, ""), nil, newResourcesAPI("")))
 			defer srv.Close()
 			resp, err := srv.Client().Do(authed(t, http.MethodGet, srv.URL+"/api/v1/containers/stats", "/api/v1/containers/stats", nil))
 			if err != nil {

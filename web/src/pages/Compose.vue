@@ -180,7 +180,7 @@
             <span class="cp__badge" :class="`cp__badge--${p.status}`">{{ statusLabel(p.status) }}</span>
           </td>
           <td class="num">{{ p.services.length }}</td>
-          <td class="cp__file" :title="p.configFile">{{ p.configFile }}</td>
+          <td class="cp__file" :title="p.configFile">{{ fileBase(p.configFile) }}</td>
           <td class="cp__acts">
             <button type="button" class="link" :disabled="acting" @click="openEdit(p)">编辑</button>
             <button
@@ -208,7 +208,7 @@
         </header>
         <p class="pcard__meta">
           <span>{{ p.services.length }} 个服务</span>
-          <span class="pcard__file" :title="p.configFile">{{ p.configFile }}</span>
+          <span class="pcard__file" :title="p.configFile">{{ fileBase(p.configFile) }}</span>
         </p>
         <footer class="pcard__acts">
           <button type="button" class="link" :disabled="acting" @click="openEdit(p)">编辑</button>
@@ -340,6 +340,18 @@ const STATUS_LABELS: Record<ComposeStatus, string> = {
   partial: '部分运行',
   stopped: '已停止',
   unknown: '未知',
+}
+
+/**
+ * fileBase 取 compose 文件的基名（如 docker-compose.agent.yml）。
+ *
+ * 为什么展示基名而不是全路径：全路径在窄列里会被省略号截断，看不出是哪个
+ * 文件，而用户真正要辨认的正是「hub 那份还是 agent 那份」。
+ * 全路径仍在 title 里悬停可见，信息不丢。
+ */
+function fileBase(path: string): string {
+  const i = path.lastIndexOf('/')
+  return i >= 0 ? path.slice(i + 1) : path
 }
 
 function statusLabel(s: ComposeStatus): string {

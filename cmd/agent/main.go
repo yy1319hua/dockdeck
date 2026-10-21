@@ -42,7 +42,7 @@ func run(args []string) error {
 
 	handler := buildHandler(cfg.Token, collector.New(cfg.DiskMounts), newEngineStatsSource(cfg.DockerSocket),
 		newContainersAPI(cfg.DockerSocket, cfg.SelfContainer), newImagesAPI(cfg.DockerSocket),
-		newComposeAPI(cfg.ComposeDirs), fapi, newResourcesAPI(cfg.DockerSocket))
+		newComposeAPI(cfg.ComposeDirs, cfg.SelfContainer), fapi, newResourcesAPI(cfg.DockerSocket))
 
 	// 反向模式下「能连上 Hub 并完成纳管」就是 Agent 的命脉：Hub 未就绪时无限重试
 	// （退避上限 30s），只有凭据/邀请类永久失败才退出——

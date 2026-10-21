@@ -26,8 +26,11 @@ type composeAPI struct {
 }
 
 // newComposeAPI 用配置好的白名单目录装配真实客户端。
-func newComposeAPI(dirs []string) *composeAPI {
-	return &composeAPI{op: dockercli.NewComposeClient(dirs)}
+// self 是 Agent 自身容器标识（ID 或名字）：装配后 compose 侧即开启
+// 「不 down/restart 承载自己的 compose 项目」自保护——Agent 停了就没有面板
+// 可以用来救它，故这一层必须自己守住。
+func newComposeAPI(dirs []string, self string) *composeAPI {
+	return &composeAPI{op: dockercli.NewComposeClientWithSelf(dirs, self)}
 }
 
 // list 实现 GET /api/v1/compose。

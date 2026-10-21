@@ -9,7 +9,10 @@ package protocol
 
 // ComposeProject 是一个被发现的 compose 项目（白名单目录内扫描到 compose 文件）。
 type ComposeProject struct {
-	Name       string           `json:"name"`        // 目录名（白名单内唯一标识）
+	// Name 是项目在白名单内的唯一标识（前端拿它做路由段与列表 key）：
+	// 目录名；同目录多份 compose 时为「目录名-角色后缀」（如 dockdeck-agent）。
+	// 同名再出现则追加 -2、-3 序号，保证唯一可解析。
+	Name       string           `json:"name"`
 	Path       string           `json:"path"`        // 项目目录绝对路径
 	ConfigFile string           `json:"config_file"` // compose 文件绝对路径
 	Status     string           `json:"status"`      // running | partial | stopped | unknown
@@ -21,6 +24,13 @@ type ComposeService struct {
 	Name  string `json:"name"`
 	State string `json:"state"` // running | exited | paused | ...
 	Image string `json:"image"`
+	// Container 是该服务对应的容器名（docker compose ps 输出的 Name/Names 首段）。
+	// 空 = compose 版本没给容器名（只有服务名可用）。
+	Container string `json:"container,omitempty"`
+	// ContainerID 是容器短 ID，与 Container 一起用于「本项目是否含 Agent 自身
+	// 容器」的判定——Agent 自身容器在 compose 视角下只是一个普通服务实例，
+	// 不比对容器身份就拦不住「把承载自己的项目 down 掉」这类自伤动作。
+	ContainerID string `json:"container_id,omitempty"`
 }
 
 // ComposeAction 是 POST /compose/{project}/{action} 允许的写动词。

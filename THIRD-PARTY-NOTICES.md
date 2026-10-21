@@ -22,6 +22,7 @@
 | --- | --- | --- |
 | `github.com/coder/websocket` | v1.8.15 | ISC |
 | `golang.org/x/crypto` | v0.27.0 | BSD-3-Clause |
+| `gopkg.in/yaml.v3` | v3.0.1 | MIT |
 | `modernc.org/sqlite` | v1.34.1 | BSD-3-Clause |
 | `github.com/dustin/go-humanize` | v1.0.1 | MIT |
 | `github.com/google/uuid` | v1.6.0 | BSD-3-Clause |
@@ -39,6 +40,11 @@
 
 上述模块以 Go module 形式引入，未修改其源码；各模块的完整许可证原文随模块分发，
 位于 `$GOMODCACHE/<模块>@<版本>/LICENSE`。间接依赖（`// indirect`）由上述模块带入。
+
+`gopkg.in/yaml.v3` 于 v0.2.8 引入：Agent 需要读取 compose 文件顶层的 `name:` 字段
+以区分「面板展示名」与「compose 真实项目名」，并识别跨目录同名冲突。此前 compose
+解析只覆盖 `map[string]string` 形态，遇 services 复杂结构会整体报错，故改用
+`yaml.Node` 逐节点解析。
 
 ## 三、前端运行时依赖（打包进 `web/dist`，内嵌进二进制）
 

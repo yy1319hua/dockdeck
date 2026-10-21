@@ -27,6 +27,22 @@ export function formatPercent(v: number | undefined | null, digits = 1): string 
   return `${v.toFixed(digits)}%`
 }
 
+/**
+ * 核数 → 如「1.5 核」。
+ *
+ * 核数是小数（0.9 核表示平均占用了 0.9 个核），保留一位小数；小于 0.05 核
+ * 显示为 0.0 核而不是 0.00——后者看着像有精确测量值，其实是噪声。
+ */
+export function formatCores(v: number | undefined | null): string {
+  if (v === undefined || v === null || Number.isNaN(v)) {
+    return '—'
+  }
+  if (v > 0 && v < 0.05) {
+    return '0.0 核'
+  }
+  return v.toFixed(1) + ' 核'
+}
+
 /** 速率：字节/秒 → 如 1.2 MiB/s。 */
 export function formatRate(bytesPerSec: number | undefined | null): string {
   if (!bytesPerSec || bytesPerSec <= 0) {

@@ -8,7 +8,12 @@ import { request } from './client'
 export interface ContainerStatWire {
   id: string
   name: string
+  /** 单核口径百分比（与 docker stats 同款），100% = 吃满一个核，可超过 100%。 */
   cpu_percent: number
+  /** 占用核数（= cpu_percent/100），与主机 busy_cores 同量纲，可直接对照。 */
+  cpu_cores: number
+  /** 整机归一口径（= cpu_percent/可见核数），与主机 usage_percent 同量纲。 */
+  cpu_percent_normalized: number
   mem_usage: number
   mem_limit: number
   mem_percent: number
@@ -30,7 +35,13 @@ export interface MetricsLatestWire {
 export interface HostMetricsWire {
   collected_at: string
   cpu: {
+    /** 逻辑线程数。开了超线程时它大于物理核数。 */
     cores: number
+    /** 物理核数；0 = 未能采集（拓扑不可读），此时界面显示「未知」。 */
+    cores_physical: number
+    /** 占用核数（= usage_percent/100 × cores），可与容器的 cpu_cores 对照。 */
+    busy_cores: number
+    /** 整机归一口径：所有逻辑线程加总的忙碌占比，0–100。 */
     usage_percent: number
     user: number
     system: number
@@ -74,6 +85,9 @@ export interface HostMetricsWire {
 export interface HostPointWire {
   ts: string
   cpu_pct: number
+  /** 占用核数；旧行为该列不存在，读出 0 且 busy_cores_known=false。 */
+  busy_cores: number
+  busy_cores_known: boolean
   mem_bytes: number
   mem_total: number
   disk_bytes: number
@@ -89,6 +103,9 @@ export interface ContainerPointWire {
   cid: string
   name: string
   cpu_pct: number
+  /** 占用核数（= cpu_pct/100）；旧行读出 0，由 cpu_cores_known 区分「未知」与「0」。 */
+  cpu_cores: number
+  cpu_cores_known: boolean
   mem_bytes: number
   mem_limit: number
   mem_pct: number

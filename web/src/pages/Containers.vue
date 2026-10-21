@@ -64,7 +64,10 @@
           <td>
             <span class="badge" :class="badgeClass(row.container.state)">{{ row.container.status || row.container.state }}</span>
           </td>
-          <td class="num">{{ row.stat ? formatPercent(row.stat.cpu_percent) : '—' }}</td>
+          <td class="num" :title="row.stat ? cpuTip(row.stat) : ''">
+            {{ row.stat ? formatPercent(row.stat.cpu_percent_normalized) : '—' }}
+            <span v-if="row.stat" class="ct__dim"> / {{ formatCores(row.stat.cpu_cores) }}</span>
+          </td>
           <td class="num">{{ memText(row) }}</td>
           <td class="ct__acts">
             <template v-if="row.container.state === 'running'">
@@ -97,7 +100,7 @@
         </header>
         <p class="ccard__image" :title="row.container.image">{{ row.container.image }}</p>
         <p class="ccard__stats">
-          <span>CPU {{ row.stat ? formatPercent(row.stat.cpu_percent) : '—' }}</span>
+          <span>CPU {{ row.stat ? formatPercent(row.stat.cpu_percent_normalized) : '—' }} / {{ row.stat ? formatCores(row.stat.cpu_cores) : '—' }}</span>
           <span>内存 {{ memText(row) }}</span>
         </p>
         <footer class="ccard__acts">
@@ -205,9 +208,10 @@ import AppConfirm from '@/components/AppConfirm.vue'
 import ContainerLogs from '@/components/ContainerLogs.vue'
 import { containerAction, removeContainer } from '@/api/containers'
 import { isOnline } from '@/api/servers'
-import { formatBytes, formatPercent } from '@/utils/format'
+import { formatBytes, formatCores, formatPercent } from '@/utils/format'
 import { useContainersStore, type ContainerRow } from '@/stores/containers'
 import { useUiStore } from '@/stores/ui'
+import type { ContainerStatWire } from '@/api/metrics'
 
 const ct = useContainersStore()
 const ui = useUiStore()
@@ -300,6 +304,15 @@ function badgeClass(state: string): string {
     default:
       return 'badge--off'
   }
+}
+
+// CPU 口径说明：主值是整机归一（与主机同量纲），同时给出 docker stats 原始口径便于排障。
+function cpuTip(s: ContainerStatWire): string {
+  return [
+    '主值为整机归一口径（与主机 CPU 同量纲，可直接比较）。',
+    `占用核数：${formatCores(s.cpu_cores)}。`,
+    `docker stats 原始口径：${formatPercent(s.cpu_percent)}（单核百分比，100% = 吃满一个核，可超过 100%）。`,
+  ].join('\n')
 }
 
 function memText(row: ContainerRow): string {
@@ -596,6 +609,10 @@ async function onConfirmAction() {
   text-align: right;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+.ct__dim {
+  color: var(--fg-subtle);
 }
 
 .ct__name {

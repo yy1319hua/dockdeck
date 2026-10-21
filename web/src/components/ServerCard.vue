@@ -115,6 +115,8 @@ function pointFromLive(m: HostMetricsWire): HostPointWire {
   return {
     ts: m.collected_at,
     cpu_pct: m.cpu.usage_percent,
+    busy_cores: m.cpu.busy_cores,
+    busy_cores_known: true,
     mem_bytes: m.memory.used,
     mem_total: m.memory.total,
     disk_bytes: disk?.used ?? 0,

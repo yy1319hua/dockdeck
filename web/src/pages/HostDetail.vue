@@ -24,7 +24,7 @@
     <p v-if="h.error" class="host__err">{{ h.error }}</p>
 
     <section class="host__now">
-      <div class="stat">
+      <div class="stat" :title="cpuTip">
         <span class="stat__k">CPU</span>
         <span class="stat__v">{{ cpuText }}</span>
         <span class="stat__sub">{{ coresText }}</span>
@@ -86,7 +86,7 @@
         <thead>
           <tr>
             <th>容器</th>
-            <th class="num">CPU</th>
+            <th class="num" title="整机归一口径（与上方主机 CPU 同量纲）/ 占用核数">CPU</th>
             <th class="num">内存</th>
             <th class="num">进程</th>
           </tr>
@@ -94,7 +94,10 @@
         <tbody>
           <tr v-for="c in h.containersTop" :key="c.id">
             <td class="ctn__name" :title="c.name">{{ c.name }}</td>
-            <td class="num">{{ formatPercent(c.cpu_percent) }}</td>
+            <td class="num" :title="containerCpuTip(c)">
+              {{ formatPercent(c.cpu_percent_normalized) }}
+              <span class="ctn__dim"> / {{ formatCores(c.cpu_cores) }}</span>
+            </td>
             <td class="num">{{ formatBytes(c.mem_usage) }}<span class="ctn__dim"> / {{ formatPercent(c.mem_percent) }}</span></td>
             <td class="num">{{ c.pids }}</td>
           </tr>
@@ -112,9 +115,9 @@
 import { computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import MetricChart from '@/components/MetricChart.vue'
-import { RANGES } from '@/api/metrics'
+import { RANGES, type ContainerStatWire } from '@/api/metrics'
 import { useHostStore } from '@/stores/host'
-import { formatAgo, formatBytes, formatPercent } from '@/utils/format'
+import { formatAgo, formatBytes, formatCores, formatPercent } from '@/utils/format'
 
 const route = useRoute()
 const h = useHostStore()
@@ -145,11 +148,38 @@ watch(id, (v) => {
 const m = computed(() => h.metrics)
 const seenText = computed(() => formatAgo(h.server?.lastSeen))
 
+// CPU 主值用整机归一口径（usage_percent）：所有逻辑线程加总的忙碌占比，
+// 与下方容器列的 cpu_percent_normalized 同量纲，可以直接对照。
 const cpuText = computed(() => formatPercent(m.value?.cpu.usage_percent))
+
+// 副行把百分比翻译成「核」，并把逻辑核数与物理核数分开写。
+// 开了超线程时逻辑核数是物理核数的两倍，只写「N 核」会让人误以为机器有 N 个物理核。
 const coresText = computed(() => {
-  const c = m.value?.cpu.cores
-  return c ? `${c} 核` : '—'
+  const cpu = m.value?.cpu
+  if (!cpu) {
+    return '—'
+  }
+  const busy = cpu.busy_cores > 0 ? `占用 ${formatCores(cpu.busy_cores)}` : ''
+  const logical = cpu.cores > 0 ? `${cpu.cores} 逻辑核` : '逻辑核未知'
+  const physical = cpu.cores_physical > 0 ? `${cpu.cores_physical} 物理核` : '物理核未知'
+  return [busy, `${logical} / ${physical}`].filter(Boolean).join(' · ')
 })
+
+// tooltip 里把口径说清楚：百分比是整机归一，核数是物理占用。
+const cpuTip = [
+  'CPU 百分比为整机归一口径：所有逻辑线程加总的忙碌占比，100% 表示全部线程都在忙。',
+  '「占用核数」= 百分比 × 逻辑核数，表示平均占了几个核。',
+  '逻辑核数是硬件线程数；物理核数是真实计算单元数。开了超线程时前者是后者的两倍。',
+].join('\n')
+
+/** 容器 CPU 的 tooltip：同时给出口径原始值，便于与 docker stats 排障对照。 */
+function containerCpuTip(c: ContainerStatWire): string {
+  return [
+    '主值为整机归一口径（与主机 CPU 同量纲，可直接比较）。',
+    `占用核数：${formatCores(c.cpu_cores)}。`,
+    `docker stats 原始口径：${formatPercent(c.cpu_percent)}（单核百分比，100% = 吃满一个核，可超过 100%）。`,
+  ].join('\n')
+}
 
 const memText = computed(() => {
   const mem = m.value?.memory

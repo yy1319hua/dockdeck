@@ -25,12 +25,51 @@ import (
 //
 // 不带 filters：只读页展示全部卷（含未被使用的），不做 dangling 过滤——
 // 过滤是 prune 的预演，本页不做删除，故不需要那个参数。
+//
+// 卷的使用统计（占用字节 + 引用计数）**不在这个响应里**：Engine 29 起
+// GET /volumes 与 GET /volumes/{id} 的 UsageData 一律为 null，只有
+// GET /system/df 的 Volumes 数组带 UsageData（实测 29.1.3：df 给
+// RefCount=1 / Size=4625068，另两端点都是 null）。故本实现两段走：
+// 清单取元信息 + df 取统计，按卷名合并。
+//
+// df 取统计失败**不拖垮整次列举**：UsageData 留 nil，前端显示「—」
+// （协议约定 nil 即「没统计到」），卷的其余信息照常展示。
 func (c *Client) ListVolumes(ctx context.Context) ([]protocol.VolumeSummary, error) {
 	var out protocol.VolumesList
 	if err := c.getJSON(ctx, "/volumes", &out); err != nil {
 		return nil, err
 	}
+	c.fillVolumeUsage(ctx, out.Volumes)
 	return out.Volumes, nil
+}
+
+// fillVolumeUsage 取 df 里的卷统计，按卷名合并进清单。
+// df 失败只记日志——统计是锦上添花，卷清单本身才是主线。
+func (c *Client) fillVolumeUsage(ctx context.Context, list []protocol.VolumeSummary) {
+	if len(list) == 0 {
+		return
+	}
+	var df struct {
+		Volumes []struct {
+			Name      string                    `json:"Name"`
+			UsageData *protocol.VolumeUsageData `json:"UsageData"`
+		} `json:"Volumes"`
+	}
+	if err := c.getJSON(ctx, "/system/df", &df); err != nil {
+		log.Printf("dockercli: 取卷统计（/system/df）失败，引用数显示为空: %v", err)
+		return
+	}
+	usage := make(map[string]*protocol.VolumeUsageData, len(df.Volumes))
+	for _, v := range df.Volumes {
+		if v.UsageData != nil {
+			usage[v.Name] = v.UsageData
+		}
+	}
+	for i := range list {
+		if u, ok := usage[list[i].Name]; ok {
+			list[i].UsageData = u
+		}
+	}
 }
 
 // ListNetworks 取网络清单（Engine GET /networks），响应是**裸数组**。

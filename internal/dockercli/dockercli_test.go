@@ -44,6 +44,10 @@ type fakeEngine struct {
 	// Engine 29 起接入容器名单只在详情端点给，清单端点一律 null——
 	// 没有它就测不出「名单缺失」这个真实故障。
 	networkDetails map[string][]byte
+	// systemDf 是 GET /system/df 的响应体（JSON 原样）。卷的使用统计
+	// 只在这里给（Engine 29：/volumes 与 /volumes/{id} 的 UsageData 都是
+	// null），没有它就测不出「引用数取不到」这个真实故障。
+	systemDf []byte
 }
 
 func newFakeEngine(t *testing.T, apiVersion string) (*fakeEngine, string) {
@@ -155,6 +159,15 @@ func newFakeEngine(t *testing.T, apiVersion string) (*fakeEngine, string) {
 			return
 		}
 		_, _ = w.Write(f.networks)
+	})
+	// 磁盘占用端点：卷的使用统计只在这里给（Engine 29 行为）。
+	mux.HandleFunc("/system/df", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if f.systemDf == nil {
+			_, _ = w.Write([]byte(`{"LayersSize":0,"Images":[],"Containers":[],"Volumes":[]}`))
+			return
+		}
+		_, _ = w.Write(f.systemDf)
 	})
 	// 网络详情端点：接入容器名单只在这里给（Engine 29 行为）。
 	mux.HandleFunc("/networks/", func(w http.ResponseWriter, r *http.Request) {

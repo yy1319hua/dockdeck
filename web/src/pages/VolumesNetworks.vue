@@ -215,7 +215,8 @@
         </div>
         <p v-if="rs.networks.length === 0" class="vn__empty">这台机上没有容器网络。</p>
         <p class="vn__note">
-          接入名单由 Engine 在清单里一并给出，故展开不额外发请求——这与卷只有计数不同，差异在数据形态。
+          接入名单逐个网络向 Engine 详情端点取得（Engine 29 起清单端点不再附带名单），
+          故展开不额外发请求——这与卷只有计数不同，差异在数据形态。
         </p>
       </section>
     </template>

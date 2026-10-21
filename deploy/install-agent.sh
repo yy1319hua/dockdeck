@@ -3,7 +3,7 @@
 # DockDeck Agent 安装脚本（S10.1）
 #
 # 把 deploy/README.md 的手工几步收敛成一条命令，可重复执行：
-#   预检 → 读已有 .env → 登录 GHCR → 拉镜像
+#   预检 → 读已有 .env → 拉镜像（公开镜像，匿名）
 #   → 落 .env / token / compose → up -d → 查纳管日志
 #
 # 用法：
@@ -23,7 +23,6 @@ set -euo pipefail
 readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 readonly COMPOSE_FILE=docker-compose.agent.yml
 readonly DEFAULT_DIR=/opt/dockdeck
-readonly DEFAULT_GHCR_USER=yy1319hua
 readonly IMAGE_REPO=ghcr.io/yy1319hua/dockdeck-agent
 readonly CONTAINER_NAME=dockdeck-agent
 readonly PROJECT_NAME=dockdeck-agent
@@ -34,9 +33,6 @@ JOIN_SECRET=""
 TAG="latest"
 IMAGE=""
 INSTALL_DIR="$DEFAULT_DIR"
-PULL_USER="$DEFAULT_GHCR_USER"
-PULL_TOKEN_FILE=""
-DO_LOGIN=1
 FORCE=0
 CHECK_ONLY=0
 FS_ROOTS=""
@@ -60,24 +56,21 @@ DockDeck Agent 安装脚本
   --tag <TAG>             镜像 tag，默认 latest（已有 .env 时以 .env 为准）
   --image <REF>           完整镜像引用（可含加速域名），默认 ghcr.io/yy1319hua/dockdeck-agent:<tag>；配了就从指定源拉取
   --dir <PATH>            安装目录，默认 /opt/dockdeck
-  --pull-user <USER>      GHCR 用户名（GitHub 账号），默认 yy1319hua
-  --pull-token-file <P>   从文件读 GHCR token（无人值守）；缺省交互式输入
-  --skip-login            匿名拉取失败时也不尝试登录（公开镜像用不到）
   --fs-roots <LIST>       文件管理根白名单，逗号分隔（留空 = 关闭文件模块）
   --compose-dirs <LIST>   Compose 白名单目录，逗号分隔（留空 = Compose 页为空）
   --self-container <NAME> 自身容器名，默认 dockdeck-agent（保护它不被面板误操作）
   --disk-mounts <LIST>    磁盘挂载点白名单，逗号分隔（留空 = 自动探测）
-  --check                 只渲染 compose 自检，不登录、不拉取、不启动
+  --check                 只渲染 compose 自检，不拉取、不启动
   --force                 重写已存在的 .env
   -h, --help              显示本帮助
 
-退出码：0 成功；非 0 预检/登录/拉取/启动/探活失败。
+退出码：0 成功；非 0 预检/拉取/启动/探活失败。
 EOF
 }
 
 while (( $# > 0 )); do
     case "$1" in
-        -h|--help|--skip-login|--check|--force) ;;
+        -h|--help|--check|--force) ;;
         --*) (( $# >= 2 )) || die "$1 缺少参数" ;;
     esac
     case "$1" in
@@ -87,9 +80,6 @@ while (( $# > 0 )); do
         --tag) TAG="$2"; shift 2 ;;
         --image) IMAGE="$2"; shift 2 ;;
         --dir) INSTALL_DIR="$2"; shift 2 ;;
-        --pull-user) PULL_USER="$2"; shift 2 ;;
-        --pull-token-file) PULL_TOKEN_FILE="$2"; shift 2 ;;
-        --skip-login) DO_LOGIN=0; shift ;;
         --check) CHECK_ONLY=1; shift ;;
         --force) FORCE=1; shift ;;
         --fs-roots) FS_ROOTS="$2"; shift 2 ;;
@@ -112,7 +102,6 @@ docker compose version >/dev/null 2>&1 \
 
 [[ -n "$TAG" ]] || die "--tag 不能为空"
 [[ -n "$INSTALL_DIR" ]] || die "--dir 不能为空"
-[[ -n "$PULL_USER" ]] || die "--pull-user 不能为空"
 
 # ---------------------------------------------------------------- Hub 地址
 normalize_hub_url() {
@@ -204,7 +193,7 @@ fi
 
 # ---------------------------------------------------------------- 自检模式
 if (( CHECK_ONLY )); then
-    info "自检模式：只渲染 compose，不登录、不拉取、不启动"
+    info "自检模式：只渲染 compose，不拉取、不启动"
     DD_HUB_URL="${HUB_URL:-https://127.0.0.1:8443}" \
     DD_AGENT_JOIN_SECRET="${JOIN_SECRET:-selfcheck-placeholder}" \
     DD_AGENT_IMAGE="$IMAGE" \
@@ -221,48 +210,16 @@ docker info >/dev/null 2>&1 || die "无法连接 Docker 守护进程（需要 ro
 
 # v0.2.6 起 Agent 不监听端口（反向长连接），原先的 9527 占用检查已无意义，删除。
 
-# ---------------------------------------------------------------- GHCR 登录
-ghcr_login() {
-    local token=""
-    if [[ -n "$PULL_TOKEN_FILE" ]]; then
-        [[ -r "$PULL_TOKEN_FILE" ]] || die "--pull-token-file 不可读：$PULL_TOKEN_FILE"
-        token="$(tr -d '\r\n' < "$PULL_TOKEN_FILE")"
-    else
-        [[ -t 0 ]] || die "当前不是交互终端；请用 --pull-token-file 提供 token，或加 --skip-login"
-        printf 'GHCR 用户名（GitHub 账号）[%s]：' "$PULL_USER" >&2
-        local input=""
-        read -r input || true
-        [[ -n "$input" ]] && PULL_USER="$input"
-        printf 'GHCR token（输入不回显，需 read:packages）：' >&2
-        read -rs token
-        printf '\n' >&2
-    fi
-    [[ -n "$token" ]] || die "GHCR token 为空"
-
-    if ! printf '%s' "$token" | docker login ghcr.io -u "$PULL_USER" --password-stdin >/dev/null; then
-        die "docker login ghcr.io 失败。请确认用户名与 PAT，且 PAT 具备 read:packages 权限"
-    fi
-    info "已登录 ghcr.io（用户 $PULL_USER）"
-}
-
-# 2026-10-19 起镜像随公开库发布，匿名即可拉：先直接 pull，只有失败才谈登录。
-# 这样部署机不必再持有任何 GHCR 凭据——凭据越少越好。
+# 镜像随公开库发布，匿名即可拉——部署机不必持有任何 GHCR 凭据。
+# 凭据越少越好：脚本里不出现 docker login，部署机就永远不会被要求交出 PAT。
 info "拉取镜像：$IMAGE（公开镜像，匿名拉取）"
 if ! docker pull "$IMAGE"; then
-    warn "匿名拉取失败：$IMAGE"
-    if (( DO_LOGIN )) && { [[ -t 0 ]] || [[ -n "$PULL_TOKEN_FILE" ]]; }; then
-        warn "改为登录 ghcr.io 后重试（仅在镜像转回私有、或本地残留失效凭据时才需要）"
-        ghcr_login
-        if ! docker pull "$IMAGE"; then
-            warn "登录后仍然失败；检查网络与镜像 tag 是否已发布"
-            exit 1
-        fi
-    else
-        warn "若提示 unauthorized / denied / 401，说明该镜像需要登录："
-        warn "  docker login ghcr.io    # 用户名 = GitHub 账号，PAT 需 read:packages"
-        warn "  然后重跑本脚本（不要加 --skip-login）"
-        exit 1
-    fi
+    warn "拉取失败：$IMAGE"
+    warn "该镜像为公开镜像，正常情况无需登录。请按顺序排查："
+    warn "  1) 网络能否访问 registry（国内可用 --image 指定加速域名）"
+    warn "  2) tag 是否已发布（当前：$TAG）"
+    warn "  3) 宿主机上是否有失效的旧凭据干扰：docker logout ghcr.io 后重试"
+    exit 1
 fi
 
 # ---------------------------------------------------------------- 落盘

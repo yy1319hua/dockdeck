@@ -50,27 +50,28 @@ sudo ./install-hub.sh --bind-ip 100.64.0.1      # 绑定 IP，默认自动取 ta
 
 ### 3.2 Agent 机
 
-```bash
-cd deploy
-sudo ./install-agent.sh --hub-url https://100.64.0.1:8443 --server-name node2
-```
+Agent 用容器部署，不走安装脚本：Hub 面板「添加服务器」按当前参数现生成
+`docker run` / `compose` 命令，贴到目标机执行即可。命令里的 Hub 地址取自面板
+当前访问地址（公网隧道 / 内网 / tailnet 都成立），纳管密钥 30 分钟内有效。
 
-`--hub-url` 指向 Hub 的 Tailnet/内网地址；`--server-name` 是在 Hub 侧显示的服务器名。
+需要手工部署时用 `deploy/docker-compose.agent.yml`（见
+`deploy/README.md`「手工步骤」）。
 
 ## 4. 安装脚本做了什么
 
-`install-hub.sh` / `install-agent.sh` 把手工步骤收敛成一条命令，可重复执行：
+`install-hub.sh` 把手工步骤收敛成一条命令，可重复执行（Agent 侧改用面板生成的
+容器命令，见 3.2）：
 
 1. **预检**：docker / compose v2 / docker socket。
 2. **解析绑定 IP**（仅 Hub）：默认 `tailscale ip -4` 第一条；`--bind-ip` 可强制；校验 IP 属本机网卡。
 3. **拉镜像**：公开镜像直接匿名 `pull`（2026-10-19 起不再需要 GHCR 凭据）。
-4. **登录兜底**：仅当匿名失败且当前是交互终端时，才提示 `docker login` 后重试；仍失败即停。
-5. **落盘**：`.env`（600）、Agent 侧 `secrets/agent.token`（600，无尾随换行）。
+4. **拉取失败即停**：公开镜像匿名拉取；失败时给出排查指引（网络 / tag / 残留旧凭据），不做登录兜底。
+5. **落盘**：`.env`（600）、`secrets/agent.token`（600，无尾随换行）。
 6. **启动**：`compose up -d`。
 7. **就绪确认**：Hub 探 `/api/v1/health`（恒 200）；Agent 无监听端口，以**容器进入 running + 日志出现「已纳管」**判活。
 
 - **幂等**：已有 `.env` 不覆盖（重跑 = 按 `.env` 里的 tag 拉取 + `up -d`）；`--force` 才重写并留 `.bak`。
-- **仅自检**：`./install-hub.sh --check` 只渲染 compose，不登录 / 不拉取 / 不启动。
+- **仅自检**：`./install-hub.sh --check` 只渲染 compose，不拉取 / 不启动。
 - 纳管自注册在 Agent 启动期**同步完成**（v0.2.6 起）：Hub 不可达会无限重试，凭据/邀请类错误直接退出——脚本按容器状态与启动日志汇报。
 
 ## 5. 手工部署（脚本不可用时）

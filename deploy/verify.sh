@@ -144,7 +144,7 @@ docker info >/dev/null 2>&1 || die "无法连接 Docker 守护进程（需要 ro
 require_cmd curl
 
 ENV_FILE="$DIR/.env"
-[[ -r "$ENV_FILE" ]] || die "找不到 $ENV_FILE；请先跑 install-hub.sh / install-agent.sh 生成 .env"
+[[ -r "$ENV_FILE" ]] || die "找不到 $ENV_FILE；请先跑 install-hub.sh 生成 .env（Agent 侧用面板生成的容器命令）"
 tls="$(env_get DD_HUB_TLS_MODE "$ENV_FILE" || true)"
 [[ -n "$tls" ]] && TLS_MODE="$tls"
 scheme=https; [[ "$TLS_MODE" == "none" ]] && scheme=http

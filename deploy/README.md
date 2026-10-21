@@ -14,26 +14,21 @@ v0.2.6 起模板拆成两份（原因见下「设计要点」）：
 Agent 只有**反向长连接**一种形态（v0.2.6 起）：不监听端口，启动后主动连 Hub
 的 WebSocket，NAT 后 / 无公网 IP 同样可纳管。因此 Agent 机不需要绑定 IP。
 
-## 用安装脚本（推荐）
+## Hub 用安装脚本，Agent 用容器部署
 
-`install-hub.sh` / `install-agent.sh` 把下面的手工四步收敛成一条命令，可重复执行：
+Hub 机用 `install-hub.sh` 一条命令装好：
 
 ```bash
-# Hub 机
 sudo ./install-hub.sh --bind-ip 100.64.0.1
-
-# 每台 Agent 机（join_secret 在 Hub「添加服务器」里生成，30 分钟内有效）
-sudo ./install-agent.sh --hub-url https://100.64.0.1:8443 --server-name node2
 ```
 
-脚本做的事：预检（docker / compose v2 / socket）→ 取绑定 IP（仅 Hub，默认
-`tailscale ip -4`）→ 交互式登录 GHCR（`read -s` + `--password-stdin`，token 不进
-命令行也不落盘）→ 拉镜像（失败即停并提示重新登录）→ 写 `.env` 与
-`secrets/agent.token`（均 600）→ `compose up -d` → 就绪确认。
+Agent 机则直接用容器部署：Hub 面板「添加服务器」给出 `docker run` / `compose`
+两种命令，贴到目标机执行即可（join_secret 在面板生成，30 分钟内有效）。
+Agent 不再分发安装脚本——命令由面板按当前参数现生成，不会与面板版本错配。
 
-就绪确认口径不同：Hub 探 `/api/v1/health`（恒 200，只证明进程与 TLS 起来了）；
-Agent 无监听端口，以「容器进入 running + 日志出现已纳管」判活——纳管在启动期同步
-完成（v0.2.6 起是硬前提，Hub 不可达会重试、凭据错直接退出）。
+Hub 脚本做的事：预检（docker / compose v2 / socket）→ 取绑定 IP（默认
+`tailscale ip -4`）→ 拉镜像（公开镜像，匿名）→ 写 `.env` 与 `secrets/agent.token`
+（均 600）→ `compose up -d` → 就绪确认（探 `/api/v1/health`，恒 200）。
 
 在装不了 docker 守护进程的机器上可以只做渲染自检：`./install-hub.sh --check`。
 重跑不会覆盖已有 `.env`（要重写加 `--force`）；完整参数见 `--help`。
@@ -98,7 +93,6 @@ Hub 数据（SQLite / 主密钥 / 自签证书 / 整库备份）在命名卷 `do
 | `docker-compose.yml` | Hub 模板本体（入库，v0.2.6 起只含 Hub + Tunnel） |
 | `docker-compose.agent.yml` | Agent 模板（入库，v0.2.6 起拆分；单服务、反向长连接） |
 | `install-hub.sh` | Hub 一键安装（S10.1，入库） |
-| `install-agent.sh` | Agent 一键安装（S10.1，入库） |
 | `.env.example` | 环境变量样例（入库）；实用时复制为 `.env`（**不入库**） |
 | `README.md` | 本文件 |
 | `.env` / `secrets/` | 本地凭据，`.gitignore` 覆盖，**永不入库** |

@@ -43,8 +43,8 @@ Hub 与 Agent 都跑在宿主机上（默认 tailscale IP，也支持内网 IP +
 # Hub（在你想当管理机的那台上）
 deploy/install-hub.sh                      # 取 tailnet / 内网 IP → 生成密钥 → 建卷 → compose up
 
-# Agent（在每台被管理的机器上，由 Hub 侧推送或手动执行）
-deploy/install-agent.sh --name <节点名> --hub https://<hub-tailnet-ip>:8443
+# Agent（在每台被管理的机器上）
+#   用 Hub 面板「添加服务器」生成的 docker run / compose 命令（按当前参数现生成）
 ```
 
 脚本细节、参数与回滚见 `docs/DEPLOY.md`。首次访问用 Hub 安装时输出的自签证书指纹核对，

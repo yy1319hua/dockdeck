@@ -15,7 +15,6 @@
 #
 #   Agent 机（另备 secrets/agent.token 后用）：
 #   docker compose -f docker-compose.agent.yml up -d
-#   一键安装亦可：bash install-agent.sh
 #
 # 设计要点与取舍（详见 docs/ARCHITECTURE.md「网络与暴露」与 `.github/workflows/ci.yml` 的发布流程）：
 #   * network_mode: host + 应用层绑 IP——Hub 禁绑 0.0.0.0（config.Validate），

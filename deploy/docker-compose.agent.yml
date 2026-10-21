@@ -9,7 +9,6 @@
 #   docker compose -f docker-compose.agent.yml up -d
 #   docker compose -p dockdeck-agent -f docker-compose.agent.yml config  # 自检
 #
-#   一键安装亦可：bash install-agent.sh
 #
 # 为什么从 docker-compose.yml 拆出（v0.2.6）：
 #   compose 对未激活 profile 的服务也做变量插值——旧模板里 Agent 的
@@ -95,8 +94,8 @@ services:
     logging: *logging
     # 启动时向 Hub 自注册纳管（S5.8）：在 .env 填 DD_HUB_URL / DD_AGENT_JOIN_SECRET。
     # v0.2.6 起 Hub 地址是硬前提（反向唯一形态，没有第二步）——留空则 Agent
-    # 启动即失败并提示，不会静默起一个连不出去的容器。install-agent.sh 会
-    # 把面板给的 Hub 地址写进 .env，正常流程碰不到这个默认值。
+    # 启动即失败并提示，不会静默起一个连不出去的容器。面板生成的命令会
+    # 把当前 Hub 地址与纳管密钥带进环境变量，正常流程碰不到这个默认值。
     environment:
       DD_HUB_URL: "${DD_HUB_URL:-}"
       DD_AGENT_JOIN_SECRET: "${DD_AGENT_JOIN_SECRET:-}"

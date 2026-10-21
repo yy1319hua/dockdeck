@@ -286,4 +286,4 @@ printf '  安装目录   %s\n' "$INSTALL_DIR"
 if [[ "$TLS_MODE" == "self" ]]; then
     printf '  自签证书   浏览器首次访问会告警；指纹在 设置 → 安全，或 docker logs dockdeck-hub\n'
 fi
-printf '\n下一步：其余节点各自执行 deploy/install-agent.sh 装 Agent。\n'
+printf '\n下一步：在面板「添加服务器」生成容器命令，装到其余节点。\n'

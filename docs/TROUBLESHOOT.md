@@ -94,7 +94,7 @@ docker compose -p dockdeck-agent -f docker-compose.agent.yml down   # 停 Agent
 # 彻底清数据（危险）：docker volume rm dockdeck-hub-data
 ```
 
-重建：重跑 `install-hub.sh` / `install-agent.sh`（已有 `.env` 不覆盖，除非 `--force`）。
+重建：Hub 重跑 `install-hub.sh`（已有 `.env` 不覆盖，除非 `--force`）；Agent 用面板「添加服务器」重新生成容器命令执行。
 
 ## 12. 参见
 

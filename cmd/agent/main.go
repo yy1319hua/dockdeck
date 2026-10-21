@@ -40,9 +40,15 @@ func run(args []string) error {
 		return err
 	}
 
+	// compose 目录配置里的可疑项（相对路径、指向根目录等）在启动时说清楚——
+	// 配置错了要能被看见，而不是安静地扫了个寂寞。
+	for _, w := range cfg.ComposeDirWarnings {
+		log.Printf("agent: compose 目录配置提醒: %s", w)
+	}
+
 	handler := buildHandler(cfg.Token, collector.New(cfg.DiskMounts), newEngineStatsSource(cfg.DockerSocket),
 		newContainersAPI(cfg.DockerSocket, cfg.SelfContainer), newImagesAPI(cfg.DockerSocket),
-		newComposeAPI(cfg.ComposeDirs, cfg.SelfContainer), fapi, newResourcesAPI(cfg.DockerSocket))
+		newComposeAPI(cfg.ComposeDirs, cfg.SelfContainer, cfg.DockerSocket), fapi, newResourcesAPI(cfg.DockerSocket))
 
 	// 反向模式下「能连上 Hub 并完成纳管」就是 Agent 的命脉：Hub 未就绪时无限重试
 	// （退避上限 30s），只有凭据/邀请类永久失败才退出——

@@ -84,7 +84,16 @@ type AgentConfig struct {
 	// ComposeDirs 是 Compose 项目白名单目录：只有这些目录内（含递归）的
 	// compose 文件才会被列举与操作。空 = Compose 功能关闭（list 永远空）。
 	// 安全边界：路径穿越在 resolveProject 入口被挡，绝不出白名单。
+	//
+	// 相对路径在入口被归一化成绝对路径（按进程 CWD 解析）——compose 目录
+	// 写相对路径时，扫描范围取决于进程工作目录，这在容器里通常是 "/",
+	// 容易扫出一堆意料之外的东西。归一化后语义确定，并在
+	// ComposeDirWarnings 里给出提醒。
 	ComposeDirs []string
+	// ComposeDirWarnings 是 compose 目录配置里的可疑项提示（相对路径、
+	// 归一化后指向根目录等）。启动时打印给运维看——配置错了要能被看见，
+	// 而不是安静地扫了个寂寞。
+	ComposeDirWarnings []string
 	// FsRoots 是文件管理模块的根白名单目录（可多个，绝对路径）。
 	// 空 = 模块关闭：cmd/agent 不注册任何 /files 路由，功能在网络层就不存在
 	// （红线「未配 --fs-root 时该模块不注册路由」）。
@@ -252,6 +261,7 @@ func LoadAgent(args []string) (AgentConfig, error) {
 		c.Token = c.JoinSecret
 	}
 
+	c.normalizeComposeDirs()
 	if err := c.normalizeFs(); err != nil {
 		return AgentConfig{}, err
 	}
@@ -259,6 +269,44 @@ func LoadAgent(args []string) (AgentConfig, error) {
 		return AgentConfig{}, err
 	}
 	return c, nil
+}
+
+// normalizeComposeDirs 归一化 compose 白名单目录：相对路径按进程 CWD 解析成
+// 绝对路径，并把可疑项记进 ComposeDirWarnings。
+//
+// 为什么必须归一化：compose 白名单里的相对路径（如 "."）在容器里按进程
+// CWD（通常是 "/"）解释，等于「递归扫描容器根文件系统」——扫出什么全看
+// 运气，运维自己都说不清面板上那些项目是哪来的。归一化把语义变成确定的
+// 绝对路径，并把「你写的是相对路径」这件事明确告诉运维。
+//
+// 为什么不直接拒绝相对路径：那会让既有配置直接启动失败。归一化 + 告警
+// 保留了兼容性，同时把「隐式猜测」变成「显式且有日志的行为」。
+func (c *AgentConfig) normalizeComposeDirs() {
+	out := make([]string, 0, len(c.ComposeDirs))
+	for _, raw := range c.ComposeDirs {
+		d := strings.TrimSpace(raw)
+		if d == "" {
+			continue
+		}
+		if !filepath.IsAbs(d) {
+			abs, err := filepath.Abs(d)
+			if err != nil {
+				c.ComposeDirWarnings = append(c.ComposeDirWarnings,
+					fmt.Sprintf("compose 目录 %q 无法解析为绝对路径，已忽略", raw))
+				continue
+			}
+			c.ComposeDirWarnings = append(c.ComposeDirWarnings,
+				fmt.Sprintf("compose 目录 %q 是相对路径，已按进程工作目录解析为 %q；建议直接写绝对路径", raw, abs))
+			d = abs
+		}
+		d = filepath.Clean(d)
+		if d == "/" {
+			c.ComposeDirWarnings = append(c.ComposeDirWarnings,
+				"compose 目录解析后为根目录 /，将递归扫描整个文件系统；建议改为具体项目目录")
+		}
+		out = append(out, d)
+	}
+	c.ComposeDirs = dedupeStrings(out)
 }
 
 // normalizeFs 归一化文件管理配置：根目录必须是绝对路径并去掉冗余段，

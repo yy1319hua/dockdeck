@@ -98,6 +98,12 @@ type ComposeOperator interface {
 type ComposeClient struct {
 	dirs   []string
 	runner composeRunner
+	// labelDirs 返回由容器 compose label 反推的目录（可空）。
+	//
+	// 为 nil 则不做 label 来源发现，Compose 功能退回纯白名单扫描（既有行为）。
+	// 做成函数而非切片：label 反映的是「此刻哪些 compose 项目在跑」，
+	// 每次列举时重新取，才能跟得上宿主上新起的项目。
+	labelDirs func(ctx context.Context) ([]string, error)
 	// selfContainer 是 Agent 自身容器的 ID 或名字（可空）。
 	// 用于自保护：down/restart 一个「含自身容器」的 compose 项目会让承载
 	// Agent 的容器被停掉——Agent 随即失联，面板再也操作不了这台机器，
@@ -119,6 +125,18 @@ func NewComposeClient(dirs []string) *ComposeClient {
 func NewComposeClientWithSelf(dirs []string, self string) *ComposeClient {
 	c := NewComposeClient(dirs)
 	c.selfContainer = self
+	return c
+}
+
+// NewComposeClientWithLabelDirs 在 NewComposeClientWithSelf 的基础上接入
+// label 来源的目录发现。
+//
+// labelDirs 为 nil 时行为与 NewComposeClientWithSelf 完全一致（纯白名单）。
+// 传入后，每次列举项目都会重新取一次 label 反推的目录——label 反映的是
+// 「此刻哪些 compose 项目在跑」，固化的快照会漏掉宿主上新起的项目。
+func NewComposeClientWithLabelDirs(dirs []string, self string, labelDirs func(ctx context.Context) ([]string, error)) *ComposeClient {
+	c := NewComposeClientWithSelf(dirs, self)
+	c.labelDirs = labelDirs
 	return c
 }
 
@@ -195,11 +213,61 @@ func projectNameFor(dir string, suffix string) string {
 	return base + "-" + suffix
 }
 
-// discover 在白名单目录内递归找 compose 文件，返回绝对路径切片（已去重）。
-func (c *ComposeClient) discover() ([]string, error) {
+// composeEntry 是一个被发现的 compose 文件及其发现来源。
+//
+// 一个文件可能同时命中两个来源（既在白名单目录里，宿主又有它的容器在跑）——
+// 交集态是最可信的一种（人工确认过 + 引擎也认），故来源是列表而非单值。
+type composeEntry struct {
+	path    string
+	sources []protocol.ComposeSource
+}
+
+// discover 在所有来源目录内递归找 compose 文件，返回带来源的条目（已去重）。
+//
+// 来源有两处：白名单目录（运维显式配置）与 label 反推目录（容器正在跑）。
+// 两个来源扫到的同一个文件合并为一条，来源取并集。
+func (c *ComposeClient) discover(ctx context.Context) ([]composeEntry, error) {
+	seen := make(map[string]*composeEntry)
+	var order []string
+	add := func(entries []composeEntry) {
+		for _, e := range entries {
+			if ex, ok := seen[e.path]; ok {
+				ex.sources = mergeSources(ex.sources, e.sources)
+				continue
+			}
+			cp := e
+			seen[e.path] = &cp
+			order = append(order, e.path)
+		}
+	}
+	wl, err := scanComposeDirs(c.dirs, protocol.SourceWhitelist)
+	if err != nil {
+		return nil, err
+	}
+	add(wl)
+	if c.labelDirs != nil {
+		dirs, derr := c.labelDirs(ctx)
+		if derr == nil {
+			lb, lerr := scanComposeDirs(dirs, protocol.SourceLabel)
+			if lerr == nil {
+				add(lb)
+			}
+		}
+		// label 来源取不到目录时静默降级为纯白名单：不该因为「拿不到补充来源」
+		// 就让整个 compose 列举失败——白名单这条路仍然是通的。
+	}
+	out := make([]composeEntry, 0, len(order))
+	for _, p := range order {
+		out = append(out, *seen[p])
+	}
+	return out, nil
+}
+
+// scanComposeDirs 在给定目录内递归找 compose 文件，返回带来源的条目。
+func scanComposeDirs(dirs []string, src protocol.ComposeSource) ([]composeEntry, error) {
 	seen := make(map[string]bool)
-	var out []string
-	for _, dir := range c.dirs {
+	var out []composeEntry
+	for _, dir := range dirs {
 		err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 			if err != nil {
 				// 单个目录不可读（权限/不存在）不应拖垮整次列举。
@@ -212,7 +280,7 @@ func (c *ComposeClient) discover() ([]string, error) {
 				ap, aerr := filepath.Abs(path)
 				if aerr == nil && !seen[ap] {
 					seen[ap] = true
-					out = append(out, ap)
+					out = append(out, composeEntry{path: ap, sources: []protocol.ComposeSource{src}})
 				}
 			}
 			return nil
@@ -224,16 +292,79 @@ func (c *ComposeClient) discover() ([]string, error) {
 	return out, nil
 }
 
+// mergeSources 合并两个来源列表（去重、保序）。
+func mergeSources(a, b []protocol.ComposeSource) []protocol.ComposeSource {
+	out := append([]protocol.ComposeSource{}, a...)
+	for _, s := range b {
+		dup := false
+		for _, e := range out {
+			if e == s {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 // projectFromFile 由 compose 文件路径推出项目元信息。
 func projectFromFile(file string) protocol.ComposeProject {
 	dir := filepath.Dir(file)
 	suffix, _ := composeSuffixOf(filepath.Base(file))
 	return protocol.ComposeProject{
-		Name:       projectNameFor(dir, suffix),
-		Path:       dir,
-		ConfigFile: file,
-		Status:     "unknown",
+		Name:        projectNameFor(dir, suffix),
+		Path:        dir,
+		ConfigFile:  file,
+		Status:      "unknown",
+		ComposeName: composeProjectName(file),
 	}
+}
+
+// composeProjectName 返回 compose 自己认的项目名：文件顶层 name: 优先，
+// 没有则退回目录基名（compose 的默认规则）。
+//
+// 这与面板展示用的名字（目录名-角色后缀）不是一回事：compose 执行时以
+// 文件里的 name: 为准，两个名字不一致时「面板看到的」与「实际操作的」
+// 就不是同一个对象——备份副本把 name: 写成线上项目名即由此而来。
+func composeProjectName(file string) string {
+	if n := composeNameFromFile(file); n != "" {
+		return n
+	}
+	return filepath.Base(filepath.Dir(file))
+}
+
+// composeConflictGroups 按 compose 项目名把已发现的 compose 文件分组，
+// 只返回「跨目录同名」的组——那才是真正会互相误伤的冲突。
+//
+// 同目录多份 compose（docker-compose.yml 与 docker-compose.agent.yml）
+// 不算冲突：那是运维有意为之的多角色布局，面板本来就用「目录名-后缀」
+// 区分它们。若把它们也判为冲突，会把大量正常部署的写操作全部锁死。
+//
+// 跨目录同名才是危险的那一类：备份目录里的副本若与线上项目同名，compose
+// 会把它们当成同一个项目，操作副本实际作用到线上容器（曾导致「在备份项目
+// 上点停止 → 线上 Hub 被停」）。
+func composeConflictGroups(entries []composeEntry) map[string][]string {
+	byName := make(map[string][]string)
+	dirsOf := make(map[string]map[string]bool)
+	for _, e := range entries {
+		name := composeProjectName(e.path)
+		byName[name] = append(byName[name], e.path)
+		if dirsOf[name] == nil {
+			dirsOf[name] = make(map[string]bool)
+		}
+		dirsOf[name][filepath.Dir(e.path)] = true
+	}
+	out := make(map[string][]string)
+	for name, paths := range byName {
+		if len(dirsOf[name]) < 2 {
+			continue
+		}
+		out[name] = paths
+	}
+	return out
 }
 
 // composePsRow 是 `docker compose ps --format json` 输出的一行（按字段名解析，
@@ -335,18 +466,30 @@ func summarizeStatus(svcs []protocol.ComposeService) string {
 // ListProjects 列举白名单内所有 compose 项目及其运行状态。空清单返回
 // 非 nil 空切片（与镜像 list 同口径：[] 而非 null）。
 func (c *ComposeClient) ListProjects(ctx context.Context) ([]protocol.ComposeProject, error) {
-	files, err := c.discover()
+	entries, err := c.discover(ctx)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]protocol.ComposeProject, 0, len(files))
+	groups := composeConflictGroups(entries)
+	out := make([]protocol.ComposeProject, 0, len(entries))
 	// 项目名是白名单内的唯一标识（前端拿它做路由段与列表 key），
 	// 故重名必须消解：同名者依次追加 -2、-3 后缀。
 	// 早前同名的后者「不可达」——面板永远操作不到那个项目，是真 bug。
-	seen := make(map[string]int, len(files))
-	taken := make(map[string]bool, len(files))
-	for _, f := range files {
-		proj := projectFromFile(f)
+	seen := make(map[string]int, len(entries))
+	taken := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		proj := projectFromFile(e.path)
+		proj.Sources = e.sources
+		// 跨目录同名的项目一律标冲突：compose 会把它们当成同一个项目，
+		// 操作其一实际作用到另一组容器。冲突项目可见但禁止写操作。
+		if peers, ok := groups[proj.ComposeName]; ok {
+			proj.Conflict = true
+			for _, peer := range peers {
+				if peer != e.path {
+					proj.ConflictPaths = append(proj.ConflictPaths, peer)
+				}
+			}
+		}
 		seen[proj.Name]++
 		if seen[proj.Name] > 1 {
 			proj.Name = fmt.Sprintf("%s-%d", proj.Name, seen[proj.Name])
@@ -356,7 +499,7 @@ func (c *ComposeClient) ListProjects(ctx context.Context) ([]protocol.ComposePro
 			}
 		}
 		taken[proj.Name] = true
-		st, serr := c.status(ctx, f)
+		st, serr := c.status(ctx, e.path)
 		if serr == nil {
 			proj.Status = st.Status
 			proj.Services = st.Services
@@ -412,6 +555,12 @@ func (c *ComposeClient) runAction(ctx context.Context, file, action string) (str
 	if err := c.checkNotSelf(ctx, file, action); err != nil {
 		return "", err
 	}
+	// 冲突闸门：同名项目分处不同目录时，compose 会把它们当成同一个项目，
+	// 操作其一实际作用到另一组容器（备份副本与线上同名即此）。冲突项目
+	// 一律拒绝写操作——只读不受影响，故运维仍能看清问题。
+	if err := c.checkNotConflict(ctx, file, action); err != nil {
+		return "", err
+	}
 	out, err := c.runner.Captured(ctx, args...)
 	if err != nil {
 		return string(out), fmt.Errorf("dockercli: compose %s 失败: %w (输出: %s)", action, err, string(out))
@@ -452,6 +601,35 @@ func (c *ComposeClient) checkNotSelf(ctx context.Context, file, action string) e
 	for _, sv := range proj.Services {
 		if g.IsSelf(sv.Container) || (sv.ContainerID != "" && g.IsSelf(sv.ContainerID)) {
 			return fmt.Errorf("dockercli: 拒绝执行 compose %s——该项目含 Agent 自身容器 %s，停掉它会让 Agent 失联且无法从面板恢复；请在宿主机手工执行", action, sv.Container)
+		}
+	}
+	return nil
+}
+
+// checkNotConflict 拒绝在「同名冲突」的项目上执行写动作。
+//
+// 冲突定义：同一个 compose 项目名（文件顶层 name:，无则目录名）对应到
+// 多个不同目录下的 compose 文件。compose 自己按项目名管理容器，
+// 因此这几份文件在 compose 眼里是同一个项目——在备份副本上执行 down，
+// 停掉的是线上容器。这不是显示问题，是真实的误伤路径。
+//
+// 只拦写动作：读（列表、文件内容、日志）不受影响，运维仍需看得见问题。
+func (c *ComposeClient) checkNotConflict(ctx context.Context, file, action string) error {
+	entries, err := c.discover(ctx)
+	if err != nil {
+		// 列举失败不等于「确认冲突」，放行：宁可漏拦也不误伤正常操作。
+		return nil
+	}
+	groups := composeConflictGroups(entries)
+	name := composeProjectName(file)
+	peers, ok := groups[name]
+	if !ok {
+		return nil
+	}
+	// 只有目标文件本身属于该冲突组时才拦——组里其它文件不在此处操作。
+	for _, p := range peers {
+		if p == file {
+			return fmt.Errorf("dockercli: 拒绝执行 compose %s——项目名 %q 在多个目录下重名（%s），compose 会把它们当成同一个项目，操作其一会作用到另一组容器；请先在宿主机消除重名", action, name, strings.Join(peers, ", "))
 		}
 	}
 	return nil
@@ -512,6 +690,11 @@ func (c *ComposeClient) Diff(ctx context.Context, file string, content string) (
 // writeBackupExclusive 的 O_EXCL，保证同名不覆盖。写成功后跑一次轮转
 // （rotateComposeBackups），把备份数压回 maxComposeBackups 以内。
 func (c *ComposeClient) WriteFile(ctx context.Context, file string, content string) (string, error) {
+	// 写 compose 文件同样是写操作，且危害更大：备份副本与线上同名时，
+	// 改副本等于改线上项目的定义。故冲突项目一并拒绝。
+	if err := c.checkNotConflict(ctx, file, "写文件"); err != nil {
+		return "", err
+	}
 	cur, err := c.ReadFile(ctx, file)
 	if err != nil {
 		return "", err

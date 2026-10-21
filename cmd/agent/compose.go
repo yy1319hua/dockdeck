@@ -12,6 +12,7 @@
 package main
 
 import (
+	"context"
 	"io"
 	"log"
 	"net/http"
@@ -29,8 +30,25 @@ type composeAPI struct {
 // self 是 Agent 自身容器标识（ID 或名字）：装配后 compose 侧即开启
 // 「不 down/restart 承载自己的 compose 项目」自保护——Agent 停了就没有面板
 // 可以用来救它，故这一层必须自己守住。
-func newComposeAPI(dirs []string, self string) *composeAPI {
-	return &composeAPI{op: dockercli.NewComposeClientWithSelf(dirs, self)}
+//
+// socket 传入时额外接入「label 来源发现」：从宿主容器上的 compose label
+// 反推项目目录，让运维不必手工把每个目录写进白名单。socket 为空则只
+// 保留白名单来源（行为与既有版本一致）。
+func newComposeAPI(dirs []string, self string, socket string) *composeAPI {
+	if socket == "" {
+		return &composeAPI{op: dockercli.NewComposeClientWithSelf(dirs, self)}
+	}
+	dc := dockercli.New(socket)
+	labelDirs := func(ctx context.Context) ([]string, error) {
+		// 只列运行中的容器：已停止容器的 label 仍指向旧目录，
+		// 纳入后会把已废弃的部署目录重新拉回清单。
+		containers, err := dc.List(ctx, false)
+		if err != nil {
+			return nil, err
+		}
+		return dockercli.ComposeDirsFromLabels(containers), nil
+	}
+	return &composeAPI{op: dockercli.NewComposeClientWithLabelDirs(dirs, self, labelDirs)}
 }
 
 // list 实现 GET /api/v1/compose。

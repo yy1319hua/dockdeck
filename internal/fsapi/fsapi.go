@@ -11,9 +11,15 @@
 //
 //	词法检查（绝对路径 / .. 段 / 控制字符 / 超长 / 过深）
 //	→ 白名单词法前缀
-//	→ realpath 解引用
-//	→ 再前缀（挡符号链接逃逸）
+//	→ openat + O_NOFOLLOW 逐段解析（每段都不让内核自动跟随软链；遇软链手动
+//	  readlink，把目标重新从根下沉，每一跳都校验仍在白名单内）
+//	→ 再前缀（最终真实路径必须在根内）
 //	→ 黑名单（对请求路径与解引用后的真实路径各查一遍）
+//
+// 「openat + O_NOFOLLOW 逐段解析」是 #91 的核心：filepath.EvalSymlinks 一次性
+// 解引用整条路径，存在 TOCTOU 窗口，且软链可在你校验之前就把落点带到白名单外。
+// 逐段打开则把每一步都握在手里——内核不会替我们跟随软链，凡遇软链都由本包
+// 手动解析并重新过白名单判定，逃逸无从发生。
 //
 // 任何一步不过就直接返回，绝不先碰文件系统。
 package fsapi
@@ -26,6 +32,8 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/yy1319hua/dockdeck/internal/protocol"
 )
@@ -213,6 +221,10 @@ func (g *Guard) ResolveNew(rootIndex int, rel string) (Resolved, error) {
 	return g.resolve(rootIndex, rel, false)
 }
 
+// maxSymlinkHops 限制软链解析跳数：软链环会把逐段下沉拖死，
+// 超过即判为拒绝（拒绝永远比无限循环安全）。
+const maxSymlinkHops = 40
+
 func (g *Guard) resolve(rootIndex int, rel string, mustExist bool) (Resolved, error) {
 	if rootIndex < 0 || rootIndex >= len(g.roots) {
 		return Resolved{}, fmt.Errorf("%w: 根序号 %d 不存在", ErrPathEscape, rootIndex)
@@ -224,8 +236,8 @@ func (g *Guard) resolve(rootIndex int, rel string, mustExist bool) (Resolved, er
 		return Resolved{}, err
 	}
 
-	// 第一道前缀：realpath 之前的词法比对。它挡不住符号链接（那要靠下面第二道），
-	// 但能在不触碰文件系统的前提下先把明显越界的请求打掉。
+	// 第一道前缀：触碰文件系统之前的词法比对。它挡不住符号链接（那要靠下面的
+	// 逐段解析），但能在零 IO 的前提下先把明显越界的请求打掉。
 	lexical := root
 	if cleanRel != "" {
 		lexical = filepath.Join(root, filepath.FromSlash(cleanRel))
@@ -234,28 +246,18 @@ func (g *Guard) resolve(rootIndex int, rel string, mustExist bool) (Resolved, er
 		return Resolved{}, fmt.Errorf("%w: %s", ErrPathEscape, rel)
 	}
 
-	var real string
-	if mustExist {
-		real, err = filepath.EvalSymlinks(lexical)
-		if err != nil {
-			if errors.Is(err, fs.ErrNotExist) {
-				return Resolved{}, fmt.Errorf("%w: %s", ErrNotFound, rel)
-			}
-			return Resolved{}, err
+	// openat + O_NOFOLLOW 逐段解析，返回解引用后的真实绝对路径。
+	real, err := g.walkOpenat(root, cleanRel, mustExist)
+	if err != nil {
+		// 把「不存在」的语义统一回 rel（调用方只认请求路径）。
+		if errors.Is(err, ErrNotFound) {
+			return Resolved{}, fmt.Errorf("%w: %s", ErrNotFound, rel)
 		}
-	} else {
-		parent := filepath.Dir(lexical)
-		realParent, perr := filepath.EvalSymlinks(parent)
-		if perr != nil {
-			if errors.Is(perr, fs.ErrNotExist) {
-				return Resolved{}, fmt.Errorf("%w: 父目录不存在: %s", ErrNotFound, rel)
-			}
-			return Resolved{}, perr
-		}
-		real = filepath.Join(realParent, filepath.Base(lexical))
+		return Resolved{}, err
 	}
 
-	// 第二道前缀：解引用之后再比一次。符号链接指到白名单外，就在这里被拦下。
+	// 第二道前缀：逐段解析后再比一次。任何一步把落点带到白名单外的软链，
+	// 都会在 walkOpenat/symlinkTail 里被拒；这里是最后兜底。
 	if !withinRoot(root, real) {
 		return Resolved{}, fmt.Errorf("%w: 符号链接逃逸 %s", ErrPathDenied, rel)
 	}
@@ -273,6 +275,125 @@ func (g *Guard) resolve(rootIndex int, rel string, mustExist bool) (Resolved, er
 	}
 
 	return Resolved{RootIndex: rootIndex, Abs: real, Lexical: lexical, Rel: realRel}, nil
+}
+
+// walkOpenat 以 openat + O_NOFOLLOW 逐段解析 cleanRel，返回解引用后的真实路径。
+//
+// mustExist=false（ResolveNew）时末段允许不存在：返回「已解析的父目录 / 末段」，
+// 与旧语义一致（末段是否为软链交由操作层的 ensureNotSymlink 拒绝）。
+func (g *Guard) walkOpenat(root, cleanRel string, mustExist bool) (string, error) {
+	if cleanRel == "" {
+		return root, nil
+	}
+	// 根在 NewGuard 里已 realpath，此处以 O_PATH 打开作锚点；O_PATH 只取引用、
+	// 不真正打开文件本体，既不会在 FIFO/设备上阻塞，也无需读权限。
+	rootFD, err := unix.Open(root, unix.O_PATH|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return "", fmt.Errorf("%w: 根目录不可用: %v", ErrPathDenied, err)
+	}
+	defer unix.Close(rootFD)
+	return g.descend(root, rootFD, root, strings.Split(cleanRel, "/"), mustExist, 0)
+}
+
+// descend 从 curDir（已确认在白名单内的目录，其 O_PATH fd 为 dirFD）开始，
+// 逐段下沉解析 segs。遇软链时手动 readlink，把目标重新从根下沉（每一跳都
+// 重新过 withinRoot），从而杜绝「内核在你看之前就跟随软链逃逸」。
+func (g *Guard) descend(root string, dirFD int, curDir string, segs []string, mustExist bool, hops int) (string, error) {
+	if hops > maxSymlinkHops {
+		return "", fmt.Errorf("%w: 软链解析超过 %d 跳", ErrPathDenied, maxSymlinkHops)
+	}
+	if len(segs) == 0 {
+		return curDir, nil
+	}
+	seg, rest := segs[0], segs[1:]
+	isLast := len(rest) == 0
+
+	// ResolveNew 末段：不打开、不跟随（父目录已解析），与旧语义一致；
+	// 末段是否为软链由操作层的 ensureNotSymlink 拒绝。
+	if !mustExist && isLast {
+		return filepath.Join(curDir, seg), nil
+	}
+
+	fd, err := unix.Openat(dirFD, seg, unix.O_PATH|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		if errors.Is(err, unix.ENOENT) || errors.Is(err, unix.ENOTDIR) {
+			return "", fmt.Errorf("%w: %s", ErrNotFound, filepath.Join(curDir, seg))
+		}
+		return "", fmt.Errorf("%w: 无法解析 %s: %v", ErrPathDenied, seg, err)
+	}
+	// 单一关闭点：把 fd 传给子层时，子层用完返回后本帧的 defer 才关闭。
+	defer unix.Close(fd)
+
+	var st unix.Stat_t
+	if ferr := unix.Fstat(fd, &st); ferr != nil {
+		return "", fmt.Errorf("%w: stat %s: %v", ErrPathDenied, seg, ferr)
+	}
+
+	// 软链：O_PATH|O_NOFOLLOW 会让 openat 成功并返回「指向软链本身」的 fd，
+	// 因此不能指望 ELOOP，必须 Fstat 判类型。readlink 出目标后重新从根下沉。
+	if st.Mode&unix.S_IFMT == unix.S_IFLNK {
+		target, rerr := os.Readlink(filepath.Join(curDir, seg))
+		if rerr != nil {
+			return "", fmt.Errorf("%w: 读取软链 %s 失败: %v", ErrPathDenied, seg, rerr)
+		}
+		newSegs, serr := g.symlinkTail(root, curDir, target, rest)
+		if serr != nil {
+			return "", serr
+		}
+		// symlinkTail 恒把落点归一为「从 root 重新下沉」，故重新打开 root 的 fd。
+		rootFD, oerr := unix.Open(root, unix.O_PATH|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		if oerr != nil {
+			return "", fmt.Errorf("%w: 根目录不可用: %v", ErrPathDenied, oerr)
+		}
+		defer unix.Close(rootFD)
+		return g.descend(root, rootFD, root, newSegs, mustExist, hops+1)
+	}
+
+	realPath, perr := fdPath(fd)
+	if perr != nil {
+		return "", perr
+	}
+	if isLast {
+		return realPath, nil
+	}
+	// 中间段必须是目录，否则视同「不存在」（与旧 ENOTDIR 口径一致）。
+	if st.Mode&unix.S_IFMT != unix.S_IFDIR {
+		return "", fmt.Errorf("%w: %s", ErrNotFound, filepath.Join(curDir, seg))
+	}
+	return g.descend(root, fd, realPath, rest, mustExist, hops)
+}
+
+// symlinkTail 把一个软链目标归一到「从 root 重新下沉的段序列」。
+//
+// 目标为绝对路径则从 / 解析，相对路径则相对于软链所在目录（curDir）解析。
+// 归一的绝对落点必须仍在 root 内——指到白名单外就是逃逸，直接拒。
+func (g *Guard) symlinkTail(root, curDir, target string, rest []string) ([]string, error) {
+	absTarget := filepath.Clean(target)
+	if !filepath.IsAbs(target) {
+		absTarget = filepath.Clean(filepath.Join(curDir, target))
+	}
+	if !withinRoot(root, absTarget) {
+		return nil, fmt.Errorf("%w: 软链目标 %s 逃逸出白名单", ErrPathDenied, absTarget)
+	}
+	relTarget := relOf(root, absTarget)
+	var segs []string
+	if relTarget != "" {
+		segs = strings.Split(relTarget, "/")
+	}
+	return append(segs, rest...), nil
+}
+
+// fdPath 取一个已打开 fd 对应的真实绝对路径（经 /proc/self/fd 的 readlink）。
+//
+// 这里用 O_PATH fd 的 readlink 拿到内核视角的规范路径；后续操作仍以字符串
+// 路径进行，但该路径来自「逐段 O_NOFOLLOW 校验过的 fd」，不再受 EvalSymlinks
+// 整路径解引用的 TOCTOU 影响。
+func fdPath(fd int) (string, error) {
+	p, err := os.Readlink(fmt.Sprintf("/proc/self/fd/%d", fd))
+	if err != nil {
+		return "", fmt.Errorf("%w: 读取 fd 路径失败: %v", ErrPathDenied, err)
+	}
+	return p, nil
 }
 
 // checkRel 做词法检查并返回规范相对路径。

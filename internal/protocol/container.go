@@ -222,3 +222,31 @@ type ContainerRemoveResult struct {
 	// Messages 是联动清理的逐条结果说明，可空。
 	Messages []string `json:"messages,omitempty"`
 }
+
+// ContainerProcess 是容器内单个进程的只读投影（#91 容器进程明细）。
+//
+// 数据来自宿主 /proc（Agent 以 pid:host 运行），按 /proc/<pid>/cgroup
+// 归属到容器。所有字段仅供展示，不参与任何判断。
+//
+// 定义落在 protocol 而非 agent：该结构出现在 Agent→Hub→前端链路上，
+// 多端必须共用同一份字段定义（与 ContainerSummary 同一定位）。
+type ContainerProcess struct {
+	PID int `json:"pid"`
+	// PPID 是父进程 PID（容器内视角）。
+	PPID int `json:"ppid"`
+	// Command 是 argv 空格连接；内核线程/无 cmdline 时回退为 [comm]。
+	Command string `json:"command"`
+	// Comm 是 /proc/<pid>/stat 里的 comm（内核截断名，≤15 字节）。
+	Comm string `json:"comm"`
+	// State 是单字母状态（R/S/D/Z/T…）。
+	State string `json:"state"`
+	// User 是 real UID（数字串；v2 可映射为用户名）。
+	User string `json:"user"`
+	// MemRSS / MemVMS 单位 KB。
+	MemRSS int64 `json:"mem_rss"`
+	MemVMS int64 `json:"mem_vms"`
+	// Threads 是线程数。
+	Threads int `json:"threads"`
+	// StartTime 是相对系统启动的时钟滴答数（clock ticks），非绝对时间。
+	StartTime int64 `json:"start_time"`
+}

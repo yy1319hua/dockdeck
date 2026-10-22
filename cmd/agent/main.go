@@ -95,6 +95,8 @@ func buildHandler(token string, col *collector.Collector, src collector.Containe
 	mux.Handle("POST /api/v1/containers/{id}/{action}", agenthttp.Auth(token, nil)(http.HandlerFunc(capi.action)))
 	mux.Handle("DELETE /api/v1/containers/{id}", agenthttp.Auth(token, nil)(http.HandlerFunc(capi.remove)))
 	mux.Handle("GET /api/v1/containers/{id}/logs", agenthttp.Auth(token, nil)(http.HandlerFunc(capi.logs)))
+	// 容器进程明细（#91）：从宿主 /proc 读取归属该容器的进程，需 pid:host。
+	mux.Handle("GET /api/v1/containers/{id}/processes", agenthttp.Auth(token, nil)(http.HandlerFunc(capi.processes)))
 	// ---- 镜像接口（S4.1）：list 读；pull/delete/prune 写（无自身守卫，
 	// 见 images.go 头注）。{ref...} 尾通配符容纳含 "/" 的镜像引用。----
 	mux.Handle("GET /api/v1/images", agenthttp.Auth(token, nil)(http.HandlerFunc(iapi.list)))

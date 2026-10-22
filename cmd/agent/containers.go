@@ -27,6 +27,7 @@ import (
 	"github.com/yy1319hua/dockdeck/internal/fsapi"
 	"github.com/yy1319hua/dockdeck/internal/guard"
 	"github.com/yy1319hua/dockdeck/internal/httpx"
+	"github.com/yy1319hua/dockdeck/internal/procscan"
 	"github.com/yy1319hua/dockdeck/internal/protocol"
 )
 
@@ -118,6 +119,27 @@ func (a *containersAPI) inspect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, json.RawMessage(raw))
+}
+
+// processes 实现 GET /api/v1/containers/{id}/processes（#91 容器进程明细）。
+//
+// 从宿主 /proc 读取归属该容器的进程——前置是 Agent 以 pid:host 运行
+// （部署侧由面板「添加服务器」生成的命令/片段带上 --pid host / pid: host）。
+//
+// 安全口径：只在能定位到容器（拿到完整 ID）时才读；定位不到直接 404，
+// 绝不退化成「返回宿主全量进程」——归属过滤在 procscan.List 内按 cgroup 完成。
+func (a *containersAPI) processes(w http.ResponseWriter, r *http.Request) {
+	sum, ok := a.findContainer(r.Context(), r.PathValue("id"))
+	if !ok || sum.ID == "" {
+		httpx.WriteError(w, http.StatusNotFound, protocol.CodeNotFound, "容器不存在")
+		return
+	}
+	procs, err := procscan.List(r.Context(), procscan.DefaultProcRoot, sum.ID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadGateway, protocol.CodeUpstreamError, "读取宿主进程失败")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, procs)
 }
 
 // lifecycleBody 是 stop/kill 的可选请求体。

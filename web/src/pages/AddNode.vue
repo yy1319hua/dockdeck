@@ -269,6 +269,7 @@ const currentCommand = computed(() => {
     const lines = [
       `docker run -d --name ${activeSelf.value} --restart unless-stopped --network host \\`,
       '  -v /var/run/docker.sock:/var/run/docker.sock:ro \\',
+      '  --pid host \\',
       `  -v ${activeDir.value}:${activeDir.value} \\`,
       ...env.map((x) => `  ${x} \\`),
     ]
@@ -309,6 +310,7 @@ const currentCommand = computed(() => {
     `    image: ${agentImage.value}`,
     `    container_name: ${activeSelf.value}`,
     '    network_mode: host',
+    '    pid: host',
     '    restart: unless-stopped',
     '    command:',
     ...cmdLines,

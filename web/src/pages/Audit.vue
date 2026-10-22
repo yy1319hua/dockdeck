@@ -27,6 +27,7 @@
       </div>
       <div class="au__head-btns">
         <button type="button" class="btn" :disabled="au.loading" @click="au.load()">刷新</button>
+        <button type="button" class="btn" :disabled="pruning || au.loading" @click="askPrune">清理 90 天前</button>
         <button type="button" class="btn" :disabled="au.logs.length === 0" @click="exportCsv">导出 CSV</button>
       </div>
     </header>
@@ -165,6 +166,7 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { pruneAuditLogs } from '@/api/audit'
 import { useAuditStore } from '@/stores/audit'
 import { formatRFC3339 } from '@/utils/format'
 import { auditLogsToCsv } from '@/utils/csv'
@@ -191,6 +193,24 @@ function exportCsv(): void {
   a.remove()
   URL.revokeObjectURL(a.href)
 }
+// —— 清理（#89）：手动 prune，90 天窗口与后端自动保留对齐。 ——
+const pruning = ref(false)
+
+async function askPrune(): Promise<void> {
+  if (pruning.value) return
+  if (!window.confirm('确认清理 90 天前的审计记录？该操作会记入审计。')) return
+  pruning.value = true
+  try {
+    const n = await pruneAuditLogs(90)
+    window.alert(n > 0 ? `已清理 ${n} 条 90 天前的审计记录` : '没有超过 90 天的审计记录')
+    await au.load()
+  } catch (e) {
+    window.alert(e instanceof Error ? e.message : String(e))
+  } finally {
+    pruning.value = false
+  }
+}
+
 </script>
 
 <style scoped>

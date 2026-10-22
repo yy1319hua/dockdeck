@@ -63,6 +63,59 @@ paths:
                 "$ref": "#/components/schemas/ErrorBody"
       security:
         - {}
+  "/api/v1/admin/audit/prune":
+    post:
+      operationId: "postApiV1AdminAuditPrune"
+      summary: "清理审计日志"
+      description: "删除早于 before_days 的审计行（下限 7 天防手滑），返回删除行数。动作本身记一条审计（admin.audit_prune）。自动清理见 --audit-retention-days。"
+      tags:
+        - "Settings"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "object"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "before_days 缺失或小于 7"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "未登录，或携带 API Token"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "身份成立但无权执行"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "目标不存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "500":
+          description: "清理失败"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          cookieAuth: []
   "/api/v1/admin/backup":
     get:
       operationId: "getApiV1AdminBackup"

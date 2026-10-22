@@ -143,6 +143,7 @@ func run(args []string) error {
 		time.Duration(cfg.MetricsIntervalSec)*time.Second,
 		time.Duration(cfg.MetricsRetentionDays)*24*time.Hour,
 		log.Printf,
+		metricsync.WithAuditRetention(time.Duration(cfg.AuditRetentionDays)*24*time.Hour),
 		// 采集也走同一条链路：有反向连接就用，没有回落 HTTP。
 		metricsync.WithLink(func(id int64) agentcli.Doer {
 			if c := srv.links.Conn(id); c != nil {
@@ -927,6 +928,20 @@ func (s *server) routes() http.Handler {
 		},
 		InternalRef: "cmd/hub/restore.go serverRestore",
 	}, middleware.Audit(s.st, "admin.restore", s.serverRestore))
+
+	// ---- 审计日志手动清理（仅会话；#89，自动清理在 metricsync 轮里）----
+	tbl.Add(route.Entry{
+		Method: "POST", Path: "/api/v1/admin/audit/prune", AuthMode: route.AuthSession,
+		Summary: "清理审计日志", Tags: []string{"Settings"}, Body: &route.Body{},
+		Desc: "删除早于 before_days 的审计行（下限 7 天防手滑），返回删除行数。" +
+			"动作本身记一条审计（admin.audit_prune）。自动清理见 --audit-retention-days。",
+		Responses: []route.Response{
+			{Status: 400, Desc: "before_days 缺失或小于 7"},
+			{Status: 401, Desc: "未登录，或携带 API Token"},
+			{Status: 500, Desc: "清理失败"},
+		},
+		InternalRef: "cmd/hub/audit_admin.go serverAuditPrune",
+	}, middleware.Audit(s.st, "admin.audit_prune", s.serverAuditPrune))
 
 	// 受管服务器清单：直接读 servers 表，不做实时探测（在线状态以 last_seen 为准）。
 	// 列表只投影管理所需字段，绝不回带 Agent 令牌等秘密；纳管（写入 servers）机制见`docs/ARCHITECTURE.md` 的纳管设计裁定。

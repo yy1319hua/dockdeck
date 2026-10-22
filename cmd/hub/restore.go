@@ -178,4 +178,3 @@ func sizeOf(path string) int64 {
 	}
 	return fi.Size()
 }
-

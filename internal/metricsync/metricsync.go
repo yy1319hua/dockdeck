@@ -35,14 +35,25 @@ type Poller struct {
 	st        *store.Store
 	interval  time.Duration
 	retention time.Duration
-	logf      func(format string, args ...any)
-	lastPrune time.Time
+	// auditRetention 是审计日志保留窗口（#89）；0 = 不自动清理。
+	auditRetention time.Duration
+	logf           func(format string, args ...any)
+	lastPrune      time.Time
+	lastAuditPrune time.Time
 	// linkFor 返回某台机器的反向连接；nil = 该机没有活跃长连接，回落 HTTP。
 	linkFor func(int64) agentcli.Doer
 }
 
 // Option 定制 Poller 的可选行为。
 type Option func(*Poller)
+
+// WithAuditRetention 开启审计日志自动清理（#89）：d<=0 关闭。
+func WithAuditRetention(d time.Duration) Option {
+	return func(p *Poller) {
+		p.auditRetention = d
+		p.lastAuditPrune = time.Now()
+	}
+}
 
 // WithLink 让采集优先走反向长连接：linkFor 返回 nil 时自动回落 HTTP。
 func WithLink(linkFor func(int64) agentcli.Doer) Option {
@@ -124,6 +135,16 @@ func (p *Poller) round(ctx context.Context) {
 		p.logf("metricsync: 清理过期指标 host=%d container=%d 行", host, ctr)
 	}
 	p.lastPrune = time.Now()
+
+	// 审计日志清理（#89）：与指标清理同节拍（pruneEvery），窗口独立可配。
+	if p.auditRetention > 0 && time.Since(p.lastAuditPrune) >= pruneEvery {
+		p.lastAuditPrune = time.Now()
+		if n, err := p.st.PruneAuditLogs(ctx, p.auditRetention, time.Now().UTC()); err != nil {
+			p.logf("metricsync: 审计日志清理失败: %v", err)
+		} else if n > 0 {
+			p.logf("metricsync: 已清理 %d 条超保留期的审计日志", n)
+		}
+	}
 }
 
 // pollServer 采集单台并记下通讯结果。

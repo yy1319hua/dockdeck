@@ -362,6 +362,21 @@ func (s *Store) SetSetting(ctx context.Context, key, value string) error {
 	return err
 }
 
+// PruneAuditLogs 删除早于 retention 的审计行（#89），返回删除行数。
+// 手动触发与每日自动清理共用：retention <= 0 视为配置错误。
+func (s *Store) PruneAuditLogs(ctx context.Context, retention time.Duration, now time.Time) (int64, error) {
+	if retention <= 0 {
+		return 0, errors.New("store: 审计保留窗口必须为正")
+	}
+	cutoff := now.UTC().Add(-retention).Format(time.RFC3339)
+	res, err := s.DB.ExecContext(ctx, `DELETE FROM audit_logs WHERE ts < ?`, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("store: 清理审计日志失败: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
 // ---- helpers ----
 
 func nullInt64(v int64) interface{} {

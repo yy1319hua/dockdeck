@@ -13,7 +13,7 @@
  * 3. **查询端点自身不写审计行**（后端刻意不包 Audit 中间件）：刷新/翻页/导出
  *    都不会在审计表里留痕，页面可以放心提供手动刷新按钮，无需防连点节流。
  */
-import { request } from './client'
+import { postJSON, request } from './client'
 
 /** 审计行：protocol.AuditLog 的线上形态（snake_case tag）。 */
 export interface AuditLog {
@@ -116,4 +116,12 @@ export async function fetchAuditLogs(
     logs: (res.logs ?? []).map(toAuditLog),
     nextBefore: res.next_before ?? 0,
   }
+}
+
+/** 清理审计日志（POST /admin/audit/prune，仅会话）。返回删除行数。 */
+export async function pruneAuditLogs(beforeDays: number): Promise<number> {
+  const w = await postJSON<{ deleted: number; before_days: number }>('/admin/audit/prune', {
+    before_days: beforeDays,
+  })
+  return w.deleted
 }

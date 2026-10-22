@@ -26,6 +26,9 @@ const ProtocolVersion = 1
 const (
 	MaxReqBody  = 1 << 20
 	MaxRespBody = 8 << 20
+	// MaxChunkedBody 是分块请求体允许的最大总量（超出拒绝）。比 MaxReqBody 大得多，
+	// 但仍有上限：避免恶意/异常客户端无限灌内存。单块大小远小于此，见 chunkSize。
+	MaxChunkedBody = 32 << 20 // 32 MiB
 )
 
 // Type 是帧类型。

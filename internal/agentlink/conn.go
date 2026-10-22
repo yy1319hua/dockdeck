@@ -166,6 +166,19 @@ func (c *Conn) ServerID() int64 { return c.serverID }
 // Host 返回 Agent 在 hello 帧里上报的服务器名（仅用于日志）。
 func (c *Conn) Host() string { return c.host }
 
+// HasCap 判断 Agent 是否声明了某项能力。
+func (c *Conn) HasCap(cap string) bool {
+	for _, v := range c.caps {
+		if v == cap {
+			return true
+		}
+	}
+	return false
+}
+
+// chunkSize 是分块请求体每块的大小（远小于 MaxRespBody，避免单帧过大）。
+const chunkSize = 64 << 10
+
 // Done 在连接关闭时关闭。
 func (c *Conn) Done() <-chan struct{} { return c.closed }
 
@@ -175,26 +188,36 @@ func (c *Conn) Done() <-chan struct{} { return c.closed }
 // ctx 取消时尽力发 cancel 帧，让 Agent 中止对应的 docker 调用。
 func (c *Conn) Do(req *http.Request) (*http.Response, error) {
 	var body []byte
+	chunked := false
 	if req.Body != nil {
 		defer req.Body.Close()
-		b, err := io.ReadAll(io.LimitReader(req.Body, MaxReqBody+1))
-		if err != nil {
-			return nil, fmt.Errorf("agentlink: 读请求体失败: %w", err)
+		// 超 1MiB 或长度未知 → 走分块（需 Agent 声明 CapChunkedReq）。
+		if c.HasCap(CapChunkedReq) && (req.ContentLength > MaxReqBody || req.ContentLength < 0) {
+			chunked = true
+		} else {
+			b, err := io.ReadAll(io.LimitReader(req.Body, MaxReqBody+1))
+			if err != nil {
+				return nil, fmt.Errorf("agentlink: 读请求体失败: %w", err)
+			}
+			if len(b) > MaxReqBody {
+				return nil, &protocol.Error{Code: protocol.CodeTooLarge, Message: "请求体超过反向隧道上限"}
+			}
+			body = b
 		}
-		if len(b) > MaxReqBody {
-			return nil, &protocol.Error{Code: protocol.CodeTooLarge, Message: "请求体超过反向隧道上限"}
-		}
-		body = b
 	}
 
 	id := c.nextID.Add(1)
-	raw, err := Encode(Frame{
+	fr := Frame{
 		T: TypeReq, ID: id, V: ProtocolVersion,
 		M: req.Method,
 		P: req.URL.RequestURI(),
 		H: pickHeaders(req.Header),
 		B: body,
-	})
+	}
+	if chunked {
+		fr.S = true // 流式请求：body 由后续 data 帧补齐
+	}
+	raw, err := Encode(fr)
 	if err != nil {
 		return nil, err
 	}
@@ -213,6 +236,12 @@ func (c *Conn) Do(req *http.Request) (*http.Response, error) {
 	if err := c.sendRaw(raw); err != nil {
 		c.drop(id)
 		return nil, err
+	}
+	if chunked {
+		if err := c.sendChunked(id, req.Body); err != nil {
+			c.drop(id)
+			return nil, err
+		}
 	}
 
 	select {
@@ -342,6 +371,42 @@ func (c *Conn) sendRaw(raw []byte) error {
 	case <-c.closed:
 		return c.err()
 	}
+}
+
+// sendChunked 把 body 切成 data 帧发出，最后发 req_end。
+// 总量超过 MaxChunkedBody 时中止并通知 Agent 取消。
+func (c *Conn) sendChunked(id uint64, body io.Reader) error {
+	buf := make([]byte, chunkSize)
+	var total int64
+	for {
+		n, rerr := body.Read(buf)
+		if n > 0 {
+			total += int64(n)
+			if total > MaxChunkedBody {
+				c.enqueue(Frame{T: TypeCancel, ID: id, Msg: "请求体超过分块上限"})
+				return &protocol.Error{Code: protocol.CodeTooLarge, Message: "请求体超过反向隧道上限"}
+			}
+			chunk := append([]byte(nil), buf[:n]...)
+			raw, err := Encode(Frame{T: TypeData, ID: id, B: chunk})
+			if err != nil {
+				return err
+			}
+			if err := c.sendRaw(raw); err != nil {
+				return err
+			}
+		}
+		if rerr == io.EOF {
+			break
+		}
+		if rerr != nil {
+			return fmt.Errorf("agentlink: 读请求体失败: %w", rerr)
+		}
+	}
+	raw, err := Encode(Frame{T: TypeReqEnd, ID: id})
+	if err != nil {
+		return err
+	}
+	return c.sendRaw(raw)
 }
 
 func (c *Conn) deliver(f Frame) {

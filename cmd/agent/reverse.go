@@ -65,6 +65,12 @@ func runReverse(cfg config.AgentConfig, h http.Handler) error {
 // errLinkAuth 标记鉴权类永久失败：runReverse 见到它不重试、直接退出。
 var errLinkAuth = errors.New("agent: 反向连接鉴权失败")
 
+// chunkedReq 累积一次分块请求（req S=true → data… → req_end 才派发）。
+type chunkedReq struct {
+	f   agentlink.Frame
+	buf bytes.Buffer
+}
+
 // runSession 跑一次完整会话（拨号 → hello 握手 → 帧循环），返回即表示本次连接结束。
 func runSession(ctx context.Context, cfg config.AgentConfig, h http.Handler) error {
 	wsURL, err := linkURL(cfg)
@@ -101,7 +107,7 @@ func runSession(ctx context.Context, cfg config.AgentConfig, h http.Handler) err
 	host, _ := os.Hostname()
 	hello, err := agentlink.Encode(agentlink.Frame{
 		T: agentlink.TypeHello, V: agentlink.ProtocolVersion,
-		Caps: []string{agentlink.CapBuffered, agentlink.CapStream, agentlink.CapPing},
+		Caps: []string{agentlink.CapBuffered, agentlink.CapStream, agentlink.CapChunkedReq, agentlink.CapPing},
 		Host: host,
 	})
 	if err != nil {
@@ -137,6 +143,28 @@ func runSession(ctx context.Context, cfg config.AgentConfig, h http.Handler) err
 	sem := make(chan struct{}, inflight)
 	var pending sync.Map // id → context.CancelFunc
 
+	// dispatchRequest 派发一个完整请求（含分块收齐后的）。
+	dispatchRequest := func(f agentlink.Frame) {
+		select {
+		case sem <- struct{}{}:
+		default:
+			writeErr(lw, f.ID, protocol.CodeRateLimited, "并发请求超过上限")
+			return
+		}
+		reqCtx, reqCancel := context.WithCancel(ctx)
+		pending.Store(f.ID, reqCancel)
+		go func(f agentlink.Frame, reqCtx context.Context, reqCancel context.CancelFunc) {
+			defer func() {
+				reqCancel()
+				pending.Delete(f.ID)
+				<-sem
+			}()
+			serveLinkRequest(reqCtx, lw, h, f, streamOK)
+		}(f, reqCtx, reqCancel)
+	}
+	// bulk 累积分块请求（req S=true → data… → req_end 才派发）。
+	bulk := make(map[uint64]*chunkedReq)
+
 	for {
 		typ, raw, err := ws.Read(ctx)
 		if err != nil {
@@ -151,22 +179,29 @@ func runSession(ctx context.Context, cfg config.AgentConfig, h http.Handler) err
 		}
 		switch f.T {
 		case agentlink.TypeReq:
-			select {
-			case sem <- struct{}{}:
-			default:
-				writeErr(lw, f.ID, protocol.CodeRateLimited, "并发请求超过上限")
+			if f.S {
+				// 分块请求：先收齐 body 再派发。
+				bulk[f.ID] = &chunkedReq{f: f}
 				continue
 			}
-			reqCtx, reqCancel := context.WithCancel(ctx)
-			pending.Store(f.ID, reqCancel)
-			go func(f agentlink.Frame, reqCtx context.Context, reqCancel context.CancelFunc) {
-				defer func() {
-					reqCancel()
-					pending.Delete(f.ID)
-					<-sem
-				}()
-				serveLinkRequest(reqCtx, lw, h, f, streamOK)
-			}(f, reqCtx, reqCancel)
+			dispatchRequest(f)
+		case agentlink.TypeData:
+			if cr, ok := bulk[f.ID]; ok {
+				if cr.buf.Len()+len(f.B) > agentlink.MaxChunkedBody {
+					delete(bulk, f.ID)
+					writeErr(lw, f.ID, protocol.CodeTooLarge, "请求体超过分块上限")
+					continue
+				}
+				cr.buf.Write(f.B)
+			}
+		case agentlink.TypeReqEnd:
+			if cr, ok := bulk[f.ID]; ok {
+				delete(bulk, f.ID)
+				f2 := cr.f
+				f2.B = cr.buf.Bytes()
+				f2.S = false
+				dispatchRequest(f2)
+			}
 		case agentlink.TypeCancel:
 			if v, ok := pending.LoadAndDelete(f.ID); ok {
 				v.(context.CancelFunc)()

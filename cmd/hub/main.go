@@ -372,7 +372,8 @@ func (s *server) routes() http.Handler {
 
 	tbl.Add(route.Entry{
 		Method: "GET", Path: "/api/v1/servers/{id}/containers/{cid}/processes", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadContainers,
-		Summary: "容器进程", Tags: []string{"Containers"},
+		OKSchema: "ContainerProcessList",
+		Summary:  "容器进程", Tags: []string{"Containers"},
 		Desc: "容器内进程明细（#91）：Agent 从宿主 /proc 按 cgroup 归属容器后返回，需 Agent 以 pid:host 运行。" +
 			"空清单编码为 [] 而非 null。",
 		Params: []route.Param{
@@ -386,6 +387,24 @@ func (s *server) routes() http.Handler {
 		},
 		InternalRef: "cmd/hub/containers.go containerProcesses",
 	}, middleware.Audit(s.st, "container.processes", s.containerProcesses))
+
+	tbl.Add(route.Entry{
+		Method: "GET", Path: "/api/v1/servers/{id}/containers/{cid}/processes/{pid}", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadContainers,
+		OKSchema: "ContainerProcessDetail",
+		Summary:  "进程详情", Tags: []string{"Containers"},
+		Desc: "单个进程的 exe/cwd（#91 v2）。pid 须归属该容器，越权/不存在统一 404。",
+		Params: []route.Param{
+			{Name: "id", Desc: "服务器 ID", Required: true, Example: "1", SchemaType: "integer", SchemaFmt: "int64"},
+			{Name: "cid", Desc: "容器 ID 或名字", Required: true, Example: "9f3a2b1c4d5e"},
+			{Name: "pid", Desc: "进程 PID（十进制正整数）", Required: true, Example: "1", SchemaType: "integer", SchemaFmt: "int64"},
+		},
+		Responses: []route.Response{
+			{Status: 403, Desc: "服务器已禁用"},
+			{Status: 404, Desc: "进程不存在或不属于该容器"},
+			{Status: 502, Desc: "Agent 不可达或返回异常"},
+		},
+		InternalRef: "cmd/hub/containers.go containerProcessDetail",
+	}, middleware.Audit(s.st, "container.processDetail", s.containerProcessDetail))
 
 	tbl.Add(route.Entry{
 		Method: "GET", Path: "/api/v1/servers/{id}/containers/{cid}/logs", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadContainers,

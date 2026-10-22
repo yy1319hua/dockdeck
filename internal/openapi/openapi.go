@@ -474,6 +474,15 @@ func schemas() map[string]*Schema {
 			Type:       "object",
 			Properties: map[string]*Schema{"data": {Type: "array", Items: schemaRef("ContainerProcess")}},
 		},
+		"ContainerProcessDetail": {
+			Type:        "object",
+			Description: "单个进程的 exe/cwd（#91 v2；pid 须归属该容器，否则 404）。",
+			Properties: map[string]*Schema{
+				"pid": {Type: "integer", Format: "int64"},
+				"exe": {Type: "string", Description: "可执行文件路径（readlink /proc/<pid>/exe）"},
+				"cwd": {Type: "string", Description: "工作目录（readlink /proc/<pid>/cwd）"},
+			},
+		},
 		"ImageSummary": {
 			Type:        "object",
 			Description: "本地镜像（Engine 字段名原样）。",

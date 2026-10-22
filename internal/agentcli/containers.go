@@ -68,6 +68,22 @@ func (c *Client) ContainerProcesses(ctx context.Context, id string) ([]protocol.
 	return out, nil
 }
 
+// ContainerProcessDetail 取单进程明细（#91 v2，只读 exe/cwd）。
+// Agent 侧会校验该 pid 归属容器，越权/不存在统一 404。ID 与 pid 都在本地先校验。
+func (c *Client) ContainerProcessDetail(ctx context.Context, id string, pid int) (protocol.ContainerProcessDetail, error) {
+	if !protocol.ValidContainerID(id) {
+		return protocol.ContainerProcessDetail{}, fmt.Errorf("agentcli: 非法容器标识 %q", id)
+	}
+	if pid <= 0 {
+		return protocol.ContainerProcessDetail{}, fmt.Errorf("agentcli: 非法进程 PID %d", pid)
+	}
+	var out protocol.ContainerProcessDetail
+	if _, err := c.do(ctx, http.MethodGet, fmt.Sprintf("/api/v1/containers/%s/processes/%d", id, pid), nil, &out); err != nil {
+		return protocol.ContainerProcessDetail{}, err
+	}
+	return out, nil
+}
+
 // ---- 写操作（S3.4）----
 //
 // 每个方法只针对单个容器，不提供任何批量入口（与 Agent 侧同一条红线）。

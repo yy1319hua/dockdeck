@@ -217,6 +217,26 @@ func (s *server) containerProcesses(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, procs)
 }
 
+// containerProcessDetail 实现 GET /api/v1/servers/{id}/containers/{cid}/processes/{pid}（#91 v2）。
+// 透传 Agent 返回的 exe/cwd；pid 越权/不存在由 Agent 统一 404。
+func (s *server) containerProcessDetail(w http.ResponseWriter, r *http.Request) {
+	cl, ok := s.agentFor(w, r)
+	if !ok {
+		return
+	}
+	pid, err := strconv.Atoi(r.PathValue("pid"))
+	if err != nil || pid <= 0 {
+		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, "非法进程 PID")
+		return
+	}
+	d, err := cl.ContainerProcessDetail(r.Context(), r.PathValue("cid"), pid)
+	if err != nil {
+		writeAgentError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, d)
+}
+
 // containerAction 实现 POST /api/v1/servers/{id}/containers/{cid}/{action}。
 // action ∈ start|stop|restart|pause|unpause|kill|resize——白名单就是下面
 // switch 本身，未知动作 404（与 Agent 侧同款：没有这个子资源）。

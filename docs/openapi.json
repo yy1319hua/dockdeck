@@ -3159,7 +3159,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Envelope"
+                  "$ref": "#/components/schemas/ContainerProcessList"
                 }
               }
             }
@@ -3196,6 +3196,120 @@
           },
           "404": {
             "description": "容器不存在（Agent 报 404）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Agent 不可达或返回异常",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/servers/{id}/containers/{cid}/processes/{pid}": {
+      "get": {
+        "operationId": "getApiV1ServersIdContainersCidProcessesPid",
+        "summary": "进程详情",
+        "description": "单个进程的 exe/cwd（#91 v2）。pid 须归属该容器，越权/不存在统一 404。\n\nAPI Token 须具备 scope `read:containers`；浏览器会话不受此限制。",
+        "tags": [
+          "Containers"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "服务器 ID",
+            "example": "1",
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "cid",
+            "in": "path",
+            "required": true,
+            "description": "容器 ID 或名字",
+            "example": "9f3a2b1c4d5e",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "description": "进程 PID（十进制正整数）",
+            "example": "1",
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContainerProcessDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求体或参数不合法",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未登录，或凭据无效/已过期",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "服务器已禁用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "进程不存在或不属于该容器",
             "content": {
               "application/json": {
                 "schema": {
@@ -5389,6 +5503,24 @@
           },
           "user": {
             "type": "string"
+          }
+        }
+      },
+      "ContainerProcessDetail": {
+        "type": "object",
+        "description": "单个进程的 exe/cwd（#91 v2；pid 须归属该容器，否则 404）。",
+        "properties": {
+          "cwd": {
+            "type": "string",
+            "description": "工作目录（readlink /proc/\u003cpid\u003e/cwd）"
+          },
+          "exe": {
+            "type": "string",
+            "description": "可执行文件路径（readlink /proc/\u003cpid\u003e/exe）"
+          },
+          "pid": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },

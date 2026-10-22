@@ -46,7 +46,13 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-for="p in rows" :key="p.pid">
+              <tr
+                v-for="p in rows"
+                :key="p.pid"
+                class="cp__row"
+                :class="{ 'cp__row--active': selectedPid === p.pid }"
+                @click="selectProcess(p)"
+              >
                 <td class="num">{{ p.pid }}</td>
                 <td class="num">{{ p.ppid }}</td>
                 <td class="cp__cmd" :title="p.command">{{ p.command || p.comm }}</td>
@@ -61,6 +67,18 @@
             {{ error ? '' : '没有读到进程。若容器有进程，通常是 Agent 未以 pid:host 运行。' }}
           </p>
         </div>
+
+        <footer v-if="selectedPid !== null" class="cp__detail">
+          <p class="cp__detail-title">进程 {{ selectedPid }} · 详情</p>
+          <p v-if="detailLoading" class="cp__dim">加载中…</p>
+          <p v-else-if="detailError" class="cp__err cp__err--inline">{{ detailError }}</p>
+          <dl v-else-if="detail" class="cp__dl">
+            <dt>exe</dt>
+            <dd :title="detail.exe">{{ detail.exe || '—' }}</dd>
+            <dt>cwd</dt>
+            <dd :title="detail.cwd">{{ detail.cwd || '—' }}</dd>
+          </dl>
+        </footer>
       </aside>
     </Transition>
   </Teleport>
@@ -68,7 +86,7 @@
 
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue'
-import { fetchContainerProcesses, type ContainerProcess } from '@/api/containers'
+import { fetchContainerProcessDetail, fetchContainerProcesses, type ContainerProcess, type ContainerProcessDetail } from '@/api/containers'
 import { formatBytes } from '@/utils/format'
 
 const props = withDefaults(
@@ -88,6 +106,46 @@ const emit = defineEmits<{
 const rows = ref<ContainerProcess[]>([])
 const loading = ref(false)
 const error = ref<string | null>(null)
+
+// 单进程详情（#91 v2）：点行展开 exe/cwd。
+const selectedPid = ref<number | null>(null)
+const detail = ref<ContainerProcessDetail | null>(null)
+const detailLoading = ref(false)
+const detailError = ref<string | null>(null)
+
+function clearDetail() {
+  selectedPid.value = null
+  detail.value = null
+  detailError.value = null
+  detailLoading.value = false
+}
+
+async function selectProcess(p: ContainerProcess) {
+  // 再次点击同一行 = 收起。
+  if (selectedPid.value === p.pid) {
+    clearDetail()
+    return
+  }
+  selectedPid.value = p.pid
+  detail.value = null
+  detailError.value = null
+  detailLoading.value = true
+  try {
+    const d = await fetchContainerProcessDetail(props.serverId, props.cid, p.pid)
+    // 竞态保护：期间用户又点了别的行，丢弃这次结果。
+    if (selectedPid.value === p.pid) {
+      detail.value = d
+    }
+  } catch (e) {
+    if (selectedPid.value === p.pid) {
+      detailError.value = e instanceof Error ? e.message : String(e)
+    }
+  } finally {
+    if (selectedPid.value === p.pid) {
+      detailLoading.value = false
+    }
+  }
+}
 
 const shortId = computed(() => (props.cid.length > 12 ? props.cid.slice(0, 12) : props.cid))
 
@@ -116,6 +174,7 @@ function stateLabel(s: string): string {
 async function reload() {
   loading.value = true
   error.value = null
+  clearDetail()
   try {
     rows.value = await fetchContainerProcesses(props.serverId, props.cid)
   } catch (e) {
@@ -293,6 +352,60 @@ onUnmounted(() => {
   white-space: nowrap;
   font-family: var(--font-mono, monospace);
   font-size: var(--text-xs);
+}
+
+.cp__row {
+  cursor: pointer;
+}
+
+.cp__row:hover td {
+  background: var(--bg-elev-2);
+}
+
+.cp__row--active td {
+  background: var(--accent-subtle);
+}
+
+.cp__detail {
+  border-top: 1px solid var(--border-subtle);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-inset);
+}
+
+.cp__detail-title {
+  margin-bottom: var(--space-2);
+  color: var(--fg-subtle);
+  font-size: var(--text-xs);
+}
+
+.cp__dl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: var(--space-1) var(--space-3);
+  font-size: var(--text-sm);
+}
+
+.cp__dl dt {
+  color: var(--fg-subtle);
+}
+
+.cp__dl dd {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-xs);
+}
+
+.cp__dim {
+  color: var(--fg-subtle);
+  font-size: var(--text-sm);
+}
+
+.cp__err--inline {
+  margin: 0;
 }
 
 .cp__empty {

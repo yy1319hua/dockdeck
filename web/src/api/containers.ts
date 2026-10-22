@@ -85,6 +85,23 @@ export async function fetchContainerProcesses(serverId: number, cid: string): Pr
   return rows ?? []
 }
 
+/** 单进程明细（#91 v2）：exe/cwd；pid 须归属该容器，否则 404。 */
+export interface ContainerProcessDetail {
+  pid: number
+  exe: string
+  cwd: string
+}
+
+export async function fetchContainerProcessDetail(
+  serverId: number,
+  cid: string,
+  pid: number,
+): Promise<ContainerProcessDetail> {
+  return request<ContainerProcessDetail>(
+    `/servers/${serverId}/containers/${encodeURIComponent(cid)}/processes/${pid}`,
+  )
+}
+
 export type ContainerAction = 'start' | 'stop' | 'restart' | 'pause' | 'unpause' | 'kill' | 'resize'
 
 export interface ActionOptions {

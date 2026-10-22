@@ -31,10 +31,13 @@ export interface Container {
   state: string
   status: string
   created: number
+  /** 是否 compose 项目容器（带 com.docker.compose.project.working_dir 标签）。 */
+  isCompose: boolean
 }
 
 export function toContainer(w: ContainerWire): Container {
   const name = (w.Names?.[0] ?? '').replace(/^\//, '')
+  const isCompose = !!(w.Labels && w.Labels['com.docker.compose.project.working_dir'])
   return {
     id: w.Id,
     name: name || w.Id.slice(0, 12),
@@ -42,6 +45,7 @@ export function toContainer(w: ContainerWire): Container {
     state: w.State,
     status: w.Status,
     created: w.Created,
+    isCompose,
   }
 }
 
@@ -74,20 +78,32 @@ export async function containerAction(
   )
 }
 
+/** 删容器联动清理结果：OK 主操作是否成功，Messages 为联动（删镜像 / 删部署目录）逐条结果。 */
+export interface RemoveResult {
+  ok: boolean
+  messages?: string[]
+}
+
 export interface RemoveOptions {
   /** 强删运行中的容器。 */
   force?: boolean
   /** 连同匿名卷删除。 */
   volumes?: boolean
+  /** 联动删除容器使用的镜像（被其他容器引用则跳过）。 */
+  removeImage?: boolean
+  /** 联动递归删除 compose 部署目录（仅对 compose 项目生效）。 */
+  removeDeployDir?: boolean
   /** 必须与目标容器 ID/名字完全一致——后端 guard 的名字确认门。 */
   confirm: string
 }
 
-export async function removeContainer(serverId: number, cid: string, opts: RemoveOptions): Promise<void> {
+export async function removeContainer(serverId: number, cid: string, opts: RemoveOptions): Promise<RemoveResult> {
   const q = new URLSearchParams()
   if (opts.force) q.set('force', '1')
   if (opts.volumes) q.set('v', '1')
-  await request<void>(`/servers/${serverId}/containers/${encodeURIComponent(cid)}?${q.toString()}`, {
+  if (opts.removeImage) q.set('remove_image', '1')
+  if (opts.removeDeployDir) q.set('remove_deploy_dir', '1')
+  return request<RemoveResult>(`/servers/${serverId}/containers/${encodeURIComponent(cid)}?${q.toString()}`, {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ confirm: opts.confirm }),

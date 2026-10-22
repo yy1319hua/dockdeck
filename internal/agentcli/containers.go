@@ -77,7 +77,7 @@ type lifecycleOpts struct {
 // writeTimeout 覆盖默认写超时（0 = 用 DefaultWriteTimeout）：stop/restart/强删
 // 要等 Engine 的 SIGTERM 宽限期，用 slowWriteTimeout 计算，其余保持快速失败。
 // ID 校验与路径拼接集中在这里，8 个写方法不各写一遍。
-func (c *Client) containerWrite(ctx context.Context, method, action, id, query string, body []byte, writeTimeout time.Duration) error {
+func (c *Client) containerWrite(ctx context.Context, method, action, id, query string, body []byte, dst interface{}, writeTimeout time.Duration) error {
 	if !protocol.ValidContainerID(id) {
 		return fmt.Errorf("agentcli: 非法容器标识 %q", id)
 	}
@@ -88,7 +88,7 @@ func (c *Client) containerWrite(ctx context.Context, method, action, id, query s
 	if query != "" {
 		path += "?" + query
 	}
-	_, err := c.do(ctx, method, path, body, nil, writeTimeout)
+	_, err := c.do(ctx, method, path, body, dst, writeTimeout)
 	return err
 }
 
@@ -111,7 +111,7 @@ func slowWriteTimeout(graceSec, passes int) time.Duration {
 
 // ContainerStart 启动容器。
 func (c *Client) ContainerStart(ctx context.Context, id string) error {
-	return c.containerWrite(ctx, http.MethodPost, "start", id, "", nil, 0)
+	return c.containerWrite(ctx, http.MethodPost, "start", id, "", nil, nil, 0)
 }
 
 // ContainerStop 停止容器。timeoutSec 是 SIGTERM 后等待秒数：
@@ -125,22 +125,22 @@ func (c *Client) ContainerStop(ctx context.Context, id string, timeoutSec *int) 
 		grace = *timeoutSec
 		body, _ = json.Marshal(lifecycleOpts{TimeoutSec: timeoutSec})
 	}
-	return c.containerWrite(ctx, http.MethodPost, "stop", id, "", body, slowWriteTimeout(grace, 1))
+	return c.containerWrite(ctx, http.MethodPost, "stop", id, "", body, nil, slowWriteTimeout(grace, 1))
 }
 
 // ContainerRestart 重启容器。等价 stop+start，宽限期按两倍计。
 func (c *Client) ContainerRestart(ctx context.Context, id string) error {
-	return c.containerWrite(ctx, http.MethodPost, "restart", id, "", nil, slowWriteTimeout(10, 2))
+	return c.containerWrite(ctx, http.MethodPost, "restart", id, "", nil, nil, slowWriteTimeout(10, 2))
 }
 
 // ContainerPause 暂停容器（冻结进程，不杀）。
 func (c *Client) ContainerPause(ctx context.Context, id string) error {
-	return c.containerWrite(ctx, http.MethodPost, "pause", id, "", nil, 0)
+	return c.containerWrite(ctx, http.MethodPost, "pause", id, "", nil, nil, 0)
 }
 
 // ContainerUnpause 恢复暂停的容器。
 func (c *Client) ContainerUnpause(ctx context.Context, id string) error {
-	return c.containerWrite(ctx, http.MethodPost, "unpause", id, "", nil, 0)
+	return c.containerWrite(ctx, http.MethodPost, "unpause", id, "", nil, nil, 0)
 }
 
 // ContainerKill 向容器主进程发信号。signal 形如 SIGTERM/SIGKILL
@@ -155,7 +155,7 @@ func (c *Client) ContainerKill(ctx context.Context, id, signal string) error {
 	if norm != "" {
 		body, _ = json.Marshal(lifecycleOpts{Signal: norm})
 	}
-	return c.containerWrite(ctx, http.MethodPost, "kill", id, "", body, 0)
+	return c.containerWrite(ctx, http.MethodPost, "kill", id, "", body, nil, 0)
 }
 
 // ContainerResize 调整 TTY 尺寸（配合日志/exec 终端用）。
@@ -167,20 +167,29 @@ func (c *Client) ContainerResize(ctx context.Context, id string, height, width i
 	q := url.Values{}
 	q.Set("h", strconv.Itoa(height))
 	q.Set("w", strconv.Itoa(width))
-	return c.containerWrite(ctx, http.MethodPost, "resize", id, q.Encode(), nil, 0)
+	return c.containerWrite(ctx, http.MethodPost, "resize", id, q.Encode(), nil, nil, 0)
 }
 
 // ContainerRemove 删除容器。force 强删运行中的；volumes 连同匿名卷删除。
+// removeImage 联动删容器使用的镜像（被其他容器引用则跳过）；removeDeployDir 联动
+// 递归删 compose 部署目录（仅对 compose 项目、且经 Agent 侧多重闸门校验）。
+// 返回 ContainerRemoveResult：OK 为主操作是否成功，Messages 为联动清理的逐条结果。
 // confirm 是名字确认（S4.4）：Agent 侧也守这道门，须与目标 ID/名字完全
 // 一致，空值必被 Agent 以 400 拒绝。具名卷与 bind 目录不归 Engine 管，
 // 调用方走文件模块或显式 volume 删除。
-func (c *Client) ContainerRemove(ctx context.Context, id string, force, volumes bool, confirm string) error {
+func (c *Client) ContainerRemove(ctx context.Context, id string, force, volumes, removeImage, removeDeployDir bool, confirm string) (protocol.ContainerRemoveResult, error) {
 	q := url.Values{}
 	if force {
 		q.Set("force", "1")
 	}
 	if volumes {
 		q.Set("v", "1")
+	}
+	if removeImage {
+		q.Set("remove_image", "1")
+	}
+	if removeDeployDir {
+		q.Set("remove_deploy_dir", "1")
 	}
 	if confirm != "" {
 		q.Set("confirm", confirm)
@@ -190,5 +199,9 @@ func (c *Client) ContainerRemove(ctx context.Context, id string, force, volumes 
 	if force {
 		wt = slowWriteTimeout(10, 1)
 	}
-	return c.containerWrite(ctx, http.MethodDelete, "", id, q.Encode(), nil, wt)
+	var result protocol.ContainerRemoveResult
+	if err := c.containerWrite(ctx, http.MethodDelete, "", id, q.Encode(), nil, &result, wt); err != nil {
+		return protocol.ContainerRemoveResult{}, err
+	}
+	return result, nil
 }

@@ -377,3 +377,24 @@ func relOf(root, p string) string {
 	}
 	return strings.TrimPrefix(strings.TrimPrefix(p, root), sep)
 }
+
+// PathToRel 把一个绝对路径映射到「根序号 + 相对路径」，返回是否命中白名单根。
+//
+// 用途：把外部来源给出的绝对路径（例如容器 label 里的 compose 工作目录
+// com.docker.compose.project.working_dir）接入白名单体系，供 DeleteRecursive 等
+// 操作使用。
+//
+// 只做词法前缀判定（复用 withinRoot/relOf），不解析符号链接：返回的
+// (rootIndex, rel) 会交给 Resolve/DeleteRecursive 重新做 realpath 校验，
+// 所以这里即使拿到的是软链形态也安全——真正落文件系统的操作会二次校验，
+// 不存在「前缀过了就放行」的窗口。
+//
+// 无根命中时 ok=false（rootIndex=0, rel="")，调用方据业务决定是否拒绝。
+func (g *Guard) PathToRel(abs string) (rootIndex int, rel string, ok bool) {
+	for i, root := range g.roots {
+		if withinRoot(root, abs) {
+			return i, relOf(root, abs), true
+		}
+	}
+	return 0, "", false
+}

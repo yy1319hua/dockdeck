@@ -275,6 +275,62 @@ func TestGuard_Delete(t *testing.T) {
 	}
 }
 
+func TestGuard_DeleteRecursive(t *testing.T) {
+	root := testTree(t)
+	g := newGuard(t, []string{root}, 8)
+
+	// 删根目录应拒。
+	if _, err := g.DeleteRecursive(0, ""); !errors.Is(err, ErrPathDenied) {
+		t.Errorf("删根应 ErrPathDenied，got %v", err)
+	}
+
+	// 删软链目标应拒：与 Delete 一致，要求显式指名真实路径。
+	// 注意此时 sub 尚在，inlink->sub 可解析，ensureNotSymlink 才会拒。
+	if _, err := g.DeleteRecursive(0, "inlink"); !errors.Is(err, ErrPathDenied) {
+		t.Errorf("删软链应 ErrPathDenied，got %v", err)
+	}
+
+	// 递归删除 sub（含 inner.txt / .env / key.pem 等），应整体清掉。
+	if _, err := g.DeleteRecursive(0, "sub"); err != nil {
+		t.Fatalf("DeleteRecursive sub: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "sub")); !errors.Is(err, os.ErrNotExist) {
+		t.Error("sub 应已递归删除")
+	}
+
+	// 建一棵更深的嵌套树再删，验证多层递归。
+	deep := filepath.Join(root, "a", "b", "c")
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(deep, "f.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.DeleteRecursive(0, "a"); err != nil {
+		t.Fatalf("DeleteRecursive 深层树: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "a")); !errors.Is(err, os.ErrNotExist) {
+		t.Error("深层树应已递归删除")
+	}
+
+	// 树内软链只删链接本身、不跟随：建一个指到白名单外的软链再递归删父目录，
+	// 白名单外不应被牵连（防御性验证 os.RemoveAll 不跟随软链）。
+	deep2 := filepath.Join(root, "d")
+	if err := os.MkdirAll(deep2, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(filepath.Dir(root), "outside")
+	if err := os.Symlink(filepath.Join(root, "..", "outside"), filepath.Join(deep2, "escape")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.DeleteRecursive(0, "d"); err != nil {
+		t.Fatalf("DeleteRecursive d: %v", err)
+	}
+	if _, err := os.Stat(outside); err != nil {
+		t.Errorf("白名单外不应被删：%v", err)
+	}
+}
+
 func TestGuard_Rename(t *testing.T) {
 	root := testTree(t)
 	g := newGuard(t, []string{root}, 3)

@@ -204,3 +204,21 @@ type ContainerStat struct {
 	// PIDS 是容器内进程数。
 	PIDS uint64 `json:"pids"`
 }
+
+// ContainerRemoveResult 是删容器「联动清理」的结果，沿 Agent→Hub→前端链路
+// 透传，用于把联动动作（删镜像 / 删部署目录）的逐条结果回显给用户。
+//
+// 设计要点：
+//   - OK 表示主操作（删除容器本身）是否成功，与 Messages 相互独立——
+//     主操作失败时 Messages 仍可能含已部分执行的联动说明，调用方需同时展示。
+//   - Messages 收集每条联动动作的结果说明，例如：镜像被其他容器引用而跳过
+//     （rmi 409）、部署目录不存在、递归删除的条目数、跳过原因等。可空。
+//   - 定义落在 protocol 而非 agentcli/hub：该结构出现在 Hub↔Agent 线路上
+//     （Agent 原样编码、Hub 解码回显），两侧必须共用同一份定义，防止字段
+//     悄悄对不上——与 ContainerSummary / LogsOptions 同一定位。
+type ContainerRemoveResult struct {
+	// OK 是主操作（删除容器）是否成功。
+	OK bool `json:"ok"`
+	// Messages 是联动清理的逐条结果说明，可空。
+	Messages []string `json:"messages,omitempty"`
+}

@@ -258,6 +258,44 @@ func (g *Guard) Delete(rootIndex int, rel string) (protocol.FileActionDone, erro
 	return protocol.FileActionDone{Action: protocol.ActionDelete, Path: res.Rel}, nil
 }
 
+// DeleteRecursive 递归删除目录树，专供「删容器联动清理部署目录」这类
+// 调用方已确认要整片清掉的场景——单条 Delete 只接受空目录，这里放开递归。
+//
+// 安全不止一道：
+//  1. 走 Resolve 做完整校验（词法→白名单→realpath→再前缀→黑名单），
+//     只有 realpath 后在白名单内的真实路径才落得到 os.RemoveAll；
+//  2. os.RemoveAll 不跟随符号链接——目录树里任何软链只删链接本身，
+//     不会顺着它删到白名单外的真实目录。两道叠起来，递归不再是越权入口。
+//
+// 根目录（res.Rel==""）与符号链接目标一律拒绝，沿用 Delete 的口径：
+// 删根、删链接都要求「显式指名真实路径」而非顺手扩大范围。
+func (g *Guard) DeleteRecursive(rootIndex int, rel string) (protocol.FileActionDone, error) {
+	res, err := g.Resolve(rootIndex, rel)
+	if err != nil {
+		return protocol.FileActionDone{}, err
+	}
+	if res.Rel == "" {
+		return protocol.FileActionDone{}, fmt.Errorf("%w: 不允许递归删除根目录", ErrPathDenied)
+	}
+	if err := g.ensureNotSymlink(res); err != nil {
+		return protocol.FileActionDone{}, err
+	}
+	st, err := os.Stat(res.Abs)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return protocol.FileActionDone{}, fmt.Errorf("%w: %s", ErrNotFound, rel)
+		}
+		return protocol.FileActionDone{}, err
+	}
+	if !st.IsDir() {
+		return protocol.FileActionDone{}, fmt.Errorf("%w: %s", ErrNotDir, res.Rel)
+	}
+	if err := os.RemoveAll(res.Abs); err != nil {
+		return protocol.FileActionDone{}, err
+	}
+	return protocol.FileActionDone{Action: protocol.ActionDelete, Path: res.Rel}, nil
+}
+
 // Rename 改名或移动，限定在同一个根白名单内。
 //
 // 目标已存在时拒绝，不覆盖：静默覆盖等于一次没打招呼的删除，

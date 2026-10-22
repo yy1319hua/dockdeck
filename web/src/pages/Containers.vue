@@ -153,6 +153,12 @@
     >
       <label class="opt"><input v-model="removeForce" type="checkbox" /> 强制删除（容器运行中时必需）</label>
       <label class="opt"><input v-model="removeVolumes" type="checkbox" /> 连同匿名卷删除</label>
+      <label class="opt"><input v-model="removeImage" type="checkbox" /> 联动删除镜像（被其他容器引用时自动跳过）</label>
+      <label class="opt">
+        <input v-model="removeDeployDir" type="checkbox" :disabled="!confirming?.row.container.isCompose" />
+        联动删除 compose 部署目录
+        <span v-if="!confirming?.row.container.isCompose" class="opt__hint">（非 compose 容器不可用）</span>
+      </label>
     </AppConfirm>
 
     <!-- 停止：简单确认 + 可选超时 -->
@@ -226,6 +232,8 @@ type ConfirmKind = 'remove' | 'stop' | 'kill'
 const confirming = ref<{ kind: ConfirmKind; row: ContainerRow } | null>(null)
 const removeForce = ref(false)
 const removeVolumes = ref(false)
+const removeImage = ref(true)
+const removeDeployDir = ref(true)
 const stopTimeout = ref('')
 const killSignal = ref('SIGKILL')
 const logTarget = ref<ContainerRow | null>(null)
@@ -362,6 +370,9 @@ function askKill(row: ContainerRow) {
 function askRemove(row: ContainerRow) {
   removeForce.value = false
   removeVolumes.value = false
+  // 联动清理默认全勾（#90）：每次打开弹窗都回到「默认清理」状态。
+  removeImage.value = true
+  removeDeployDir.value = true
   confirming.value = { kind: 'remove', row }
 }
 
@@ -380,12 +391,18 @@ async function onConfirmAction() {
     if (cur.kind === 'remove') {
       // cid 用容器名：后端 confirm 须与 URL 里的 cid 完全一致，
       // 让用户输名字而不是 64 位 ID（Engine 接受名字作容器引用）。
-      await removeContainer(ct.selectedId, cur.row.container.name, {
+      const res = await removeContainer(ct.selectedId, cur.row.container.name, {
         force: removeForce.value,
         volumes: removeVolumes.value,
+        removeImage: removeImage.value,
+        removeDeployDir: removeDeployDir.value,
         confirm: cur.row.container.name,
       })
       ui.notifyNotice(`已删除 ${cur.row.container.name}`)
+      // 联动清理结果逐条回显（删镜像跳过原因 / 部署目录清理结果等）。
+      for (const m of res.messages ?? []) {
+        ui.notifyNotice(m)
+      }
     } else if (cur.kind === 'stop') {
       const t = stopTimeout.value.trim()
       await containerAction(ct.selectedId, cur.row.container.id, 'stop', t ? { timeout_sec: Number(t) } : {})

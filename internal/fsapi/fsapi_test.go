@@ -370,3 +370,39 @@ func TestWithinRootBoundary(t *testing.T) {
 		t.Errorf("relOf(/, /etc/hosts) = %q，want etc/hosts", relOf(sep, "/etc/hosts"))
 	}
 }
+
+func TestGuard_PathToRel(t *testing.T) {
+	root := testTree(t)
+	g := newGuard(t, []string{root}, 8)
+
+	// 根自身：命中根序号 0，rel 为空串。
+	idx, rel, ok := g.PathToRel(root)
+	if !ok || idx != 0 || rel != "" {
+		t.Errorf("根自身应命中 idx=0 rel=``，got (%d,%q,%v)", idx, rel, ok)
+	}
+
+	// 根内绝对路径：映射到正确 rel（分隔统一为 /）。
+	idx, rel, ok = g.PathToRel(filepath.Join(root, "sub", "inner.txt"))
+	if !ok || idx != 0 || rel != "sub/inner.txt" {
+		t.Errorf("根内文件应命中，got (%d,%q,%v)", idx, rel, ok)
+	}
+
+	// 白名单外的绝对路径：不命中。
+	outside := filepath.Join(filepath.Dir(root), "outside")
+	if _, _, ok2 := g.PathToRel(filepath.Join(outside, "secret.txt")); ok2 {
+		t.Error("白名单外不应命中")
+	}
+
+	// 前缀混淆：data-evil 不应被 data 当成自家孩子。
+	evil := filepath.Join(filepath.Dir(root), "data-evil")
+	if _, _, ok3 := g.PathToRel(filepath.Join(evil, "secret.txt")); ok3 {
+		t.Error("data-evil 前缀混淆不应命中")
+	}
+
+	// 多根：落在第二根的绝对路径应映射到 idx=1。
+	g2 := newGuard(t, []string{root, outside}, 8)
+	idx, rel, ok = g2.PathToRel(filepath.Join(outside, "secret.txt"))
+	if !ok || idx != 1 || rel != "secret.txt" {
+		t.Errorf("第二根应命中 idx=1，got (%d,%q,%v)", idx, rel, ok)
+	}
+}

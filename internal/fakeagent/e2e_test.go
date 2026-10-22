@@ -183,7 +183,7 @@ func TestE2E_ContainerWriteChain(t *testing.T) {
 	if err := c.ContainerResize(ctx, "c1", 24, 80); err != nil {
 		t.Fatalf("Resize: %v", err)
 	}
-	if err := c.ContainerRemove(ctx, "c1", true, true, ""); err != nil {
+	if _, err := c.ContainerRemove(ctx, "c1", true, true, false, false, ""); err != nil {
 		t.Fatalf("Remove: %v", err)
 	}
 
@@ -220,7 +220,7 @@ func TestE2E_ContainerWriteSelfGuard(t *testing.T) {
 			t.Fatalf("ContainerStart(%q) 应透传 forbidden，got %v", id, err)
 		}
 	}
-	err := c.ContainerRemove(ctx, "self123", false, false, "self123")
+	_, err := c.ContainerRemove(ctx, "self123", false, false, false, false, "self123")
 	perr, ok := err.(*protocol.Error)
 	if !ok || perr.Code != protocol.CodeForbidden {
 		t.Fatalf("Remove 自身应透传 forbidden，got %v", err)

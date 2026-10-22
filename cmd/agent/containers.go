@@ -13,7 +13,9 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -22,6 +24,7 @@ import (
 	"strings"
 
 	"github.com/yy1319hua/dockdeck/internal/dockercli"
+	"github.com/yy1319hua/dockdeck/internal/fsapi"
 	"github.com/yy1319hua/dockdeck/internal/guard"
 	"github.com/yy1319hua/dockdeck/internal/httpx"
 	"github.com/yy1319hua/dockdeck/internal/protocol"
@@ -32,11 +35,25 @@ type containersAPI struct {
 	dc *dockercli.Client
 	// guard 是写操作守卫：self 识别（保护名单属 Hub 侧知识，Agent 不带）。
 	guard *guard.Guard
+	// fs 是文件管理守卫，删容器联动清理部署目录走它。未启用文件管理时为 nil。
+	fs *fsapi.Guard
+	// comp 是 compose 操作器，联动清理时查项目冲突状态。未启用 compose 时为 nil。
+	comp dockercli.ComposeOperator
+	// composeDirs 是已配置的 compose 扫描目录，部署目录必须落在其中（防止误删白名单外的目录）。
+	composeDirs []string
 }
+
+// compose 标签键（与 dockercli 保持一致，取 Docker 标准键名）。
+const (
+	labelComposeProject = "com.docker.compose.project"
+	labelComposeWorkDir = "com.docker.compose.project.working_dir"
+)
 
 // newContainersAPI 构造。self 为空时取 hostname（容器内 HOSTNAME 即短 ID，
 // Docker 默认行为），拿不到就留空——没有 docker socket 的环境写操作自然全失败。
-func newContainersAPI(socket, self string) *containersAPI {
+// fs/comp/composeDirs 透传自 main：文件管理或 compose 未启用时对应为 nil/空，
+// remove 内部按 nil 安全处理，不要求二者一定存在。
+func newContainersAPI(socket, self string, fs *fsapi.Guard, comp dockercli.ComposeOperator, composeDirs []string) *containersAPI {
 	if socket == "" {
 		socket = dockercli.DefaultSocketPath
 	}
@@ -47,7 +64,7 @@ func newContainersAPI(socket, self string) *containersAPI {
 		}
 	}
 	g, _ := guard.New(self) // 无名单正则，New 不会失败
-	return &containersAPI{dc: dockercli.New(socket), guard: g}
+	return &containersAPI{dc: dockercli.New(socket), guard: g, fs: fs, comp: comp, composeDirs: composeDirs}
 }
 
 // guardWrite 是写操作的统一守卫。返回 true 表示已写响应，调用方直接 return。
@@ -156,21 +173,28 @@ func (a *containersAPI) action(w http.ResponseWriter, r *http.Request) {
 	writeAction(w, r, err)
 }
 
-// removeBody 是 DELETE 的可选请求体（force/v 也可以走查询串，二者取并集）。
+// removeBody 是 DELETE 的可选请求体（force/v/remove_image/remove_deploy_dir
+// 也都可以走查询串，二者取并集）。
 type removeBody struct {
-	Force   bool `json:"force"`
-	Volumes bool `json:"volumes"`
+	Force           bool `json:"force"`
+	Volumes         bool `json:"volumes"`
+	RemoveImage     bool `json:"remove_image"`
+	RemoveDeployDir bool `json:"remove_deploy_dir"`
 	// Confirm 是名字确认：须与目标 ID/名字完全一致（guard.Confirm 语义）。
 	Confirm string `json:"confirm"`
 }
 
-// remove 实现 DELETE /api/v1/containers/{id}?force=&v=。
+// remove 实现 DELETE /api/v1/containers/{id}?force=&v=&remove_image=&remove_deploy_dir=。
+//
+// 删容器本身是主操作；remove_image / remove_deploy_dir 是「联动清理」——
+// 仅当主操作成功后才执行，结果逐条收集进 ContainerRemoveResult.Messages 回显给用户。
 // 引擎不感知的 bind 目录/具名卷清理不在这里——调用方走文件模块与显式卷删除。
 func (a *containersAPI) remove(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if a.guardWrite(w, id) {
 		return
 	}
+	q := r.URL.Query()
 	var b removeBody
 	if r.Body != nil {
 		raw, _ := io.ReadAll(io.LimitReader(r.Body, 4<<10))
@@ -182,15 +206,137 @@ func (a *containersAPI) remove(w http.ResponseWriter, r *http.Request) {
 	// 破坏性确认：query 与 body 取并集（body 优先），语义同 force/v 的并集口径。
 	confirm := b.Confirm
 	if confirm == "" {
-		confirm = r.URL.Query().Get("confirm")
+		confirm = q.Get("confirm")
 	}
 	if err := guard.Confirm(id, confirm); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, err.Error())
 		return
 	}
-	force := b.Force || r.URL.Query().Get("force") == "1"
-	volumes := b.Volumes || r.URL.Query().Get("v") == "1"
-	writeAction(w, r, a.dc.Remove(r.Context(), id, force, volumes))
+	force := b.Force || q.Get("force") == "1"
+	volumes := b.Volumes || q.Get("v") == "1"
+	removeImage := b.RemoveImage || q.Get("remove_image") == "1"
+	removeDeployDir := b.RemoveDeployDir || q.Get("remove_deploy_dir") == "1"
+
+	// 先取容器信息（镜像引用 / compose 标签）——删完就查不到了，必须在主操作之前。
+	sum, _ := a.findContainer(r.Context(), id)
+
+	// 主操作优先：容器删不掉就直接报错，不做任何联动，避免「容器还在、目录已删」的半吊子状态。
+	if err := a.dc.Remove(r.Context(), id, force, volumes); err != nil {
+		code, msg := errToStatus(r, err)
+		httpx.WriteError(w, code, protocol.CodeUpstreamError, msg)
+		return
+	}
+
+	res := protocol.ContainerRemoveResult{OK: true}
+	var msgs []string
+	if removeImage {
+		msgs = append(msgs, a.removeImage(r, sum)...)
+	}
+	if removeDeployDir {
+		msgs = append(msgs, a.removeDeployDir(r, sum)...)
+	}
+	res.Messages = msgs
+	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+// findContainer 在容器清单里按 id（全 ID / 前缀 / 名字）定位一条，取它的镜像引用与
+// compose 标签——联动清理需要这些信息，而删容器本身只认 id 字符串。
+//
+// 找不到时返回零值：联动清理本就是「尽力而为」，缺信息就跳过并提示，不阻断主操作。
+func (a *containersAPI) findContainer(ctx context.Context, id string) (protocol.ContainerSummary, bool) {
+	list, err := a.dc.List(ctx, true)
+	if err != nil {
+		return protocol.ContainerSummary{}, false
+	}
+	for _, c := range list {
+		if c.ID == id || strings.HasPrefix(c.ID, id) {
+			return c, true
+		}
+		for _, n := range c.Names {
+			if strings.TrimPrefix(n, "/") == id {
+				return c, true
+			}
+		}
+	}
+	return protocol.ContainerSummary{}, false
+}
+
+// removeImage 联动删除容器使用的镜像。镜像被其他容器引用（409）或无故不存在（404）
+// 都按「跳过并提示」处理——强删是调用方确认链的事，这里不代劳。
+func (a *containersAPI) removeImage(r *http.Request, sum protocol.ContainerSummary) []string {
+	if sum.ID == "" {
+		return []string{"未找到容器信息，已跳过镜像清理"}
+	}
+	// 优先用 ImageID（精确指向这个容器实际跑的镜像层），空了才退到 Image。
+	ref := sum.ImageID
+	if ref == "" {
+		ref = sum.Image
+	}
+	if ref == "" {
+		return []string{"容器无镜像引用，已跳过镜像清理"}
+	}
+	if err := a.dc.Delete(r.Context(), ref); err != nil {
+		msg := err.Error()
+		switch {
+		case strings.Contains(msg, "删除冲突 (409)"):
+			return []string{fmt.Sprintf("镜像 %s 仍被其他容器引用，已跳过", ref)}
+		case strings.Contains(msg, "不存在 (404)"):
+			return []string{fmt.Sprintf("镜像 %s 不存在，已跳过", ref)}
+		default:
+			return []string{fmt.Sprintf("镜像 %s 删除失败：%s", ref, msg)}
+		}
+	}
+	return []string{fmt.Sprintf("已删除镜像 %s", ref)}
+}
+
+// removeDeployDir 联动递归删除 compose 项目的部署目录（working_dir）。
+//
+// 安全闸门（任一不通过即跳过并提示）：
+//  1. 文件管理已启用（fs != nil），否则没地方安全地删；
+//  2. 目录落在文件管理白名单根内（fs.PathToRel 校验，且不是根自身）；
+//  3. 目录落在已配置的 compose 扫描目录内，防止误删白名单外的目录；
+//  4. 项目无路径冲突（comp.ResolveProject 给出 Conflict）。
+func (a *containersAPI) removeDeployDir(r *http.Request, sum protocol.ContainerSummary) []string {
+	if a.fs == nil {
+		return []string{"文件管理未启用，已跳过部署目录清理"}
+	}
+	if sum.ID == "" {
+		return []string{"未找到容器信息，已跳过部署目录清理"}
+	}
+	wd := sum.Labels[labelComposeWorkDir]
+	if wd == "" {
+		return []string{"容器不是 compose 项目，已跳过部署目录清理"}
+	}
+	rootIndex, rel, ok := a.fs.PathToRel(wd)
+	if !ok {
+		return []string{fmt.Sprintf("部署目录 %s 不在文件管理白名单内，已跳过", wd)}
+	}
+	if rel == "" {
+		return []string{fmt.Sprintf("部署目录 %s 是白名单根，已跳过", wd)}
+	}
+	if !withinComposeDir(wd, a.composeDirs) {
+		return []string{fmt.Sprintf("部署目录 %s 不在 compose 管理目录内，已跳过", wd)}
+	}
+	if name := sum.Labels[labelComposeProject]; name != "" && a.comp != nil {
+		if p, ok := a.comp.ResolveProject(r.Context(), name); ok && p.Conflict {
+			return []string{fmt.Sprintf("compose 项目 %s 存在路径冲突，已跳过部署目录清理", name)}
+		}
+	}
+	if _, err := a.fs.DeleteRecursive(rootIndex, rel); err != nil {
+		return []string{fmt.Sprintf("部署目录 %s 清理失败：%s", wd, err.Error())}
+	}
+	return []string{fmt.Sprintf("已删除部署目录 %s", wd)}
+}
+
+// withinComposeDir 判断 path 是否落在某个已配置 compose 扫描目录内或恰为它本身。
+// 仅当 path 是某 compose 目录（含其子目录）时才放行，目录外的联动清理一律拒绝。
+func withinComposeDir(path string, dirs []string) bool {
+	for _, d := range dirs {
+		if path == d || strings.HasPrefix(path, d+string(os.PathSeparator)) {
+			return true
+		}
+	}
+	return false
 }
 
 // writeAction 统一写操作的成功/失败响应。带 r 是为了让引擎错误日志

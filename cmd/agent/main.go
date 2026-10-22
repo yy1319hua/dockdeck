@@ -17,6 +17,7 @@ import (
 	"github.com/yy1319hua/dockdeck/internal/agenthttp"
 	"github.com/yy1319hua/dockdeck/internal/collector"
 	"github.com/yy1319hua/dockdeck/internal/config"
+	"github.com/yy1319hua/dockdeck/internal/fsapi"
 	"github.com/yy1319hua/dockdeck/internal/httpx"
 	"github.com/yy1319hua/dockdeck/internal/protocol"
 )
@@ -46,9 +47,17 @@ func run(args []string) error {
 		log.Printf("agent: compose 目录配置提醒: %s", w)
 	}
 
+	// 容器删除联动需要文件管理守卫与 compose 操作器；二者未启用时传 nil，
+	// cmd/agent 的 remove 内部按 nil 安全处理（只做主删除、跳过联动）。
+	var fsGuard *fsapi.Guard
+	if fapi != nil {
+		fsGuard = fapi.g
+	}
+	compapi := newComposeAPI(cfg.ComposeDirs, cfg.SelfContainer, cfg.DockerSocket)
+
 	handler := buildHandler(cfg.Token, collector.New(cfg.DiskMounts), newEngineStatsSource(cfg.DockerSocket),
-		newContainersAPI(cfg.DockerSocket, cfg.SelfContainer), newImagesAPI(cfg.DockerSocket),
-		newComposeAPI(cfg.ComposeDirs, cfg.SelfContainer, cfg.DockerSocket), fapi, newResourcesAPI(cfg.DockerSocket))
+		newContainersAPI(cfg.DockerSocket, cfg.SelfContainer, fsGuard, compapi.op, cfg.ComposeDirs), newImagesAPI(cfg.DockerSocket),
+		compapi, fapi, newResourcesAPI(cfg.DockerSocket))
 
 	// 反向模式下「能连上 Hub 并完成纳管」就是 Agent 的命脉：Hub 未就绪时无限重试
 	// （退避上限 30s），只有凭据/邀请类永久失败才退出——

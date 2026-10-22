@@ -144,7 +144,7 @@ func agentWith(t *testing.T, socket, self string) (*httptest.Server, *fakeDocker
 	if socket == "" {
 		socket = f.sock
 	}
-	srv := httptest.NewServer(buildHandler(smokeToken, smokeCollector(t), nil, newContainersAPI(socket, self), newImagesAPI(socket), newComposeAPI(nil, "", ""), nil, newResourcesAPI("")))
+	srv := httptest.NewServer(buildHandler(smokeToken, smokeCollector(t), nil, newContainersAPI(socket, self, nil, nil, nil), newImagesAPI(socket), newComposeAPI(nil, "", ""), nil, newResourcesAPI("")))
 	t.Cleanup(srv.Close)
 	return srv, f
 }
@@ -158,6 +158,24 @@ func (f *fakeDocker) nextPath(t *testing.T) string {
 	default:
 		t.Fatal("假 Engine 没收到请求")
 		return ""
+	}
+}
+
+// lastPath 读假 Engine 收到的最后一条请求路径（适用于一次 API 调用产生多次 Engine 请求的场景，
+// 例如删除容器前会先 dc.List 预取镜像/Label 用于联动删除）。
+func (f *fakeDocker) lastPath(t *testing.T) string {
+	t.Helper()
+	var last string
+	for {
+		select {
+		case p := <-f.paths:
+			last = p
+		default:
+			if last == "" {
+				t.Fatal("假 Engine 没收到请求")
+			}
+			return last
+		}
 	}
 }
 
@@ -222,7 +240,7 @@ func TestContainers_WriteOps(t *testing.T) {
 			if resp.StatusCode != http.StatusOK {
 				t.Fatalf("应 200，got %d：%s", resp.StatusCode, body)
 			}
-			if got := f.nextPath(t); got != c.wantPath {
+			if got := f.lastPath(t); got != c.wantPath {
 				t.Errorf("Engine 路径 = %q，want %q", got, c.wantPath)
 			}
 		})

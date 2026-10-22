@@ -175,9 +175,15 @@ func TestClient_ContainerWriteOps(t *testing.T) {
 			"POST", "/api/v1/containers/c1/kill", `{"signal":"SIGTERM"}`},
 		{"resize", func(ctx context.Context, c *Client) error { return c.ContainerResize(ctx, "c1", 24, 80) },
 			"POST", "/api/v1/containers/c1/resize?h=24&w=80", ""},
-		{"remove-bare", func(ctx context.Context, c *Client) error { return c.ContainerRemove(ctx, "c1", false, false, "") },
+		{"remove-bare", func(ctx context.Context, c *Client) error {
+			_, err := c.ContainerRemove(ctx, "c1", false, false, false, false, "")
+			return err
+		},
 			"DELETE", "/api/v1/containers/c1", ""},
-		{"remove-force-v", func(ctx context.Context, c *Client) error { return c.ContainerRemove(ctx, "c1", true, true, "") },
+		{"remove-force-v", func(ctx context.Context, c *Client) error {
+			_, err := c.ContainerRemove(ctx, "c1", true, true, false, false, "")
+			return err
+		},
 			"DELETE", "/api/v1/containers/c1?force=1&v=1", ""},
 	}
 	for _, tc := range cases {
@@ -220,7 +226,7 @@ func TestClient_ContainerWriteLocalRejects(t *testing.T) {
 		err  error
 	}{
 		{"start-bad-id", c.ContainerStart(ctx, badID)},
-		{"remove-bad-id", c.ContainerRemove(ctx, badID, false, false, badID)},
+		{"remove-bad-id", func() error { _, err := c.ContainerRemove(ctx, badID, false, false, false, false, badID); return err }()},
 		{"kill-bad-signal", c.ContainerKill(ctx, "c1", "SIGEVIL")},
 		{"resize-zero", c.ContainerResize(ctx, "c1", 0, 80)},
 		{"resize-negative", c.ContainerResize(ctx, "c1", 24, -1)},

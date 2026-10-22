@@ -279,9 +279,11 @@ func (s *server) containerRemove(w http.ResponseWriter, r *http.Request) {
 	}
 	cid := r.PathValue("cid")
 	var body struct {
-		Force   bool   `json:"force"`
-		Volumes bool   `json:"volumes"`
-		Confirm string `json:"confirm"`
+		Force           bool   `json:"force"`
+		Volumes         bool   `json:"volumes"`
+		RemoveImage     bool   `json:"remove_image"`
+		RemoveDeployDir bool   `json:"remove_deploy_dir"`
+		Confirm         string `json:"confirm"`
 	}
 	if err := decodeOptionalBody(r, &body); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, err.Error())
@@ -308,11 +310,16 @@ func (s *server) containerRemove(w http.ResponseWriter, r *http.Request) {
 	}
 	force := body.Force || q.Get("force") == "1"
 	volumes := body.Volumes || q.Get("v") == "1"
-	if err := cl.ContainerRemove(r.Context(), cid, force, volumes, confirm); err != nil {
+	removeImage := body.RemoveImage || q.Get("remove_image") == "1"
+	removeDeployDir := body.RemoveDeployDir || q.Get("remove_deploy_dir") == "1"
+	// 删容器是主操作；remove_image / remove_deploy_dir 是联动清理，结果随
+	// ContainerRemoveResult 一并回传（OK 主操作是否成功，Messages 逐条联动结果）。
+	res, err := cl.ContainerRemove(r.Context(), cid, force, volumes, removeImage, removeDeployDir, confirm)
+	if err != nil {
 		writeAgentError(w, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
+	httpx.WriteJSON(w, http.StatusOK, res)
 }
 
 // containerGuard 取保护名单并编译。名单存 settings.protected_containers

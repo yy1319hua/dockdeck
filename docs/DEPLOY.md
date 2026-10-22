@@ -4,7 +4,7 @@
 
 ## 1. 架构与角色
 
-DockDeck 由两类角色组成，各自独立部署（Hub 用 `deploy/docker-compose.yml`，Agent 用 `deploy/docker-compose.agent.yml`，v0.2.6 起拆分）：
+DockDeck 由两类角色组成，各自独立部署：Hub 用 `deploy/docker-compose.yml`；Agent 由面板「添加服务器」生成部署命令（v0.2.9 起不再随仓库提供手写模板）：
 
 | 角色 | 职责 | 监听端口 | 挂 docker.sock | 数据 |
 |------|------|------|----------------|------|
@@ -54,8 +54,7 @@ Agent 用容器部署，不走安装脚本：Hub 面板「添加服务器」按�
 `docker run` / `compose` 命令，贴到目标机执行即可。命令里的 Hub 地址取自面板
 当前访问地址（公网隧道 / 内网 / tailnet 都成立），纳管密钥 30 分钟内有效。
 
-需要手工部署时用 `deploy/docker-compose.agent.yml`（见
-`deploy/README.md`「手工步骤」）。
+Agent 部署命令由面板「添加服务器」现生成，贴到目标机执行即可（见 3.2；仓库不再提供手写 Agent 模板）。
 
 ## 4. 安装脚本做了什么
 
@@ -90,11 +89,12 @@ printf '%s' '<Hub 侧纳管时生成的 Agent 令牌>' > secrets/agent.token
 # Hub 机（不带 --profile 则什么都不起，防误起）
 docker compose --profile hub up -d     # Hub 机
 # Agent 机（独立模板，单服务无 profile）
-docker compose -f docker-compose.agent.yml up -d
+# Agent 机（仓库不提供手写模板；用面板「添加服务器」生成的 compose 命令部署）
+#   docker compose -f <面板生成的 compose> up -d
 
 # 启动前自检（不需要守护进程）
 docker compose --profile hub config                        # Hub
-docker compose -p dockdeck-agent -f docker-compose.agent.yml config   # Agent
+# Agent 自检：用面板生成的 compose 文件名替换上方文件名后再 config
 ```
 
 镜像默认 `ghcr.io/yy1319hua/dockdeck-{hub,agent}:latest`，由 `.github/workflows/ci.yml` 在打 `v*` tag 时经 GitHub Actions 构建推送（双架构、免 QEMU）。
@@ -108,7 +108,7 @@ docker compose -p dockdeck-agent -f docker-compose.agent.yml config   # Agent
 | Agent token 走 `--token-file` 挂载 | `docker inspect` 看不到文件内容；600 权限；路径不入库（否决环境变量 `DD_AGENT_TOKEN`）|
 | socket `:ro` + Agent root | socket 属主 `root:docker`；`:ro` 与自我保护名单双边界 |
 | 固定 `container_name` + `--self-container` | guard 的「不碰自身容器」跨重建稳定 |
-| Hub / Agent 双模板（v0.2.6 拆分） | compose 对未激活 profile 的服务也做变量插值：旧单文件里 Agent 的 `${DD_BIND_IP:?}` 让「只起 Agent 的机器」莫名失败；拆开后 Hub 模板还能靠 profile 防误起 |
+| Hub 单模板（v0.2.6 起；Agent 改由面板生成） | compose 对未激活 profile 的服务也做变量插值：旧单文件里 Agent 的 `${DD_BIND_IP:?}` 让「只起 Agent 的机器」莫名失败；拆开后 Hub 模板还能靠 profile 防误起 |
 
 ## 7. 配置项（`.env.example`）
 
@@ -146,8 +146,7 @@ cd deploy
 vim .env
 # 2. 拉新镜像并重启对应角色（Agent 用独立模板）
 docker compose --profile hub pull && docker compose --profile hub up -d
-docker compose -p dockdeck-agent -f docker-compose.agent.yml pull \
-  && docker compose -p dockdeck-agent -f docker-compose.agent.yml up -d
+# Agent 机：改 .env tag 后用面板「添加服务器」重新生成的命令拉新镜像并重建
 ```
 
 Hub 数据在命名卷，升级不丢；升级前建议先备份（见下）。
@@ -164,9 +163,9 @@ Hub 数据在命名卷，升级不丢；升级前建议先备份（见下）。
 
 ```bash
 docker compose --profile hub logs -f        # 看 Hub 日志
-docker compose -p dockdeck-agent -f docker-compose.agent.yml logs -f   # 看 Agent 日志
+# Agent 日志：docker compose -p dockdeck-agent -f <面板生成的 compose> logs -f
 docker compose --profile hub ps              # Hub 状态
-docker compose -p dockdeck-agent -f docker-compose.agent.yml ps        # Agent 状态
+# Agent 状态：docker compose -p dockdeck-agent -f <面板生成的 compose> ps
 docker compose --profile hub down            # 停止 Hub（不删卷）
 docker compose config                        # 渲染自检（须带 --profile）
 ```

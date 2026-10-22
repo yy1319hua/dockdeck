@@ -33,7 +33,7 @@
 
 | 现象 | 处理 |
 |------|------|
-| `DD_BIND_IP: 必填` | 编辑 Hub 机 `.env` 填 `DD_BIND_IP`（tailscale/内网具体 IP）；留空 compose 直接 fail-fast。Agent 机用 `docker-compose.agent.yml`，不需要此项 |
+| `DD_BIND_IP: 必填` | 编辑 Hub 机 `.env` 填 `DD_BIND_IP`（tailscale/内网具体 IP）；留空 compose 直接 fail-fast。Agent 由面板生成，不需要此项 |
 | Agent 启动即退出、日志提示缺 Hub 地址 | v0.2.6 起 `DD_HUB_URL` 是硬前提（反向唯一形态）：编辑 `.env` 填入 `https://<hub>:8443` 后重启 |
 | 绑定 `0.0.0.0` 被拒 | `0.0.0.0` 被应用层 `config.Validate` 拒绝；改用具体 IP |
 | `none` TLS 下仍想对外 | `none` 仅允许回环；对外需 `self` 或前面加反代 |
@@ -72,7 +72,7 @@
 ## 9. 升级 / 回滚
 
 - 升级：改 `.env` tag → `pull` → `up -d`；Agent 用独立模板：
-  `docker compose -p dockdeck-agent -f docker-compose.agent.yml pull && docker compose -p dockdeck-agent -f docker-compose.agent.yml up -d`。
+  面板「添加服务器」重新生成的命令（仓库不提供手写模板）。
 - 回滚：把 `.env` tag 改回旧版本 → 同上（命名卷数据保留）。
 - 如需回退数据：`deploy/restore.sh`（须先有 `backup.sh` 产物）。
 
@@ -80,9 +80,9 @@
 
 ```bash
 docker compose --profile hub logs -f        # Hub 日志
-docker compose -p dockdeck-agent -f docker-compose.agent.yml logs -f   # Agent 日志
+# Agent 日志：docker compose -p dockdeck-agent -f <面板生成的 compose> logs -f
 docker compose --profile hub ps              # Hub 状态
-docker compose -p dockdeck-agent -f docker-compose.agent.yml ps        # Agent 状态
+# Agent 状态：docker compose -p dockdeck-agent -f <面板生成的 compose> ps
 docker compose config                        # 渲染自检，须带 --profile
 ```
 
@@ -90,7 +90,7 @@ docker compose config                        # 渲染自检，须带 --profile
 
 ```bash
 docker compose --profile hub down     # 停 Hub（不删卷，数据保留）
-docker compose -p dockdeck-agent -f docker-compose.agent.yml down   # 停 Agent
+# 停 Agent：docker compose -p dockdeck-agent -f <面板生成的 compose> down
 # 彻底清数据（危险）：docker volume rm dockdeck-hub-data
 ```
 

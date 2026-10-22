@@ -4,8 +4,8 @@
 #   Hub 控制面：Web UI、鉴权、审计、聚合。数据落命名卷，不碰 docker.sock。
 #
 #   Agent 不在这份文件里：v0.2.6 起 Agent 只有反向长连接一种形态，
-#   独立模板见同目录 docker-compose.agent.yml（单服务、无 profile）。
-#   拆开的直接原因：compose 对未激活 profile 的服务也做变量插值，
+#   由面板「添加服务器」生成部署命令（仓库不提供手写 Agent 模板，v0.2.9 起）。
+#   拆开的历史原因：compose 对未激活 profile 的服务也做变量插值，
 #   本文件里 ${DD_BIND_IP:?必填} 曾让「只起 Agent 的机器」莫名启动失败。
 #
 # 用法（在 deploy/ 目录下）：
@@ -14,7 +14,7 @@
 #   docker compose --profile hub config    # 自检（渲染+插值，不需守护进程）
 #
 #   Agent 机（另备 secrets/agent.token 后用）：
-#   docker compose -f docker-compose.agent.yml up -d
+#   #   Agent 机：用面板「添加服务器」生成的部署命令（仓库不提供手写模板）
 #
 # 设计要点与取舍（详见 docs/ARCHITECTURE.md「网络与暴露」与 `.github/workflows/ci.yml` 的发布流程）：
 #   * network_mode: host + 应用层绑 IP——Hub 禁绑 0.0.0.0（config.Validate），

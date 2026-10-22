@@ -9,7 +9,7 @@ v0.2.6 起模板拆成两份（原因见下「设计要点」）：
 | 模板 | 角色 | 启动方式 |
 | --- | --- | --- |
 | `docker-compose.yml` | Hub（+ Cloudflare Tunnel，按 profile） | `docker compose --profile hub up -d` |
-| `docker-compose.agent.yml` | Agent（单服务，无 profile） | `docker compose -f docker-compose.agent.yml up -d` |
+| _(Agent 无模板)_ | Agent 由面板「添加服务器」生成命令 | Hub 面板「添加服务器」→ 复制命令到目标机执行 |
 
 Agent 只有**反向长连接**一种形态（v0.2.6 起）：不监听端口，启动后主动连 Hub
 的 WebSocket，NAT 后 / 无公网 IP 同样可纳管。因此 Agent 机不需要绑定 IP。
@@ -59,15 +59,15 @@ printf '%s' '<Hub 侧纳管时生成的 Agent 令牌>' > secrets/agent.token
 
 # 3. 按角色启动（Hub 不带 --profile 则什么都不起，防误起）
 docker compose --profile hub up -d                        # Hub 机
-docker compose -f docker-compose.agent.yml up -d          # Agent 机
+# Agent 机：用面板「添加服务器」生成的 compose 命令（仓库不提供手写模板）
 
 # 4. 启动前自检 / 查看渲染结果（不需要守护进程）
 docker compose --profile hub config                       # Hub
-docker compose -p dockdeck-agent -f docker-compose.agent.yml config   # Agent
+# Agent 自检：用面板生成的 compose 文件名替换后 config
 ```
 
 升级：改 `.env` 里的镜像 tag → `pull` → 再 `up -d`；Agent 用
-`docker compose -p dockdeck-agent -f docker-compose.agent.yml pull && up -d`。
+`面板「添加服务器」重新生成的命令拉新镜像并重建。
 Hub 数据（SQLite / 主密钥 / 自签证书 / 整库备份）在命名卷 `dockdeck_dockdeck-hub-data`
 （`dockdeck_` 前缀来自文件顶部 `name: dockdeck`）；备份与恢复走 Hub 设置页，不直接碰卷。
 
@@ -80,7 +80,7 @@ Hub 数据（SQLite / 主密钥 / 自签证书 / 整库备份）在命名卷 `do
 | Agent token 走 `--token-file` 绑定挂载 | `docker inspect` 看不到文件内容；600 权限；路径不入库 | `DD_AGENT_TOKEN` 环境变量：`docker inspect` 可见，共享服务器上即泄漏 |
 | socket `:ro` + Agent root | socket 属主 `root:docker`，非 root 摸不到；`:ro` 与自我保护名单双边界 | 入宿主 docker 组：GID 逐机不同、运行时才知 |
 | 固定 `container_name` + `--self-container` | guard 的 IsSelf 是双向前缀匹配；hostname 默认是容器短 ID（重建即变），固定名让「不动自己」稳定 | 默认 hostname：每次重建自我保护失效 |
-| Hub / Agent 双模板（v0.2.6 拆分） | compose 对**未激活 profile 的服务也做变量插值**（实测）：旧单文件里 Agent 的 `${DD_BIND_IP:?}` 让「只起 Agent 的机器」（.env 无 DD_BIND_IP）即使 `--profile agent` 也直接报错。拆开后 Hub 模板仍靠 profile 防误起，Agent 模板单服务无 profile | 占位默认值：把必填校验降级成静默默认值，错误配置能活到运行期 |
+| Hub 单模板 + Agent 由面板生成（v0.2.9 起 Agent 不再随仓库提供模板） | compose 对**未激活 profile 的服务也做变量插值**（实测）：旧单文件里 Agent 的 `${DD_BIND_IP:?}` 让「只起 Agent 的机器」（.env 无 DD_BIND_IP）即使 `--profile agent` 也直接报错；拆出独立 Hub 模板后靠 profile 防误起，Agent 进一步改为面板现生成命令，彻底消掉手写模板的维护面 | 占位默认值：把必填校验降级成静默默认值，错误配置能活到运行期 |
 
 未做（后续按需加固）：`read_only` + tmpfs、healthcheck（v0.2.6 起 Agent 无监听
 端口，健康检查只能走 `docker inspect` 容器状态或日志）、镜像 digest
@@ -91,7 +91,6 @@ Hub 数据（SQLite / 主密钥 / 自签证书 / 整库备份）在命名卷 `do
 | 文件 | 说明 |
 | --- | --- |
 | `docker-compose.yml` | Hub 模板本体（入库，v0.2.6 起只含 Hub + Tunnel） |
-| `docker-compose.agent.yml` | Agent 模板（入库，v0.2.6 起拆分；单服务、反向长连接） |
 | `install-hub.sh` | Hub 一键安装（S10.1，入库） |
 | `.env.example` | 环境变量样例（入库）；实用时复制为 `.env`（**不入库**） |
 | `README.md` | 本文件 |

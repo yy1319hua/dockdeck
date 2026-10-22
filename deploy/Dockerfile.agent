@@ -7,7 +7,7 @@
 #   docker buildx build --platform linux/amd64,linux/arm64 --push \
 #     -f deploy/Dockerfile.agent -t <registry>/dockdeck-agent:<tag> .
 #
-# 运行（docker.sock 只读挂载；compose 模板见 deploy/docker-compose.agent.yml）：
+# 运行（docker.sock 只读挂载；compose 由面板「添加服务器」生成，仓库不随附模板）：
 #   docker run \
 #     -v /var/run/docker.sock:/var/run/docker.sock:ro \
 #     -e DD_HUB_URL=https://hub.example:8443 \

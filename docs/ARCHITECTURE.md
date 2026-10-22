@@ -65,8 +65,8 @@ Agent ──出站 wss──> Hub /api/v1/agent/link ──复用同一条 WS─
 - 心跳 25s（`--link-ping`），必须明显小于反代空闲超时（Cloudflare 约 100s）。
 - M1 只承载非流式请求：请求 ≤1 MiB、响应 ≤8 MiB；流式日志与大文件在 M2。
 - **面板「添加节点」生成的全部是反向（wss）命令**（2026-10-20 起）；
-  部署模板也拆成 `deploy/docker-compose.yml`（Hub）与
-  `deploy/docker-compose.agent.yml`（Agent，单服务无 profile）。
+  Hub 部署模板为 `deploy/docker-compose.yml`（单文件，含 Hub + Tunnel profile）。
+  Agent 部署命令由面板现生成，**仓库不存手写 Agent 模板**（v0.2.9 起）。
 
 ## 认证
 

@@ -14,6 +14,7 @@ package procscan
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -25,6 +26,15 @@ import (
 
 // DefaultProcRoot 是宿主 procfs 的默认挂载点。
 const DefaultProcRoot = "/proc"
+
+// 明细（Detail）的哨兵错误。二者在 Agent 侧统一映射为 404（不泄漏 pid 是否存在），
+// 内部可区分以便测试断言。
+var (
+	// ErrProcessNotFound 表示该 pid 不存在或读取失败。
+	ErrProcessNotFound = errors.New("procscan: 进程不存在")
+	// ErrNotOwned 表示该 pid 存在但不归属目标容器（越权读取）。
+	ErrNotOwned = errors.New("procscan: 进程不属于该容器")
+)
 
 // List 返回属于 containerID 的进程列表，按 PID 升序。
 //
@@ -63,6 +73,41 @@ func List(ctx context.Context, procRoot, containerID string) ([]protocol.Contain
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].PID < out[j].PID })
 	return out, nil
+}
+
+// Detail 返回单个进程的补充明细（exe / cwd），仅当该 pid **归属目标容器**时。
+//
+// 安全红线：先读 /proc/<pid>/cgroup 做归属校验，不属于该容器一律 ErrNotOwned——
+// 否则调用方可用任意 pid 读宿主任意进程的信息。exe/cwd 是 magic symlink，
+// 用 Readlink 取目标路径（读不到就留空，不视为错误：进程可能刚退出/无权限）。
+func Detail(ctx context.Context, procRoot, containerID string, pid int) (protocol.ContainerProcessDetail, error) {
+	if containerID == "" || pid <= 0 {
+		return protocol.ContainerProcessDetail{}, ErrProcessNotFound
+	}
+	if procRoot == "" {
+		procRoot = DefaultProcRoot
+	}
+	if err := ctx.Err(); err != nil {
+		return protocol.ContainerProcessDetail{}, err
+	}
+	dir := filepath.Join(procRoot, strconv.Itoa(pid))
+
+	cg, err := os.ReadFile(filepath.Join(dir, "cgroup"))
+	if err != nil {
+		return protocol.ContainerProcessDetail{}, ErrProcessNotFound
+	}
+	if !cgroupBelongs(string(cg), containerID) {
+		return protocol.ContainerProcessDetail{}, ErrNotOwned
+	}
+
+	d := protocol.ContainerProcessDetail{PID: pid}
+	if p, err := os.Readlink(filepath.Join(dir, "exe")); err == nil {
+		d.Exe = p
+	}
+	if p, err := os.Readlink(filepath.Join(dir, "cwd")); err == nil {
+		d.Cwd = p
+	}
+	return d, nil
 }
 
 // readProcess 读取单个 pid 并判断是否归属 containerID。归属或必填字段

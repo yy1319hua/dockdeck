@@ -15,6 +15,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -140,6 +141,33 @@ func (a *containersAPI) processes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, procs)
+}
+
+// processDetail 实现 GET /api/v1/containers/{id}/processes/{pid}（#91 明细 v2，只读）。
+//
+// 只返回**归属该容器**的进程 exe/cwd；pid 不存在或不属于该容器统一 404——
+// 不区分二者，避免借「是否存在」探测宿主进程。归属校验在 procscan.Detail 内完成。
+func (a *containersAPI) processDetail(w http.ResponseWriter, r *http.Request) {
+	sum, ok := a.findContainer(r.Context(), r.PathValue("id"))
+	if !ok || sum.ID == "" {
+		httpx.WriteError(w, http.StatusNotFound, protocol.CodeNotFound, "容器不存在")
+		return
+	}
+	pid, err := strconv.Atoi(r.PathValue("pid"))
+	if err != nil || pid <= 0 {
+		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, "非法进程 PID")
+		return
+	}
+	d, err := procscan.Detail(r.Context(), procscan.DefaultProcRoot, sum.ID, pid)
+	if err != nil {
+		if errors.Is(err, procscan.ErrProcessNotFound) || errors.Is(err, procscan.ErrNotOwned) {
+			httpx.WriteError(w, http.StatusNotFound, protocol.CodeNotFound, "进程不存在")
+			return
+		}
+		httpx.WriteError(w, http.StatusBadGateway, protocol.CodeUpstreamError, "读取进程明细失败")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, d)
 }
 
 // lifecycleBody 是 stop/kill 的可选请求体。

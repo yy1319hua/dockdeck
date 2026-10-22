@@ -4,6 +4,7 @@ package procscan
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -169,5 +170,55 @@ func TestJoinCmdline(t *testing.T) {
 	}
 	if got := joinCmdline(nil); got != "" {
 		t.Errorf("空 cmdline 应为空串，got %q", got)
+	}
+}
+
+func TestDetail(t *testing.T) {
+	procRoot := t.TempDir()
+	id := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	other := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+	// 归属目标的进程：cgroup 命中，exe/cwd 为 magic symlink。
+	dir := filepath.Join(procRoot, "100")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "cgroup"), []byte("0::/docker/"+id+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/usr/bin/foo", filepath.Join(dir, "exe")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/app", filepath.Join(dir, "cwd")); err != nil {
+		t.Fatal(err)
+	}
+
+	d, err := Detail(context.Background(), procRoot, id, 100)
+	if err != nil {
+		t.Fatalf("Detail(归属进程): %v", err)
+	}
+	if d.PID != 100 || d.Exe != "/usr/bin/foo" || d.Cwd != "/app" {
+		t.Errorf("Detail = %+v，want exe=/usr/bin/foo cwd=/app", d)
+	}
+
+	// 越权 pid：存在但属于他容器 → ErrNotOwned（红线）。
+	if err := os.MkdirAll(filepath.Join(procRoot, "200"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(procRoot, "200", "cgroup"), []byte("0::/docker/"+other+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Detail(context.Background(), procRoot, id, 200); !errors.Is(err, ErrNotOwned) {
+		t.Errorf("越权 pid 应 ErrNotOwned，got %v", err)
+	}
+
+	// 不存在的 pid。
+	if _, err := Detail(context.Background(), procRoot, id, 999); !errors.Is(err, ErrProcessNotFound) {
+		t.Errorf("不存在 pid 应 ErrProcessNotFound，got %v", err)
+	}
+
+	// 空容器 ID 一律拒（绝不退化成任意进程可读）。
+	if _, err := Detail(context.Background(), procRoot, "", 100); !errors.Is(err, ErrProcessNotFound) {
+		t.Errorf("空容器ID 应 ErrProcessNotFound，got %v", err)
 	}
 }

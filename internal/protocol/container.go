@@ -250,3 +250,16 @@ type ContainerProcess struct {
 	// StartTime 是相对系统启动的时钟滴答数（clock ticks），非绝对时间。
 	StartTime int64 `json:"start_time"`
 }
+
+// ContainerProcessDetail 是单个进程的补充明细（#91 明细 v2，Agent 侧只读）。
+//
+// 仅包含容器内进程自身的 exe 与 cwd（readlink /proc/<pid>/exe|cwd 得到）。
+// 刻意**不**返回 env（可能含密钥，暴露面另行评估）、也不穿过 /proc/<pid>/root。
+// 读取前必须经 cgroup 归属校验：越权 pid 一律拒绝——否则可借此读宿主任意进程。
+type ContainerProcessDetail struct {
+	PID int `json:"pid"`
+	// Exe 是可执行文件路径（readlink /proc/<pid>/exe）。
+	Exe string `json:"exe"`
+	// Cwd 是工作目录（readlink /proc/<pid>/cwd）。
+	Cwd string `json:"cwd"`
+}

@@ -77,7 +77,12 @@
             <dd :title="detail.exe">{{ detail.exe || '—' }}</dd>
             <dt>cwd</dt>
             <dd :title="detail.cwd">{{ detail.cwd || '—' }}</dd>
+            <dt>打开文件</dt>
+            <dd>{{ detail.open_files?.length ?? 0 }} 个</dd>
           </dl>
+          <ul v-if="detail && detail.open_files && detail.open_files.length" class="cp__fds">
+            <li v-for="(f, i) in detail.open_files" :key="i" :title="f">{{ f }}</li>
+          </ul>
         </footer>
       </aside>
     </Transition>
@@ -397,6 +402,24 @@ onUnmounted(() => {
   white-space: nowrap;
   font-family: var(--font-mono, monospace);
   font-size: var(--text-xs);
+}
+
+.cp__fds {
+  margin: 0;
+  padding: var(--space-2) 0 0;
+  list-style: none;
+  max-height: 140px;
+  overflow: auto;
+  border-top: 1px dashed var(--border-subtle);
+}
+
+.cp__fds li {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
 }
 
 .cp__dim {

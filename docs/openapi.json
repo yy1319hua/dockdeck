@@ -5508,7 +5508,7 @@
       },
       "ContainerProcessDetail": {
         "type": "object",
-        "description": "单个进程的 exe/cwd（#91 v2；pid 须归属该容器，否则 404）。",
+        "description": "单个进程的 exe/cwd/打开文件（#91 v2；pid 须归属该容器，否则 404）。",
         "properties": {
           "cwd": {
             "type": "string",
@@ -5517,6 +5517,13 @@
           "exe": {
             "type": "string",
             "description": "可执行文件路径（readlink /proc/\u003cpid\u003e/exe）"
+          },
+          "open_files": {
+            "type": "array",
+            "description": "打开文件的 fd 目标（readlink /proc/\u003cpid\u003e/fd/*，上限 128）",
+            "items": {
+              "type": "string"
+            }
           },
           "pid": {
             "type": "integer",

@@ -262,4 +262,7 @@ type ContainerProcessDetail struct {
 	Exe string `json:"exe"`
 	// Cwd 是工作目录（readlink /proc/<pid>/cwd）。
 	Cwd string `json:"cwd"`
+	// OpenFiles 是打开文件的 fd 目标（readlink /proc/<pid>/fd/*，去重排序、上限 128）。
+	// 可为 socket:[N] / pipe:[N] / anon_inode:… 这类非路径目标。不含 env。
+	OpenFiles []string `json:"open_files,omitempty"`
 }

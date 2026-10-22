@@ -107,7 +107,37 @@ func Detail(ctx context.Context, procRoot, containerID string, pid int) (protoco
 	if p, err := os.Readlink(filepath.Join(dir, "cwd")); err == nil {
 		d.Cwd = p
 	}
+	d.OpenFiles = readOpenFiles(dir)
 	return d, nil
+}
+
+// maxOpenFiles 是单进程打开文件的返回上限：防某个进程开了几千个 fd 把响应撑爆。
+const maxOpenFiles = 128
+
+// readOpenFiles 读取 /proc/<pid>/fd 下每个 fd 的 readlink 目标。
+//
+// 目标可能是普通路径，也可能是 socket:[N] / pipe:[N] / anon_inode:…（非文件）。
+// 单个 fd 读失败（进程随时关 fd）跳过；结果排序保证稳定输出。
+func readOpenFiles(dir string) []string {
+	fdDir := filepath.Join(dir, "fd")
+	entries, err := os.ReadDir(fdDir)
+	if err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if len(out) >= maxOpenFiles {
+			break
+		}
+		if _, perr := strconv.Atoi(e.Name()); perr != nil {
+			continue // 非数字条目（正常不会有）跳过
+		}
+		if p, lerr := os.Readlink(filepath.Join(fdDir, e.Name())); lerr == nil {
+			out = append(out, p)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // readProcess 读取单个 pid 并判断是否归属 containerID。归属或必填字段

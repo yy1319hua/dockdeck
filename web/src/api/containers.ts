@@ -90,6 +90,8 @@ export interface ContainerProcessDetail {
   pid: number
   exe: string
   cwd: string
+  /** 打开文件 fd 目标（可能是 socket:[N]/pipe:[N] 等非路径；上限 128）。 */
+  open_files?: string[]
 }
 
 export async function fetchContainerProcessDetail(

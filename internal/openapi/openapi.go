@@ -476,11 +476,13 @@ func schemas() map[string]*Schema {
 		},
 		"ContainerProcessDetail": {
 			Type:        "object",
-			Description: "单个进程的 exe/cwd（#91 v2；pid 须归属该容器，否则 404）。",
+			Description: "单个进程的 exe/cwd/打开文件（#91 v2；pid 须归属该容器，否则 404）。",
 			Properties: map[string]*Schema{
 				"pid": {Type: "integer", Format: "int64"},
 				"exe": {Type: "string", Description: "可执行文件路径（readlink /proc/<pid>/exe）"},
 				"cwd": {Type: "string", Description: "工作目录（readlink /proc/<pid>/cwd）"},
+				"open_files": {Type: "array", Items: &Schema{Type: "string"},
+					Description: "打开文件的 fd 目标（readlink /proc/<pid>/fd/*，上限 128）"},
 			},
 		},
 		"ImageSummary": {

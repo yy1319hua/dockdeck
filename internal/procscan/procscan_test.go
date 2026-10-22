@@ -192,6 +192,17 @@ func TestDetail(t *testing.T) {
 	if err := os.Symlink("/app", filepath.Join(dir, "cwd")); err != nil {
 		t.Fatal(err)
 	}
+	// 打开文件：fd/3 -> 普通路径，fd/4 -> socket（非路径目标也应原样返回）。
+	fdDir := filepath.Join(dir, "fd")
+	if err := os.MkdirAll(fdDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/app/data.log", filepath.Join(fdDir, "3")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("socket:[123]", filepath.Join(fdDir, "4")); err != nil {
+		t.Fatal(err)
+	}
 
 	d, err := Detail(context.Background(), procRoot, id, 100)
 	if err != nil {
@@ -199,6 +210,9 @@ func TestDetail(t *testing.T) {
 	}
 	if d.PID != 100 || d.Exe != "/usr/bin/foo" || d.Cwd != "/app" {
 		t.Errorf("Detail = %+v，want exe=/usr/bin/foo cwd=/app", d)
+	}
+	if len(d.OpenFiles) != 2 || d.OpenFiles[0] != "/app/data.log" || d.OpenFiles[1] != "socket:[123]" {
+		t.Errorf("OpenFiles = %v，want [/app/data.log socket:[123]]", d.OpenFiles)
 	}
 
 	// 越权 pid：存在但属于他容器 → ErrNotOwned（红线）。

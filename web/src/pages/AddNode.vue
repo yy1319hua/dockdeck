@@ -99,6 +99,18 @@
           <input v-model.trim="opt.diskMounts" class="an__input" placeholder="留空 = 自动探测" />
           <span class="an__tip">逗号分隔，如 /,/data</span>
         </label>
+
+        <label class="an__field">
+          <span class="an__label">日志单文件上限</span>
+          <input v-model.trim="opt.logSize" class="an__input" placeholder="10m" />
+          <span class="an__tip">Docker json-file max-size；清空 = 不写轮转段</span>
+        </label>
+
+        <label class="an__field">
+          <span class="an__label">日志文件数</span>
+          <input v-model.trim="opt.logFiles" class="an__input" placeholder="3" />
+          <span class="an__tip">轮转保留份数，配合上一项生效</span>
+        </label>
       </div>
 
       <div class="an__actions">
@@ -194,6 +206,8 @@ const opt = reactive({
   composeDirs: '',
   selfContainer: 'dockdeck-agent',
   diskMounts: '',
+  logSize: '10m',
+  logFiles: '3',
 })
 
 const tab = ref<TabKey>('docker')
@@ -252,13 +266,20 @@ const currentCommand = computed(() => {
       env.push(`-e DD_AGENT_DISK_MOUNTS=${opt.diskMounts}`)
     }
     // v0.2.6 起反向是唯一形态：不监听端口，Agent 启动即主动连 Hub，无需开关。
-    return [
+    const lines = [
       `docker run -d --name ${activeSelf.value} --restart unless-stopped --network host \\`,
       '  -v /var/run/docker.sock:/var/run/docker.sock:ro \\',
       `  -v ${activeDir.value}:${activeDir.value} \\`,
       ...env.map((x) => `  ${x} \\`),
-      `  ${agentImage.value}`,
-    ].join('\n')
+    ]
+    // 日志轮转（#87）：两项都填才注入，避免半配产生奇怪行为。
+    if (opt.logSize && opt.logFiles) {
+      lines.push('  --log-driver json-file \\')
+      lines.push(`  --log-opt max-size=${opt.logSize} \\`)
+      lines.push(`  --log-opt max-file=${opt.logFiles} \\`)
+    }
+    lines.push(`  ${agentImage.value}`)
+    return lines.join('\n')
   }
   // compose：给可直接合并进现有栈的片段（不包顶层 version，已废弃）。
   const cmdLines = [
@@ -282,7 +303,7 @@ const currentCommand = computed(() => {
     envLines.push(`      DD_AGENT_DISK_MOUNTS: ${opt.diskMounts}`)
   }
   // v0.2.6 起反向是唯一形态：不监听端口，Agent 启动即主动连 Hub，无需开关。
-  return [
+  const lines = [
     'services:',
     `  ${activeSelf.value}:`,
     `    image: ${agentImage.value}`,
@@ -296,7 +317,17 @@ const currentCommand = computed(() => {
     `      - ${activeDir.value}:${activeDir.value}`,
     '    environment:',
     ...envLines,
-  ].join('\n')
+  ]
+  if (opt.logSize && opt.logFiles) {
+    lines.push(
+      '    logging:',
+      '      driver: json-file',
+      '      options:',
+      `        max-size: ${opt.logSize}`,
+      `        max-file: '${opt.logFiles}'`,
+    )
+  }
+  return lines.join('\n')
 })
 
 const currentHint = computed(() => {

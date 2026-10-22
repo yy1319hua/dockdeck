@@ -65,6 +65,9 @@ func runReverse(cfg config.AgentConfig, h http.Handler) error {
 // errLinkAuth 标记鉴权类永久失败：runReverse 见到它不重试、直接退出。
 var errLinkAuth = errors.New("agent: 反向连接鉴权失败")
 
+// errCreditWait 表示流式发送等待信用超时（消费端长时间不读）。
+var errCreditWait = errors.New("agent: 流式发送等待信用超时")
+
 // chunkedReq 累积一次分块请求（req S=true → data… → req_end 才派发）。
 type chunkedReq struct {
 	f   agentlink.Frame
@@ -142,6 +145,7 @@ func runSession(ctx context.Context, cfg config.AgentConfig, h http.Handler) err
 	inflight := maxInt(cfg.LinkMaxInflight, 1)
 	sem := make(chan struct{}, inflight)
 	var pending sync.Map // id → context.CancelFunc
+	var credits sync.Map // id → *credit（流式响应背压窗口）
 
 	// dispatchRequest 派发一个完整请求（含分块收齐后的）。
 	dispatchRequest := func(f agentlink.Frame) {
@@ -153,14 +157,18 @@ func runSession(ctx context.Context, cfg config.AgentConfig, h http.Handler) err
 		}
 		reqCtx, reqCancel := context.WithCancel(ctx)
 		pending.Store(f.ID, reqCancel)
-		go func(f agentlink.Frame, reqCtx context.Context, reqCancel context.CancelFunc) {
+		cr := newCredit(agentlink.CreditWindow)
+		credits.Store(f.ID, cr)
+		go func(f agentlink.Frame, reqCtx context.Context, reqCancel context.CancelFunc, cr *credit) {
 			defer func() {
 				reqCancel()
 				pending.Delete(f.ID)
+				credits.Delete(f.ID)
+				cr.close()
 				<-sem
 			}()
-			serveLinkRequest(reqCtx, lw, h, f, streamOK)
-		}(f, reqCtx, reqCancel)
+			serveLinkRequest(reqCtx, lw, h, f, streamOK, cr)
+		}(f, reqCtx, reqCancel, cr)
 	}
 	// bulk 累积分块请求（req S=true → data… → req_end 才派发）。
 	bulk := make(map[uint64]*chunkedReq)
@@ -206,6 +214,13 @@ func runSession(ctx context.Context, cfg config.AgentConfig, h http.Handler) err
 			if v, ok := pending.LoadAndDelete(f.ID); ok {
 				v.(context.CancelFunc)()
 			}
+			if v, ok := credits.Load(f.ID); ok {
+				v.(*credit).close()
+			}
+		case agentlink.TypeCredit:
+			if v, ok := credits.Load(f.ID); ok {
+				v.(*credit).add(f.Credit)
+			}
 		case agentlink.TypePing:
 			pong, _ := agentlink.Encode(agentlink.Frame{T: agentlink.TypePong})
 			_ = lw.write(ctx, websocket.MessageText, pong)
@@ -219,13 +234,13 @@ func runSession(ctx context.Context, cfg config.AgentConfig, h http.Handler) err
 
 // serveLinkRequest 把一帧 req 变成真实 HTTP 调用。
 // 必须走 mux（h.ServeHTTP）而不是直接调 handler：PathValue 由 ServeMux 填充。
-func serveLinkRequest(ctx context.Context, lw *linkWriter, h http.Handler, f agentlink.Frame, streamOK bool) {
+func serveLinkRequest(ctx context.Context, lw *linkWriter, h http.Handler, f agentlink.Frame, streamOK bool, cr *credit) {
 	req, err := buildReverseRequest(ctx, f)
 	if err != nil {
 		writeErr(lw, f.ID, protocol.CodeBadRequest, "构造请求失败: "+err.Error())
 		return
 	}
-	fw := &frameResponseWriter{id: f.ID, lw: lw, stream: streamOK}
+	fw := &frameResponseWriter{id: f.ID, lw: lw, stream: streamOK, credit: cr}
 	h.ServeHTTP(fw, req)
 	fw.finish()
 }
@@ -260,8 +275,9 @@ type frameResponseWriter struct {
 	status   int
 	buf      bytes.Buffer
 	overflow bool
-	started  bool  // 已发 resp_start，进入流式
-	werr     error // 流式写失败后短路，避免继续往断连写帧
+	started  bool    // 已发 resp_start，进入流式
+	werr     error   // 流式写失败后短路，避免继续往断连写帧
+	credit   *credit // 流式发送信用（背压窗口），nil 表示不启用
 }
 
 func (w *frameResponseWriter) Header() http.Header {
@@ -307,6 +323,11 @@ func (w *frameResponseWriter) Flush() {
 	if w.buf.Len() > 0 {
 		// 复制：buf 随后 Reset，底层数组会被后续 Write 复用。
 		chunk := append([]byte(nil), w.buf.Bytes()...)
+		// 背压：每块 data 先扣信用；不足则有界等待（超时即结束流）。
+		if w.credit != nil && !w.credit.acquire(int64(len(chunk)), creditWait) {
+			w.werr = errCreditWait
+			return
+		}
 		if err := w.writeFrame(agentlink.Frame{T: agentlink.TypeData, ID: w.id, B: chunk}); err != nil {
 			w.werr = err
 			return
@@ -353,6 +374,9 @@ func (w *frameResponseWriter) finish() {
 	if w.stream && w.started {
 		if w.buf.Len() > 0 {
 			chunk := append([]byte(nil), w.buf.Bytes()...)
+			if w.credit != nil && !w.credit.acquire(int64(len(chunk)), creditWait) {
+				return
+			}
 			if err := w.writeFrame(agentlink.Frame{T: agentlink.TypeData, ID: w.id, B: chunk}); err != nil {
 				return
 			}

@@ -29,6 +29,9 @@ const (
 	// MaxChunkedBody 是分块请求体允许的最大总量（超出拒绝）。比 MaxReqBody 大得多，
 	// 但仍有上限：避免恶意/异常客户端无限灌内存。单块大小远小于此，见 chunkSize。
 	MaxChunkedBody = 32 << 20 // 32 MiB
+	// CreditWindow 是流式响应的初始信用窗口（字节）：Agent 最多先发这么多，
+	// 之后必须等 Hub 消费端读走并回 credit 帧才继续（S12.5 M2 ④）。
+	CreditWindow = 256 << 10 // 256 KiB
 )
 
 // Type 是帧类型。
@@ -50,6 +53,9 @@ const (
 	TypeData      Type = "data"
 	TypeEnd       Type = "end"
 	TypeReqEnd    Type = "req_end"
+	// TypeCredit 是流式响应的信用补充（Hub → Agent）：消费端每读走 n 字节，
+	// 回一个 Credit=n 的帧，Agent 据此放行后续 data 帧（S12.5 M2 ④）。
+	TypeCredit Type = "credit"
 )
 
 // 能力标识。M1 的 Agent 至少声明 buffered 与 ping。
@@ -78,7 +84,9 @@ type Frame struct {
 	Msg  string            `json:"msg,omitempty"`
 	Caps []string          `json:"caps,omitempty"`
 	Seq  uint64            `json:"seq,omitempty"`
-	Host string            `json:"host,omitempty"` // hello 帧携带的 Agent 服务器名
+	// Credit 是信用帧携带的字节数（TypeCredit）。
+	Credit int64  `json:"credit,omitempty"`
+	Host   string `json:"host,omitempty"` // hello 帧携带的 Agent 服务器名
 }
 
 // Encode 序列化并校验上限。
@@ -113,7 +121,7 @@ func (f Frame) HasCap(cap string) bool {
 
 func validate(f Frame) error {
 	switch f.T {
-	case TypeHello, TypeHelloOK, TypePing, TypePong, TypeGoAway, TypeCancel, TypeErr:
+	case TypeHello, TypeHelloOK, TypePing, TypePong, TypeGoAway, TypeCancel, TypeErr, TypeCredit:
 		// 无载荷约束。
 	case TypeReq:
 		if f.M == "" || f.P == "" {

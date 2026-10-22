@@ -88,9 +88,11 @@ func (s *stream) finish(err error) {
 }
 
 // streamBody 是流式 http.Response.Body：把 data 块交给调用方，直到 end/错误。
+// onConsume 在每次真正读出 n 字节后回调，用于向 Agent 补充信用（背压窗口）。
 type streamBody struct {
-	s   *stream
-	rem []byte
+	s         *stream
+	rem       []byte
+	onConsume func(int)
 }
 
 func (b *streamBody) Read(p []byte) (int, error) {
@@ -98,6 +100,9 @@ func (b *streamBody) Read(p []byte) (int, error) {
 		if len(b.rem) > 0 {
 			n := copy(p, b.rem)
 			b.rem = b.rem[n:]
+			if b.onConsume != nil && n > 0 {
+				b.onConsume(n)
+			}
 			return n, nil
 		}
 		select {
@@ -260,7 +265,7 @@ func (c *Conn) Do(req *http.Request) (*http.Response, error) {
 			if res.st == nil {
 				return nil, ErrClosed
 			}
-			return startToResponse(res.f, res.st), nil
+			return startToResponse(res.f, res.st, c.creditFunc(res.f.ID)), nil
 		}
 		return frameToResponse(res.f), nil
 	case <-req.Context().Done():
@@ -512,7 +517,7 @@ func pickHeaders(h http.Header) map[string]string {
 
 // startToResponse 把 resp_start 帧 + 流 变成可流式读取的 http.Response。
 // ContentLength=-1：长度未知（流式），由调用方逐块读。
-func startToResponse(f Frame, st *stream) *http.Response {
+func startToResponse(f Frame, st *stream, onConsume func(int)) *http.Response {
 	h := make(http.Header, len(f.H))
 	for k, v := range f.H {
 		h.Set(k, v)
@@ -521,8 +526,17 @@ func startToResponse(f Frame, st *stream) *http.Response {
 		StatusCode:    f.St,
 		Status:        fmt.Sprintf("%d %s", f.St, http.StatusText(f.St)),
 		Header:        h,
-		Body:          &streamBody{s: st},
+		Body:          &streamBody{s: st, onConsume: onConsume},
 		ContentLength: -1,
+	}
+}
+
+// creditFunc 返回「消费 n 字节即回一个 credit 帧」的回调：Agent 据此放行后续 data。
+func (c *Conn) creditFunc(id uint64) func(int) {
+	return func(n int) {
+		if n > 0 {
+			c.enqueue(Frame{T: TypeCredit, ID: id, Credit: int64(n)})
+		}
 	}
 }
 

@@ -225,3 +225,42 @@ func TestDeleteServer(t *testing.T) {
 		t.Fatalf("删不存在的应 ErrNotFound，得 %v", err)
 	}
 }
+
+// TestServerRename 回归 #86：生效/trim/空名/超长/重名/不存在。
+func TestServerRename(t *testing.T) {
+	s := newServerStore(t)
+	idA := seedServer(t, s, "srv-a", "tok-a", true)
+	_ = seedServer(t, s, "srv-b", "tok-b", true)
+
+	// 正常改名 + 首尾空白裁剪。
+	got, err := s.RenameServer(context.Background(), idA, "  新名字  ")
+	if err != nil || got != "新名字" {
+		t.Fatalf("RenameServer = %q, %v", got, err)
+	}
+	if c, err := s.ServerConn(context.Background(), idA); err != nil || c.Name != "新名字" {
+		t.Errorf("改名后读回 = %q, %v", c.Name, err)
+	}
+
+	// 空名 / 纯空白 / 超长。
+	if _, err := s.RenameServer(context.Background(), idA, "   "); err == nil {
+		t.Error("空名应报错")
+	}
+	if _, err := s.RenameServer(context.Background(), idA, strings.Repeat("长", 65)); err == nil {
+		t.Error("超长应报错")
+	}
+
+	// 重名 → ErrServerNameTaken。
+	if _, err := s.RenameServer(context.Background(), idA, "srv-b"); !errors.Is(err, ErrServerNameTaken) {
+		t.Errorf("重名应 ErrServerNameTaken, 得 %v", err)
+	}
+
+	// 不存在 → ErrNotFound。
+	if _, err := s.RenameServer(context.Background(), 99999, "x"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("不存在应 ErrNotFound, 得 %v", err)
+	}
+
+	// 改名不改连接 token（反向链路凭据不受影响）。
+	if c, err := s.ServerConn(context.Background(), idA); err != nil || c.Token != "tok-a" {
+		t.Errorf("token 应不变, 得 %q, %v", c.Token, err)
+	}
+}

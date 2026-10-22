@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/yy1319hua/dockdeck/internal/crypto"
@@ -205,6 +206,37 @@ func (s *Store) DeleteServer(ctx context.Context, id int64) (string, error) {
 	}
 	res, err := s.DB.ExecContext(ctx, `DELETE FROM servers WHERE id=?`, id)
 	if err != nil {
+		return "", err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return "", ErrNotFound
+	}
+	return name, nil
+}
+
+// MaxServerNameLen 是服务器显示名的字节上限（UTF-8，一个汉字 3 字节）。
+const MaxServerNameLen = 64
+
+// RenameServer 改服务器显示名（#86）。名字是 Hub 侧展示与审计记录用的标识，
+// 与 Agent 连接无关——改它不动反向链路，也不需要通知 Agent。
+// 校验：去首尾空白后非空、≤ MaxServerNameLen 字节；重名回 ErrServerNameTaken。
+// 不存在回 ErrNotFound（RowsAffected 兜底并发删除）。
+func (s *Store) RenameServer(ctx context.Context, id int64, name string) (string, error) {
+	if id <= 0 {
+		return "", ErrNotFound
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", errors.New("store: 服务器名不能为空")
+	}
+	if len(name) > MaxServerNameLen {
+		return "", fmt.Errorf("store: 服务器名最长 %d 字节", MaxServerNameLen)
+	}
+	res, err := s.DB.ExecContext(ctx, `UPDATE servers SET name=? WHERE id=?`, name, id)
+	if err != nil {
+		if isUniqueErr(err) {
+			return "", ErrServerNameTaken
+		}
 		return "", err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {

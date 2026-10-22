@@ -964,6 +964,22 @@ func (s *server) routes() http.Handler {
 		InternalRef: "cmd/hub/servers.go serverDelete",
 	}, middleware.Audit(s.st, "server.delete", s.serverDelete))
 
+	// ---- 服务器改名（仅会话；Hub 侧显示名，与 Agent 连接无关）----
+	tbl.Add(route.Entry{
+		Method: "PATCH", Path: "/api/v1/servers/{id}", AuthMode: route.AuthSession,
+		Summary: "服务器改名", Tags: []string{"Servers"}, Body: &route.Body{},
+		Desc: "修改 Hub 侧显示名（servers.name，全局唯一，去首尾空白，上限 64 字节）。" +
+			"不影响 Agent 连接与 reverse:// 标识。仅浏览器会话可调（管理操作不开放 API Token）。",
+		Responses: []route.Response{
+			{Status: 400, Desc: "名字为空或超 64 字节"},
+			{Status: 401, Desc: "未登录，或携带 API Token"},
+			{Status: 404, Desc: "服务器不存在"},
+			{Status: 409, Desc: "同名服务器已存在"},
+			{Status: 500, Desc: "改名失败"},
+		},
+		InternalRef: "cmd/hub/servers.go serverRename",
+	}, middleware.Audit(s.st, "server.rename", s.serverRename))
+
 	// ---- 构建元数据：设置页「版本信息」分区消费（仅会话；不写审计，理由见 handler）----
 	tbl.Add(route.Entry{
 		Method: "GET", Path: "/api/v1/system/version", AuthMode: route.AuthSession,

@@ -43,3 +43,39 @@ func (s *server) serverDelete(w http.ResponseWriter, r *http.Request) {
 	log.Printf("hub: 已删除受管服务器 #%d（%s）", id, name)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"id": id, "name": name})
 }
+
+// serverRename 实现 PATCH /api/v1/servers/{id}：改服务器显示名（#86）。
+//
+// 仅浏览器会话可调（与删除同口径：管理操作不开放 API Token）。名字是 Hub 侧
+// 展示标识，与 Agent 连接无关；重名 409（servers.name 唯一），404 不存在。
+// 审计由 middleware.Audit 记 server.rename。
+func (s *server) serverRename(w http.ResponseWriter, r *http.Request) {
+	id, err := parseServerID(r)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, "非法服务器 ID")
+		return
+	}
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := httpx.DecodeJSON(w, r, &body); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, "请求体不合法")
+		return
+	}
+	name, err := s.st.RenameServer(r.Context(), id, body.Name)
+	switch {
+	case errors.Is(err, store.ErrServerNameTaken):
+		httpx.WriteError(w, http.StatusConflict, protocol.CodeConflict, "同名服务器已存在")
+		return
+	case errors.Is(err, store.ErrNotFound):
+		httpx.WriteError(w, http.StatusNotFound, protocol.CodeNotFound, "服务器不存在")
+		return
+	case err != nil:
+		// 校验类错误（空名/超长）与内部错误都走这里：文案区分交给前缀判断太脆，
+		// 直接把 store 的校验原文回给调用方（store 错误本身就是中文人话）。
+		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, humanizeAgentMessage(err.Error()))
+		return
+	}
+	log.Printf("hub: 服务器 #%d 改名为 %q", id, name)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"id": id, "name": name})
+}

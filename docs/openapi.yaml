@@ -816,6 +816,71 @@ paths:
         -
           cookieAuth: []
   "/api/v1/servers/{id}":
+    patch:
+      operationId: "patchApiV1ServersId"
+      summary: "服务器改名"
+      description: "修改 Hub 侧显示名（servers.name，全局唯一，去首尾空白，上限 64 字节）。不影响 Agent 连接与 reverse:// 标识。仅浏览器会话可调（管理操作不开放 API Token）。"
+      tags:
+        - "Servers"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "object"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "名字为空或超 64 字节"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "未登录，或携带 API Token"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "身份成立但无权执行"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "服务器不存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "409":
+          description: "同名服务器已存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "500":
+          description: "改名失败"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          cookieAuth: []
     delete:
       operationId: "deleteApiV1ServersId"
       summary: "删除受管服务器"

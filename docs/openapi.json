@@ -162,6 +162,94 @@
         ]
       }
     },
+    "/api/v1/admin/restore": {
+      "post": {
+        "operationId": "postApiV1AdminRestore",
+        "summary": "上传整库备份并暂存",
+        "description": "上传此前下载的整库备份（SQLite 原始字节）。服务端校验 integrity_check 与 schema_migrations 版本后，自动备份当前库（pre-restore-*.db 永久保留），再把合格备份暂存为 restore-staged.db——重启 Hub 容器生效。登录密码走 X-DD-Admin-Password 头。任一步失败零副作用，当前库不受影响。",
+        "tags": [
+          "Settings"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/vnd.sqlite3": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "缺少密码头 / 上传超限 / 备份校验失败",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未登录，或携带 API Token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "登录密码不正确",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "目标不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "暂存失败",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ]
+      }
+    },
     "/api/v1/api-tokens": {
       "get": {
         "operationId": "getApiV1Apitokens",

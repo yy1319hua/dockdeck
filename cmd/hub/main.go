@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -62,6 +63,14 @@ func run(args []string) error {
 
 	if cfg.AllowInsecureBind {
 		log.Printf("hub: ⚠️ 已启用 --allow-insecure-bind，监听 %s 会暴露到所有网卡（含内网与 docker 网桥），请确认这是有意为之", cfg.ListenAddr)
+	}
+
+	// 整库恢复（#93 方案①）：若有暂存库，先在开库前完成文件级替换——
+	// 替换过程把当前库挪进 backups/，随后 Open 正常向前迁移。
+	if applied, err := db.ApplyStagedRestore(cfg.DBPath); err != nil {
+		return fmt.Errorf("应用暂存恢复库失败: %w", err)
+	} else if applied {
+		log.Printf("hub: 已应用暂存恢复库（原库在 data/backups/pre-restore-boot-*）")
 	}
 
 	sqlDB, err := db.Open(cfg.DBPath)
@@ -900,6 +909,24 @@ func (s *server) routes() http.Handler {
 		},
 		InternalRef: "cmd/hub/settings.go backupDB",
 	}, middleware.Audit(s.st, "admin.backup", s.backupDB))
+
+	// ---- 整库恢复（仅会话；暂存+重启生效，方案①）----
+	tbl.Add(route.Entry{
+		Method: "POST", Path: "/api/v1/admin/restore", AuthMode: route.AuthSession,
+		NoEnvelope: true, ContentType: "application/vnd.sqlite3",
+		Summary: "上传整库备份并暂存", Tags: []string{"Settings"}, Body: &route.Body{Type: "octet-stream"},
+		Desc: "上传此前下载的整库备份（SQLite 原始字节）。服务端校验 integrity_check 与 " +
+			"schema_migrations 版本后，自动备份当前库（pre-restore-*.db 永久保留），再把合格备份" +
+			"暂存为 restore-staged.db——重启 Hub 容器生效。登录密码走 X-DD-Admin-Password 头。" +
+			"任一步失败零副作用，当前库不受影响。",
+		Responses: []route.Response{
+			{Status: 400, Desc: "缺少密码头 / 上传超限 / 备份校验失败"},
+			{Status: 401, Desc: "未登录，或携带 API Token"},
+			{Status: 403, Desc: "登录密码不正确"},
+			{Status: 500, Desc: "暂存失败"},
+		},
+		InternalRef: "cmd/hub/restore.go serverRestore",
+	}, middleware.Audit(s.st, "admin.restore", s.serverRestore))
 
 	// 受管服务器清单：直接读 servers 表，不做实时探测（在线状态以 last_seen 为准）。
 	// 列表只投影管理所需字段，绝不回带 Agent 令牌等秘密；纳管（写入 servers）机制见`docs/ARCHITECTURE.md` 的纳管设计裁定。

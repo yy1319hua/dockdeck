@@ -112,3 +112,37 @@ function filenameFromDisposition(cd: string | null): string | null {
 function backupFallbackName(): string {
   return `dockdeck-${new Date().toISOString().slice(0, 19).replace(/[:T-]/g, '')}.db`
 }
+
+/*
+ * 上传整库备份并暂存（POST /admin/restore，#93）。裸体 octet-stream 直 fetch；
+ * 登录密码走 X-DD-Admin-Password 头（不进 URL、不进 body 解析错误文案）。
+ * 成功返回后端提示文案（暂存+重启生效说明）。
+ */
+export async function restoreBackup(file: File, password: string): Promise<string> {
+  let res: Response
+  try {
+    res = await fetch('/api/v1/admin/restore', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/vnd.sqlite3', 'X-DD-Admin-Password': password },
+      body: file,
+    })
+  } catch (e) {
+    throw new ApiError(0, 'network_error', e instanceof Error ? e.message : '网络请求失败')
+  }
+  if (!res.ok) {
+    let code = 'restore_error'
+    let message = res.statusText
+    try {
+      const body = await res.json()
+      if (body?.error) {
+        code = body.error.code ?? code
+        message = body.error.message ?? message
+      }
+    } catch {
+      // 保留 statusText
+    }
+    throw new ApiError(res.status, code, message)
+  }
+  const body = await res.json()
+  return body?.hint ?? '已暂存，重启 Hub 容器后生效。'
+}

@@ -215,9 +215,45 @@
         <b>它等同于一份数据库副本，请按同等密级存放</b>。下载动作记入审计。
       </p>
       <div class="st__acts">
-        <button type="button" class="btn btn--primary" :disabled="backingUp" @click="onBackup">
+        <button type="button" class="btn btn--primary" :disabled="backingUp || restoring" @click="onBackup">
           {{ backingUp ? '生成中…' : '下载快照' }}
         </button>
+      </div>
+
+      <!-- 恢复（#93）：上传此前下载的快照，校验后暂存，重启 Hub 容器生效。
+           恢复前服务端自动备份当前库；需要登录密码做二次确认。 -->
+      <div class="st__restore">
+        <h3 class="st__restore-title">从快照恢复</h3>
+        <p class="st__restore-desc">
+          选择此前下载的 <code>.db</code> 快照上传：服务端校验完整性与 schema 版本后自动备份当前库并暂存，
+          <b>重启 Hub 容器后生效</b>。任一步失败都不影响当前数据。
+        </p>
+        <div class="st__restore-row">
+          <input
+            class="st__restore-file"
+            type="file"
+            accept=".db,application/vnd.sqlite3"
+            :disabled="restoring"
+            @change="onRestoreFile"
+          />
+          <input
+            v-model="restorePassword"
+            class="st__restore-pw field__input"
+            type="password"
+            placeholder="登录密码（二次确认）"
+            autocomplete="off"
+            :disabled="restoring"
+          />
+          <button
+            type="button"
+            class="btn btn--danger"
+            :disabled="restoring || !restoreFile || restorePassword === ''"
+            @click="onRestore"
+          >
+            {{ restoring ? '上传校验中…' : '上传并暂存' }}
+          </button>
+        </div>
+        <p v-if="restoreHint" class="st__restore-hint">{{ restoreHint }}</p>
       </div>
     </section>
 
@@ -262,7 +298,7 @@ import { useRouter } from 'vue-router'
 import AppConfirm from '@/components/AppConfirm.vue'
 import { ApiError } from '@/api/errors'
 import { changePassword } from '@/api/auth'
-import { downloadBackup, putProtectedContainers } from '@/api/settings'
+import { downloadBackup, putProtectedContainers, restoreBackup } from '@/api/settings'
 import { fetchBuildInfo, type BuildInfo } from '@/api/system'
 import { TOKEN_TTLS, createToken, revokeToken, type ApiToken, type TokenTtl } from '@/api/tokens'
 import { useSettingsStore } from '@/stores/settings'
@@ -432,6 +468,42 @@ async function onBackup(): Promise<void> {
     ui.notifyError(e)
   } finally {
     backingUp.value = false
+  }
+}
+
+/* ---------- ⑤ 恢复（#93） ---------- */
+
+const restoreFile = ref<File | null>(null)
+const restorePassword = ref('')
+const restoring = ref(false)
+const restoreHint = ref('')
+
+function onRestoreFile(e: Event): void {
+  const input = e.target as HTMLInputElement
+  restoreFile.value = input.files?.[0] ?? null
+  restoreHint.value = ''
+}
+
+async function onRestore(): Promise<void> {
+  if (restoring.value || restoreFile.value === null || restorePassword.value === '') return
+  // 前置确认：这是覆盖库级数据的动作，弹一次原生确认兜底（后端还有密码门槛）。
+  if (!window.confirm(`确认用「${restoreFile.value.name}」恢复整库？当前数据会自动备份，恢复暂存后需重启 Hub 容器生效。`)) {
+    return
+  }
+  restoring.value = true
+  restoreHint.value = ''
+  try {
+    restoreHint.value = await restoreBackup(restoreFile.value, restorePassword.value)
+    restoreFile.value = null
+    restorePassword.value = ''
+    const input = document.querySelector<HTMLInputElement>('.st__restore-file')
+    if (input) input.value = ''
+    ui.notifyNotice('恢复库已暂存')
+  } catch (e) {
+    ui.notifyError(e)
+    restoreHint.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    restoring.value = false
   }
 }
 
@@ -801,5 +873,64 @@ async function copyText(text: string, label: string): Promise<void> {
   margin: var(--space-3) 0 0;
   color: var(--danger);
   font-size: var(--text-sm);
+}
+
+/* ---------- ⑤ 恢复（#93） ---------- */
+.st__restore {
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.st__restore-title {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+}
+
+.st__restore-desc {
+  margin: var(--space-2) 0;
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+}
+
+.st__restore-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.st__restore-file {
+  flex: 1 1 220px;
+  min-width: 0;
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+}
+
+.st__restore-pw {
+  width: 180px;
+}
+
+.st__restore-hint {
+  margin: var(--space-2) 0 0;
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+  white-space: pre-wrap;
+}
+
+@media (max-width: 767px) {
+  .st__restore-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .st__restore-pw {
+    width: 100%;
+  }
+
+  .st__restore-row .btn {
+    min-height: 44px;
+  }
 }
 </style>

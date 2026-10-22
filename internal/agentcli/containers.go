@@ -55,6 +55,19 @@ func (c *Client) ContainerInspect(ctx context.Context, id string) (json.RawMessa
 	return raw, nil
 }
 
+// ContainerProcesses 取容器内进程明细（#91）。Agent 从宿主 /proc 按 cgroup
+// 归属容器后返回（需 Agent 以 pid:host 运行）。ID 先过 ValidContainerID 再拼路径。
+func (c *Client) ContainerProcesses(ctx context.Context, id string) ([]protocol.ContainerProcess, error) {
+	if !protocol.ValidContainerID(id) {
+		return nil, fmt.Errorf("agentcli: 非法容器标识 %q", id)
+	}
+	out := []protocol.ContainerProcess{}
+	if _, err := c.do(ctx, http.MethodGet, "/api/v1/containers/"+id+"/processes", nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ---- 写操作（S3.4）----
 //
 // 每个方法只针对单个容器，不提供任何批量入口（与 Agent 侧同一条红线）。

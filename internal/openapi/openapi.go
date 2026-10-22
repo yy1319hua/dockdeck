@@ -454,6 +454,26 @@ func schemas() map[string]*Schema {
 			Type:       "object",
 			Properties: map[string]*Schema{"data": {Type: "array", Items: schemaRef("ContainerSummary")}},
 		},
+		"ContainerProcess": {
+			Type:        "object",
+			Description: "容器内单个进程（#91，来自宿主 /proc，按 cgroup 归属容器）。",
+			Properties: map[string]*Schema{
+				"pid":        {Type: "integer", Format: "int64"},
+				"ppid":       {Type: "integer", Format: "int64"},
+				"command":    {Type: "string"},
+				"comm":       {Type: "string"},
+				"state":      {Type: "string"},
+				"user":       {Type: "string"},
+				"mem_rss":    {Type: "integer", Format: "int64", Description: "常驻内存 KB"},
+				"mem_vms":    {Type: "integer", Format: "int64", Description: "虚拟内存 KB"},
+				"threads":    {Type: "integer"},
+				"start_time": {Type: "integer", Format: "int64", Description: "相对系统启动的时钟滴答"},
+			},
+		},
+		"ContainerProcessList": {
+			Type:       "object",
+			Properties: map[string]*Schema{"data": {Type: "array", Items: schemaRef("ContainerProcess")}},
+		},
 		"ImageSummary": {
 			Type:        "object",
 			Description: "本地镜像（Engine 字段名原样）。",

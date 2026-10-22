@@ -371,6 +371,23 @@ func (s *server) routes() http.Handler {
 	}, middleware.Audit(s.st, "container.inspect", s.containerInspect))
 
 	tbl.Add(route.Entry{
+		Method: "GET", Path: "/api/v1/servers/{id}/containers/{cid}/processes", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadContainers,
+		Summary: "容器进程", Tags: []string{"Containers"},
+		Desc: "容器内进程明细（#91）：Agent 从宿主 /proc 按 cgroup 归属容器后返回，需 Agent 以 pid:host 运行。" +
+			"空清单编码为 [] 而非 null。",
+		Params: []route.Param{
+			{Name: "id", Desc: "服务器 ID", Required: true, Example: "1", SchemaType: "integer", SchemaFmt: "int64"},
+			{Name: "cid", Desc: "容器 ID 或名字", Required: true, Example: "9f3a2b1c4d5e"},
+		},
+		Responses: []route.Response{
+			{Status: 403, Desc: "服务器已禁用"},
+			{Status: 404, Desc: "容器不存在（Agent 报 404）"},
+			{Status: 502, Desc: "Agent 不可达或返回异常"},
+		},
+		InternalRef: "cmd/hub/containers.go containerProcesses",
+	}, middleware.Audit(s.st, "container.processes", s.containerProcesses))
+
+	tbl.Add(route.Entry{
 		Method: "GET", Path: "/api/v1/servers/{id}/containers/{cid}/logs", AuthMode: route.AuthScope, Scope: apitoken.ScopeReadContainers,
 		Summary: "容器日志", Tags: []string{"Containers"}, NoEnvelope: true, ContentType: "text/plain",
 		Desc: "裸流透传，无信封：默认 stdout/stderr 合流文本（text/plain）；export=1 时 Engine 原始字节流下载" +

@@ -85,6 +85,7 @@
               <button type="button" class="link" :disabled="acting" @click="direct(row, 'start', '启动')">启动</button>
             </template>
             <button type="button" class="link" @click="openLogs(row)">日志</button>
+            <button type="button" class="link" @click="openProcesses(row)">进程</button>
             <button type="button" class="link link--danger" :disabled="acting" @click="askRemove(row)">删除</button>
           </td>
         </tr>
@@ -205,6 +206,14 @@
       :name="logTarget?.container.name ?? ''"
       @close="logTarget = null"
     />
+
+    <ContainerProcesses
+      :open="procTarget !== null"
+      :server-id="ct.selectedId"
+      :cid="procTarget?.container.id ?? ''"
+      :name="procTarget?.container.name ?? ''"
+      @close="procTarget = null"
+    />
   </div>
 </template>
 
@@ -212,6 +221,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import AppConfirm from '@/components/AppConfirm.vue'
 import ContainerLogs from '@/components/ContainerLogs.vue'
+import ContainerProcesses from '@/components/ContainerProcesses.vue'
 import { containerAction, removeContainer } from '@/api/containers'
 import { isOnline } from '@/api/servers'
 import { formatBytes, formatCores, formatPercent } from '@/utils/format'
@@ -237,6 +247,7 @@ const removeDeployDir = ref(true)
 const stopTimeout = ref('')
 const killSignal = ref('SIGKILL')
 const logTarget = ref<ContainerRow | null>(null)
+const procTarget = ref<ContainerRow | null>(null)
 
 // 「···」动作面板（M4）：手机态行内只留高频「日志」，其余收进底部面板。
 const sheetRow = ref<ContainerRow | null>(null)
@@ -272,6 +283,7 @@ const sheetActions = computed<SheetAction[]>(() => {
   } else {
     acts.push({ label: '启动', run: wrap(() => direct(row, 'start', '启动')) })
   }
+  acts.push({ label: '进程', run: wrap(() => openProcesses(row)) })
   acts.push({ label: '日志', run: wrap(() => openLogs(row)) })
   acts.push({ label: '删除…', danger: true, run: wrap(() => askRemove(row)) })
   return acts
@@ -378,6 +390,10 @@ function askRemove(row: ContainerRow) {
 
 function openLogs(row: ContainerRow) {
   logTarget.value = row
+}
+
+function openProcesses(row: ContainerRow) {
+  procTarget.value = row
 }
 
 async function onConfirmAction() {

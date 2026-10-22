@@ -201,6 +201,22 @@ func (s *server) containerInspect(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, json.RawMessage(raw))
 }
 
+// containerProcesses 实现 GET /api/v1/servers/{id}/containers/{cid}/processes（#91）。
+// 透传 Agent 从宿主 /proc 读到的进程明细（需 Agent 以 pid:host 运行）。
+// 空清单由 Agent 保证是 [] 非 null，Hub 原样透传不加工。
+func (s *server) containerProcesses(w http.ResponseWriter, r *http.Request) {
+	cl, ok := s.agentFor(w, r)
+	if !ok {
+		return
+	}
+	procs, err := cl.ContainerProcesses(r.Context(), r.PathValue("cid"))
+	if err != nil {
+		writeAgentError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, procs)
+}
+
 // containerAction 实现 POST /api/v1/servers/{id}/containers/{cid}/{action}。
 // action ∈ start|stop|restart|pause|unpause|kill|resize——白名单就是下面
 // switch 本身，未知动作 404（与 Agent 侧同款：没有这个子资源）。

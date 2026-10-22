@@ -56,6 +56,35 @@ export async function fetchContainers(serverId: number, all = false): Promise<Co
   return (rows ?? []).map(toContainer)
 }
 
+/** 容器内单个进程（protocol.ContainerProcess 的线上形态，#91）。 */
+export interface ContainerProcess {
+  pid: number
+  ppid: number
+  /** argv 空格连接；内核线程为 [comm]。 */
+  command: string
+  comm: string
+  /** 单字母状态：R/S/D/Z/T… */
+  state: string
+  /** real UID（数字串）。 */
+  user: string
+  /** 常驻内存 KB。 */
+  mem_rss: number
+  /** 虚拟内存 KB。 */
+  mem_vms: number
+  threads: number
+  /** 相对系统启动的时钟滴答（非绝对时间）。 */
+  start_time: number
+}
+
+/**
+ * 取容器进程明细（#91）。需 Agent 以 pid:host 运行，否则读不到宿主进程。
+ * 空清单返回 []（后端保证非 null）。
+ */
+export async function fetchContainerProcesses(serverId: number, cid: string): Promise<ContainerProcess[]> {
+  const rows = await request<ContainerProcess[]>(`/servers/${serverId}/containers/${encodeURIComponent(cid)}/processes`)
+  return rows ?? []
+}
+
 export type ContainerAction = 'start' | 'stop' | 'restart' | 'pause' | 'unpause' | 'kill' | 'resize'
 
 export interface ActionOptions {

@@ -123,8 +123,14 @@ func validate(f Frame) error {
 		if len(f.B) > MaxRespBody {
 			return fmt.Errorf("agentlink: 响应体 %d 字节超过上限 %d", len(f.B), MaxRespBody)
 		}
-	case TypeRespStart, TypeData, TypeEnd, TypeReqEnd:
-		// M2 帧：结构合法即可，语义由版本能力协商决定。
+	case TypeRespStart:
+		// 流起始帧：只带状态码与响应头，无载荷约束。
+	case TypeData:
+		if len(f.B) > MaxRespBody {
+			return fmt.Errorf("agentlink: 数据帧 %d 字节超过上限 %d", len(f.B), MaxRespBody)
+		}
+	case TypeEnd, TypeReqEnd:
+		// 流结束帧：无载荷约束。
 	case "":
 		return fmt.Errorf("agentlink: 帧缺少类型")
 	default:

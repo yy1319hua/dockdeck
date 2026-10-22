@@ -35,13 +35,93 @@ const (
 )
 
 // result 是单次请求的终态：要么有帧，要么有错误。
+// st 仅在 resp_start 时非空——直接携带流引用，避免 Do 回查 map 时被 end 抢先删除。
 type result struct {
 	f   Frame
+	st  *stream
 	err error
 }
 
 type call struct {
 	ch chan result // 容量 1，deliver/fail 都用非阻塞发送
+}
+
+// errStreamSlow 表示消费端过慢导致流被中止（M2 ② 的临时策略，④ 会用信用窗口替代）。
+var errStreamSlow = errors.New("agentlink: 流消费过慢")
+
+// stream 是一条 M2 流式响应的数据通道。
+//
+// push 非阻塞：消费端太慢时返回 false，由 readLoop 结束该流，避免读循环被阻塞
+// 而拖死同连接上的其它请求。真正的信用窗口流控在 M2 ④。
+type stream struct {
+	ch   chan []byte
+	done chan struct{}
+	once sync.Once
+	err  error
+}
+
+func newStream() *stream {
+	return &stream{ch: make(chan []byte, 64), done: make(chan struct{})}
+}
+
+// push 非阻塞投递一块数据；流已结束或缓冲满返回 false。
+func (s *stream) push(b []byte) bool {
+	select {
+	case <-s.done:
+		return false
+	default:
+	}
+	select {
+	case s.ch <- b:
+		return true
+	default:
+		return false
+	}
+}
+
+// finish 结束流；err 非空表示异常终止（消费端会收到该错误）。
+func (s *stream) finish(err error) {
+	s.once.Do(func() {
+		s.err = err
+		close(s.done)
+	})
+}
+
+// streamBody 是流式 http.Response.Body：把 data 块交给调用方，直到 end/错误。
+type streamBody struct {
+	s   *stream
+	rem []byte
+}
+
+func (b *streamBody) Read(p []byte) (int, error) {
+	for {
+		if len(b.rem) > 0 {
+			n := copy(p, b.rem)
+			b.rem = b.rem[n:]
+			return n, nil
+		}
+		select {
+		case chunk := <-b.s.ch:
+			b.rem = chunk
+		case <-b.s.done:
+			// 先排空缓冲，再报 EOF/错误。
+			select {
+			case chunk := <-b.s.ch:
+				b.rem = chunk
+				continue
+			default:
+			}
+			if b.s.err != nil {
+				return 0, b.s.err
+			}
+			return 0, io.EOF
+		}
+	}
+}
+
+func (b *streamBody) Close() error {
+	b.s.finish(nil)
+	return nil
 }
 
 // Conn 是一条已建立的反向连接（Agent 主动拨入）。
@@ -53,6 +133,7 @@ type Conn struct {
 
 	mu      sync.Mutex
 	pending map[uint64]*call
+	streams map[uint64]*stream
 
 	nextID    atomic.Uint64
 	closed    chan struct{}
@@ -69,6 +150,7 @@ func newConn(serverID int64, ws *websocket.Conn, hello Frame) *Conn {
 		ws:       ws,
 		send:     make(chan []byte, 256),
 		pending:  make(map[uint64]*call),
+		streams:  make(map[uint64]*stream),
 		closed:   make(chan struct{}),
 		caps:     hello.Caps,
 		host:     hello.Host,
@@ -145,13 +227,21 @@ func (c *Conn) Do(req *http.Request) (*http.Response, error) {
 			}
 			return nil, &protocol.Error{Code: code, Message: res.f.Msg}
 		}
+		if res.f.T == TypeRespStart {
+			if res.st == nil {
+				return nil, ErrClosed
+			}
+			return startToResponse(res.f, res.st), nil
+		}
 		return frameToResponse(res.f), nil
 	case <-req.Context().Done():
 		c.drop(id)
+		c.closeStream(id)
 		c.enqueue(Frame{T: TypeCancel, ID: id, Msg: "调用方已取消"})
 		return nil, req.Context().Err()
 	case <-c.closed:
 		c.drop(id)
+		c.closeStream(id)
 		return nil, c.err()
 	}
 }
@@ -185,6 +275,22 @@ func (c *Conn) readLoop() {
 		switch f.T {
 		case TypeResp, TypeErr:
 			c.deliver(f)
+		case TypeRespStart:
+			if c.deliverStart(f) == nil {
+				// Do 已放弃（超时/取消）：建流无意义，通知 Agent 中止该流。
+				c.enqueue(Frame{T: TypeCancel, ID: f.ID, Msg: "调用方已取消"})
+			}
+		case TypeData:
+			c.mu.Lock()
+			st := c.streams[f.ID]
+			c.mu.Unlock()
+			if st != nil && !st.push(f.B) {
+				// 消费端过慢：结束该流，不拖累同连接其它请求（④ 用信用窗口改进）。
+				c.removeStream(f.ID, errStreamSlow)
+				c.enqueue(Frame{T: TypeCancel, ID: f.ID, Msg: "流消费过慢"})
+			}
+		case TypeEnd:
+			c.removeStream(f.ID, nil)
 		case TypePing:
 			c.enqueue(Frame{T: TypePong})
 		case TypePong:
@@ -260,6 +366,40 @@ func (c *Conn) drop(id uint64) {
 	c.mu.Unlock()
 }
 
+// deliverStart 把 resp_start 交付给等待中的 Do，并登记流。返回 nil 表示 Do 已放弃。
+func (c *Conn) deliverStart(f Frame) *stream {
+	st := newStream()
+	c.mu.Lock()
+	cl, ok := c.pending[f.ID]
+	if ok {
+		delete(c.pending, f.ID)
+		c.streams[f.ID] = st
+	}
+	c.mu.Unlock()
+	if !ok {
+		return nil
+	}
+	select {
+	case cl.ch <- result{f: f, st: st}:
+	default:
+	}
+	return st
+}
+
+// removeStream 结束并移除一条流（err=nil 为正常结束）。
+func (c *Conn) removeStream(id uint64, err error) {
+	c.mu.Lock()
+	st := c.streams[id]
+	delete(c.streams, id)
+	c.mu.Unlock()
+	if st != nil {
+		st.finish(err)
+	}
+}
+
+// closeStream 在调用方取消时结束该流。
+func (c *Conn) closeStream(id uint64) { c.removeStream(id, ErrClosed) }
+
 func (c *Conn) fail(err error) {
 	c.closeOnce.Do(func() {
 		c.closeErr = err
@@ -272,6 +412,10 @@ func (c *Conn) fail(err error) {
 			case cl.ch <- result{err: err}:
 			default:
 			}
+		}
+		for id, st := range c.streams {
+			delete(c.streams, id)
+			st.finish(err)
 		}
 		c.mu.Unlock()
 	})
@@ -299,6 +443,22 @@ func pickHeaders(h http.Header) map[string]string {
 		}
 	}
 	return out
+}
+
+// startToResponse 把 resp_start 帧 + 流 变成可流式读取的 http.Response。
+// ContentLength=-1：长度未知（流式），由调用方逐块读。
+func startToResponse(f Frame, st *stream) *http.Response {
+	h := make(http.Header, len(f.H))
+	for k, v := range f.H {
+		h.Set(k, v)
+	}
+	return &http.Response{
+		StatusCode:    f.St,
+		Status:        fmt.Sprintf("%d %s", f.St, http.StatusText(f.St)),
+		Header:        h,
+		Body:          &streamBody{s: st},
+		ContentLength: -1,
+	}
 }
 
 func frameToResponse(f Frame) *http.Response {

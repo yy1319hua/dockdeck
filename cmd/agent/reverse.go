@@ -101,7 +101,7 @@ func runSession(ctx context.Context, cfg config.AgentConfig, h http.Handler) err
 	host, _ := os.Hostname()
 	hello, err := agentlink.Encode(agentlink.Frame{
 		T: agentlink.TypeHello, V: agentlink.ProtocolVersion,
-		Caps: []string{agentlink.CapBuffered, agentlink.CapPing},
+		Caps: []string{agentlink.CapBuffered, agentlink.CapStream, agentlink.CapPing},
 		Host: host,
 	})
 	if err != nil {
@@ -125,6 +125,9 @@ func runSession(ctx context.Context, cfg config.AgentConfig, h http.Handler) err
 		return fmt.Errorf("agent: hello_ok 非法: %v", err)
 	}
 	log.Printf("agent: 反向连接已建立（server_id=%d, hub=%s）", ok.ID, cfg.HubURL)
+
+	// 流式仅在 Hub 明确声明 CapStream 时启用；旧 Hub 未声明 → 退回整包 resp（M1 兼容）。
+	streamOK := ok.HasCap(agentlink.CapStream)
 
 	pingCtx, stopPing := context.WithCancel(ctx)
 	defer stopPing()
@@ -162,7 +165,7 @@ func runSession(ctx context.Context, cfg config.AgentConfig, h http.Handler) err
 					pending.Delete(f.ID)
 					<-sem
 				}()
-				serveLinkRequest(reqCtx, lw, h, f)
+				serveLinkRequest(reqCtx, lw, h, f, streamOK)
 			}(f, reqCtx, reqCancel)
 		case agentlink.TypeCancel:
 			if v, ok := pending.LoadAndDelete(f.ID); ok {
@@ -181,13 +184,13 @@ func runSession(ctx context.Context, cfg config.AgentConfig, h http.Handler) err
 
 // serveLinkRequest 把一帧 req 变成真实 HTTP 调用。
 // 必须走 mux（h.ServeHTTP）而不是直接调 handler：PathValue 由 ServeMux 填充。
-func serveLinkRequest(ctx context.Context, lw *linkWriter, h http.Handler, f agentlink.Frame) {
+func serveLinkRequest(ctx context.Context, lw *linkWriter, h http.Handler, f agentlink.Frame, streamOK bool) {
 	req, err := buildReverseRequest(ctx, f)
 	if err != nil {
 		writeErr(lw, f.ID, protocol.CodeBadRequest, "构造请求失败: "+err.Error())
 		return
 	}
-	fw := &frameResponseWriter{id: f.ID, lw: lw}
+	fw := &frameResponseWriter{id: f.ID, lw: lw, stream: streamOK}
 	h.ServeHTTP(fw, req)
 	fw.finish()
 }
@@ -212,15 +215,18 @@ func buildReverseRequest(ctx context.Context, f agentlink.Frame) (*http.Request,
 	return req, nil
 }
 
-// frameResponseWriter 把 handler 的响应收进内存，结束后一次性发 resp 帧。
-// M2 流式会在 Flush 时改发 resp_start/data，届时只需实现 http.Flusher。
+// frameResponseWriter 把 handler 的响应收进内存，结束后一次性发 resp 帧；
+// 协商到 CapStream 且 handler 调用 Flush 时，改发 resp_start / data / end 流式帧。
 type frameResponseWriter struct {
 	id       uint64
 	lw       *linkWriter
+	stream   bool // 是否协商到 CapStream
 	hdr      http.Header
 	status   int
 	buf      bytes.Buffer
 	overflow bool
+	started  bool  // 已发 resp_start，进入流式
+	werr     error // 流式写失败后短路，避免继续往断连写帧
 }
 
 func (w *frameResponseWriter) Header() http.Header {
@@ -240,14 +246,87 @@ func (w *frameResponseWriter) Write(p []byte) (int, error) {
 	if w.status == 0 {
 		w.status = http.StatusOK
 	}
-	if w.buf.Len()+len(p) > agentlink.MaxRespBody {
+	// 流式模式没有 8MiB 整包上限（逐块经 Flush 发出）；非流式沿用旧上限。
+	if !w.stream && w.buf.Len()+len(p) > agentlink.MaxRespBody {
 		w.overflow = true
 		return 0, io.ErrShortWrite
 	}
 	return w.buf.Write(p)
 }
 
+// Flush 实现 http.Flusher：首次调用发 resp_start（状态码+头），随后每次把缓冲
+// 作为 data 帧发出。仅在协商到 CapStream 时生效；否则是空操作（M1 兼容）。
+func (w *frameResponseWriter) Flush() {
+	if !w.stream || w.werr != nil {
+		return
+	}
+	if !w.started {
+		if err := w.writeFrame(agentlink.Frame{
+			T: agentlink.TypeRespStart, ID: w.id, St: w.statusOrOK(), H: w.headerMap(),
+		}); err != nil {
+			w.werr = err
+			return
+		}
+		w.started = true
+	}
+	if w.buf.Len() > 0 {
+		// 复制：buf 随后 Reset，底层数组会被后续 Write 复用。
+		chunk := append([]byte(nil), w.buf.Bytes()...)
+		if err := w.writeFrame(agentlink.Frame{T: agentlink.TypeData, ID: w.id, B: chunk}); err != nil {
+			w.werr = err
+			return
+		}
+		w.buf.Reset()
+	}
+}
+
+func (w *frameResponseWriter) statusOrOK() int {
+	if w.status == 0 {
+		return http.StatusOK
+	}
+	return w.status
+}
+
+func (w *frameResponseWriter) headerMap() map[string]string {
+	if len(w.hdr) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(w.hdr))
+	for k, vs := range w.hdr {
+		if len(vs) > 0 {
+			out[k] = vs[0]
+		}
+	}
+	return out
+}
+
+func (w *frameResponseWriter) writeFrame(f agentlink.Frame) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	raw, err := agentlink.Encode(f)
+	if err != nil {
+		return err
+	}
+	return w.lw.write(ctx, websocket.MessageText, raw)
+}
+
 func (w *frameResponseWriter) finish() {
+	if w.werr != nil {
+		return // 流式写已失败（连接多半已断），不再尝试
+	}
+	// 流式：已发 resp_start 时，把剩余缓冲作为 data 发出，再发 end。
+	if w.stream && w.started {
+		if w.buf.Len() > 0 {
+			chunk := append([]byte(nil), w.buf.Bytes()...)
+			if err := w.writeFrame(agentlink.Frame{T: agentlink.TypeData, ID: w.id, B: chunk}); err != nil {
+				return
+			}
+			w.buf.Reset()
+		}
+		_ = w.writeFrame(agentlink.Frame{T: agentlink.TypeEnd, ID: w.id})
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 

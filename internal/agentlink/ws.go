@@ -121,7 +121,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	lc.enqueue(Frame{
 		T: TypeHelloOK, ID: uint64(conn.ID), V: ProtocolVersion,
-		Caps: []string{CapBuffered, CapPing},
+		Caps: []string{CapBuffered, CapStream, CapPing},
 	})
 
 	// 阻塞到连接结束：handler 返回会让底层 ResponseWriter 生命周期结束，

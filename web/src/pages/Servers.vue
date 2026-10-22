@@ -56,11 +56,46 @@
           <td>{{ formatAgo(s.lastSeen) }}</td>
           <td class="sv__acts">
             <button type="button" class="link" @click.stop="goDetail(s)">详情</button>
+            <button type="button" class="link" @click.stop="askRename(s)">改名</button>
             <button type="button" class="link link--danger" @click.stop="askDelete(s)">删除</button>
           </td>
         </tr>
       </tbody>
     </table>
+
+    <!-- 改名（#86）：轻确认——输入新名即可，重名/非法由后端回 409/400。 -->
+    <teleport to="body">
+      <div v-if="ren" class="sv__mask" @click.self="ren = null">
+        <div class="sv__modal" role="dialog" aria-modal="true" aria-labelledby="sv-ren-title">
+          <h2 id="sv-ren-title" class="sv__modal-title">服务器改名</h2>
+          <p class="sv__modal-text">
+            为 <b>{{ ren.name }}</b> 取新名字。名字仅用于面板展示与审计记录，不影响 Agent 连接。
+          </p>
+          <label class="sv__modal-label" for="sv-ren-input">新名称（1–64 字符，全局唯一）：</label>
+          <input
+            id="sv-ren-input"
+            v-model="renInput"
+            class="sv__modal-input"
+            type="text"
+            maxlength="64"
+            autocomplete="off"
+            @keyup.enter="doRename"
+          />
+          <p v-if="renError" class="sv__modal-err">{{ renError }}</p>
+          <div class="sv__modal-acts">
+            <button type="button" class="btn" @click="ren = null">取消</button>
+            <button
+              type="button"
+              class="btn btn--primary"
+              :disabled="renBusy || renInput.trim() === '' || renInput.trim() === ren.name"
+              @click="doRename"
+            >
+              {{ renBusy ? '改名中…' : '确认改名' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </teleport>
 
     <!-- 删除确认：物理删除不可逆，要求手动输入服务器名称（防误删）。 -->
     <teleport to="body">
@@ -100,7 +135,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { deleteServer, fetchServers, isOnline, type Server } from '@/api/servers'
+import { deleteServer, fetchServers, isOnline, renameServer, type Server } from '@/api/servers'
 import { formatAgo } from '@/utils/format'
 
 /** 与后端采集周期对齐（30s）：在线状态以后端 last_seen 为准，轮询只刷清单。 */
@@ -163,6 +198,36 @@ function goDetail(s: Server): void {
 
 function goAddNode(): void {
   void router.push({ name: 'add-node' })
+}
+
+// —— 改名（#86）：PATCH 后就地更新行数据，不整表重拉。 ——
+const ren = ref<Server | null>(null)
+const renInput = ref('')
+const renBusy = ref(false)
+const renError = ref<string | null>(null)
+
+function askRename(s: Server): void {
+  ren.value = s
+  renInput.value = s.name
+  renError.value = null
+}
+
+async function doRename(): Promise<void> {
+  if (ren.value === null || renBusy.value) return
+  const name = renInput.value.trim()
+  if (name === '' || name === ren.value.name) return
+  renBusy.value = true
+  renError.value = null
+  try {
+    const final = await renameServer(ren.value.id, name)
+    const row = rows.value.find((r) => r.id === ren.value!.id)
+    if (row) row.name = final
+    ren.value = null
+  } catch (e) {
+    renError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    renBusy.value = false
+  }
 }
 
 // —— 删除：物理删除 + 输入名称二次确认；成功后重新拉清单。 ——
@@ -334,6 +399,22 @@ onUnmounted(stop)
 
 /* 手机端（<768px，PLAN-MOBILE 口径）：表格横向滚动，不转卡片——
    清单页信息密度低，一屏纵列全看完比横滑更省事。 */
+/* 手机态（<768px）：确认弹窗沉底全宽（对齐 AppConfirm 口径）。 */
+@media (max-width: 767px) {
+  .sv__modal {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    top: auto;
+    transform: none;
+    width: 100%;
+    max-width: none;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    padding-bottom: calc(var(--space-5) + env(safe-area-inset-bottom));
+  }
+}
+
 @media (max-width: 767px) {
   .sv__table {
     display: block;

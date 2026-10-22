@@ -5,7 +5,7 @@
  * 所以这里有两套类型——Wire 照抄线上形态，Server 是前端用的 camelCase，
  * 转换只发生在 toServer 一处。将来后端若补了 json tag，改这里就够了。
  */
-import { postJSON, request } from './client'
+import { patchJSON, postJSON, request } from './client'
 
 export interface ServerWire {
   ID: number
@@ -101,4 +101,10 @@ export async function createInvite(ttlMin = 15, nameHint?: string): Promise<Invi
  */
 export async function deleteServer(id: number): Promise<void> {
   await request<void>(`/servers/${id}`, { method: 'DELETE' })
+}
+
+/** 服务器改名（PATCH /servers/{id}，仅浏览器会话可调）。返回改名后的名字。 */
+export async function renameServer(id: number, name: string): Promise<string> {
+  const w = await patchJSON<{ id: number; name: string }>(`/servers/${id}`, { name })
+  return w.name
 }

@@ -61,6 +61,15 @@ export function postJSON<T>(path: string, payload: unknown): Promise<T> {
   })
 }
 
+/** JSON 请求体的 PATCH（#86 服务器改名用）。与 postJSON 同口径，只换方法。 */
+export function patchJSON<T>(path: string, payload: unknown): Promise<T> {
+  return request<T>(path, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
 /** JSON 请求体的 PUT（S7.8 设置页保护名单覆盖写用）。与 postJSON 同口径，只换方法。 */
 export function putJSON<T>(path: string, payload: unknown): Promise<T> {
   return request<T>(path, {

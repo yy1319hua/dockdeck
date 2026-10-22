@@ -30,16 +30,47 @@ import (
 	"github.com/yy1319hua/dockdeck/internal/protocol"
 )
 
-// runReverse 进入反向模式：拨通 Hub、握手、然后进入帧循环。
+// runReverse 进入反向模式：拨通 Hub、握手、进入帧循环；断线后按指数退避重连。
 //
-// M1 不做自动重连：连接断开即返回错误，由容器的 restart: unless-stopped 拉起。
-// 心跳已覆盖 Cloudflare 一类的空闲超时，剩余断线基本是真实网络故障，重启是合理恢复手段。
+// 与 M1 的区别：不再「断线即退出、靠容器 restart: unless-stopped 拉起」——改为
+// 进程内重连（1s→2s→4s…封顶 30s，叠加 ±20% 抖动避免惊群）；单次会话持续 ≥60s
+// 视为稳定并将退避重置。鉴权类永久失败（Dial 401/403）不重试，直接退出——
+// 那种情况重试一万次也不会好，早退出能让运维直接看到原因。
 func runReverse(cfg config.AgentConfig, h http.Handler) error {
+	ctx := context.Background()
+	attempt := 0
+	for {
+		started := time.Now()
+		err := runSession(ctx, cfg, h)
+		if err == nil {
+			return nil
+		}
+		if errors.Is(err, errLinkAuth) {
+			return err
+		}
+		if time.Since(started) >= stableSession {
+			attempt = 0
+		}
+		delay := jitter(backoffDelay(attempt, linkRetryBase, linkRetryMax))
+		log.Printf("agent: 反向连接中断，%s 后重试（第 %d 次）：%v", delay.Round(time.Millisecond), attempt+1, err)
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		attempt++
+	}
+}
+
+// errLinkAuth 标记鉴权类永久失败：runReverse 见到它不重试、直接退出。
+var errLinkAuth = errors.New("agent: 反向连接鉴权失败")
+
+// runSession 跑一次完整会话（拨号 → hello 握手 → 帧循环），返回即表示本次连接结束。
+func runSession(ctx context.Context, cfg config.AgentConfig, h http.Handler) error {
 	wsURL, err := linkURL(cfg)
 	if err != nil {
 		return err
 	}
-	ctx := context.Background()
 
 	ts := strconv.FormatInt(time.Now().Unix(), 10)
 	sig := crypto.SignRequest([]byte(cfg.Token), ts, http.MethodGet, agentlink.LinkPath, nil)
@@ -56,8 +87,11 @@ func runReverse(cfg config.AgentConfig, h http.Handler) error {
 		}}
 	}
 
-	ws, _, err := websocket.Dial(ctx, wsURL, opts)
+	ws, resp, err := websocket.Dial(ctx, wsURL, opts)
 	if err != nil {
+		if resp != nil && (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) {
+			return fmt.Errorf("%w: %v", errLinkAuth, err)
+		}
 		return fmt.Errorf("agent: 连接 Hub 失败: %w", err)
 	}
 	defer ws.CloseNow()

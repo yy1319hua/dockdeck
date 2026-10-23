@@ -29,39 +29,74 @@
       <button type="button" class="btn btn--primary" @click="goAddNode">添加节点</button>
     </div>
 
-    <table v-else-if="rows.length > 0" class="sv__table">
-      <thead>
-        <tr>
-          <th>服务器</th>
-          <th>地址</th>
-          <th>架构</th>
-          <th>Docker</th>
-          <th>状态</th>
-          <th>最后通讯</th>
-          <th class="sv__acts-col">操作</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="s in rows" :key="s.id" class="sv__row" @click="goDetail(s)">
-          <td class="sv__name">
-            <span class="sv__dot" :class="onlineOf(s) ? 'sv__dot--on' : 'sv__dot--off'" />
-            {{ s.name }}
-          </td>
-          <td class="sv__url" :title="s.baseUrl">{{ s.baseUrl || '—' }}</td>
-          <td>{{ s.arch || '—' }}</td>
-          <td>{{ s.dockVer || '—' }}</td>
-          <td>
+    <div v-else-if="rows.length > 0">
+      <!-- 桌面态：表格（7 列在宽屏才放得下）。 -->
+      <table class="sv__table">
+        <thead>
+          <tr>
+            <th>服务器</th>
+            <th>地址</th>
+            <th>架构</th>
+            <th>Docker</th>
+            <th>状态</th>
+            <th>最后通讯</th>
+            <th class="sv__acts-col">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="s in rows" :key="s.id" class="sv__row" @click="goDetail(s)">
+            <td class="sv__name">
+              <span class="sv__dot" :class="onlineOf(s) ? 'sv__dot--on' : 'sv__dot--off'" />
+              {{ s.name }}
+            </td>
+            <td class="sv__url" :title="s.baseUrl">{{ s.baseUrl || '—' }}</td>
+            <td>{{ s.arch || '—' }}</td>
+            <td>{{ s.dockVer || '—' }}</td>
+            <td>
+              <span class="badge" :class="statusClass(s)">{{ statusText(s) }}</span>
+            </td>
+            <td>{{ formatAgo(s.lastSeen) }}</td>
+            <td class="sv__acts">
+              <button type="button" class="link" @click.stop="goDetail(s)">详情</button>
+              <button type="button" class="link" @click.stop="askRename(s)">改名</button>
+              <button type="button" class="link link--danger" @click.stop="askDelete(s)">删除</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      <!-- 手机态（<768px）：表格退役转卡片——7 列在 375px 下必然横向溢出，
+           且「详情/改名/删除」三个 .link 相邻时 padding 仅 4px，视觉上会粘连。
+           卡片只留高频「详情」，其余动作收进「···」底部面板（与容器页同构）。 -->
+      <div class="sv__cards">
+        <article v-for="s in rows" :key="s.id" class="scard" @click="goDetail(s)">
+          <header class="scard__head">
+            <span class="scard__name">
+              <span class="sv__dot" :class="onlineOf(s) ? 'sv__dot--on' : 'sv__dot--off'" />
+              {{ s.name }}
+            </span>
             <span class="badge" :class="statusClass(s)">{{ statusText(s) }}</span>
-          </td>
-          <td>{{ formatAgo(s.lastSeen) }}</td>
-          <td class="sv__acts">
-            <button type="button" class="link" @click.stop="goDetail(s)">详情</button>
-            <button type="button" class="link" @click.stop="askRename(s)">改名</button>
-            <button type="button" class="link link--danger" @click.stop="askDelete(s)">删除</button>
-          </td>
-        </tr>
-      </tbody>
-    </table>
+          </header>
+          <p class="scard__url" :title="s.baseUrl">{{ s.baseUrl || '—' }}</p>
+          <p class="scard__meta">
+            <span>{{ s.arch || '—' }}</span>
+            <span>Docker {{ s.dockVer || '—' }}</span>
+            <span>{{ formatAgo(s.lastSeen) }}</span>
+          </p>
+          <footer class="scard__acts">
+            <button type="button" class="btn btn--sm" @click.stop="goDetail(s)">详情</button>
+            <button
+              type="button"
+              class="btn btn--sm scard__more"
+              aria-label="更多操作"
+              @click.stop="openSheet(s)"
+            >
+              ···
+            </button>
+          </footer>
+        </article>
+      </div>
+    </div>
 
     <!-- 改名（#86）：轻确认——输入新名即可，重名/非法由后端回 409/400。 -->
     <teleport to="body">
@@ -129,11 +164,29 @@
         </div>
       </div>
     </teleport>
+
+    <!-- 手机态「···」动作面板：遮罩点击关闭，打开时锁 body 滚动（与容器页同口径）。 -->
+    <div v-if="sheetRow" class="sheet" @click.self="sheetRow = null">
+      <div class="sheet__panel" role="dialog" aria-modal="true" :aria-label="`${sheetRow.name} 操作`">
+        <p class="sheet__title">{{ sheetRow.name }}</p>
+        <button
+          v-for="a in sheetActions"
+          :key="a.label"
+          type="button"
+          class="sheet__act"
+          :class="{ 'sheet__act--danger': a.danger }"
+          @click="a.run()"
+        >
+          {{ a.label }}
+        </button>
+        <button type="button" class="sheet__act sheet__act--cancel" @click="sheetRow = null">取消</button>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { deleteServer, fetchServers, isOnline, renameServer, type Server } from '@/api/servers'
 import { formatAgo } from '@/utils/format'
@@ -257,8 +310,44 @@ async function doDelete(): Promise<void> {
   }
 }
 
+// —— 手机态「···」动作面板：与容器页同构，后续新增动作（如部署配置）在此追加即可。 ——
+const sheetRow = ref<Server | null>(null)
+
+function openSheet(s: Server): void {
+  sheetRow.value = s
+}
+
+interface SheetAction {
+  label: string
+  danger?: boolean
+  run: () => void
+}
+
+const sheetActions = computed<SheetAction[]>(() => {
+  const row = sheetRow.value
+  if (row === null) return []
+  // 先关面板再执行动作：避免动作触发的弹窗被面板遮住。
+  const wrap = (fn: () => void): (() => void) => () => {
+    sheetRow.value = null
+    fn()
+  }
+  return [
+    { label: '详情', run: wrap(() => goDetail(row)) },
+    { label: '改名…', run: wrap(() => askRename(row)) },
+    { label: '删除…', danger: true, run: wrap(() => askDelete(row)) },
+  ]
+})
+
+// 面板开着时锁 body 滚动（与容器页同口径 #12）。
+watch(sheetRow, (v) => {
+  document.body.style.overflow = v ? 'hidden' : ''
+})
+
 onMounted(start)
-onUnmounted(stop)
+onUnmounted(() => {
+  stop()
+  document.body.style.overflow = ''
+})
 </script>
 
 <style scoped>
@@ -397,8 +486,12 @@ onUnmounted(stop)
   width: 1%;
 }
 
-/* 手机端（<768px，PLAN-MOBILE 口径）：表格横向滚动，不转卡片——
-   清单页信息密度低，一屏纵列全看完比横滑更省事。 */
+/* 三个 .link 相邻时只有各 4px 内边距，视觉上会粘成一串——补最小间距。
+   特异性高于 .link--danger 的 margin-left，统一取 space-3。 */
+.sv__acts .link + .link {
+  margin-left: var(--space-3);
+}
+
 /* 手机态（<768px）：确认弹窗沉底全宽（对齐 AppConfirm 口径）。 */
 @media (max-width: 767px) {
   .sv__modal {
@@ -415,17 +508,18 @@ onUnmounted(stop)
   }
 }
 
+/* 手机态（<768px）：表格退役、卡片上场。原先的「横向滚动」方案会让 7 列撑破
+   375px 视口，操作列被挤到屏幕外且按钮互相粘连——改卡片后一屏纵列读全，
+   动作收进「···」，与容器页同一套交互。 */
 @media (max-width: 767px) {
   .sv__table {
-    display: block;
-    overflow-x: auto;
-    white-space: nowrap;
+    display: none;
   }
 
-  .sv__table thead,
-  .sv__table tbody,
-  .sv__table tr {
-    display: revert;
+  .sv__cards {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
   }
 }
 
@@ -508,5 +602,118 @@ onUnmounted(stop)
 .btn--danger:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* —— 手机态卡片（仅 <768px 显示，桌面走表格，两者共用同一份 rows） —— */
+.sv__cards {
+  display: none;
+}
+
+.scard {
+  background: var(--bg-elev-1);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  cursor: pointer;
+}
+
+.scard__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.scard__name {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  font-weight: var(--weight-medium);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scard__url {
+  margin-top: var(--space-1);
+  color: var(--fg-subtle);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scard__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  margin-top: var(--space-2);
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.scard__acts {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.scard__more {
+  min-width: 48px;
+}
+
+/* —— 「···」底部面板：与容器页同构（同视觉口径，避免两页手感分叉） —— */
+.sheet {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  background: rgb(0 0 0 / 50%);
+  display: flex;
+  align-items: flex-end;
+}
+
+.sheet__panel {
+  width: 100%;
+  background: var(--bg-elev-1);
+  border-top: 1px solid var(--border-default);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  padding: var(--space-3) var(--space-3) calc(var(--space-3) + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+}
+
+.sheet__title {
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--fg-subtle);
+  font-size: var(--text-xs);
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sheet__act {
+  min-height: 48px;
+  padding: var(--space-3);
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--fg-default);
+  font-size: var(--text-base);
+  text-align: center;
+  cursor: pointer;
+}
+
+.sheet__act--danger {
+  color: var(--danger);
+}
+
+.sheet__act--cancel {
+  border-bottom: none;
+  color: var(--fg-muted);
 }
 </style>

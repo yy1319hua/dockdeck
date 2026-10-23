@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/yy1319hua/dockdeck/internal/agenthttp"
 	"github.com/yy1319hua/dockdeck/internal/crypto"
+	"github.com/yy1319hua/dockdeck/internal/protocol"
 	"github.com/yy1319hua/dockdeck/internal/store"
 )
 
@@ -50,8 +50,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "缺少 Bearer 令牌", http.StatusUnauthorized)
 		return
 	}
-	tsRaw := r.Header.Get(agenthttp.HeaderTimestamp)
-	sig := r.Header.Get(agenthttp.HeaderSignature)
+	tsRaw := r.Header.Get(protocol.HeaderTimestamp)
+	sig := r.Header.Get(protocol.HeaderSignature)
 	ts, err := strconv.ParseInt(tsRaw, 10, 64)
 	if err != nil || sig == "" {
 		http.Error(w, "缺少或非法的时间戳/签名", http.StatusUnauthorized)
@@ -61,7 +61,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h.Now != nil {
 		now = h.Now
 	}
-	if d := now().Sub(time.Unix(ts, 0)); d > agenthttp.MaxClockSkew || d < -agenthttp.MaxClockSkew {
+	if d := now().Sub(time.Unix(ts, 0)); d > protocol.MaxClockSkew || d < -protocol.MaxClockSkew {
 		http.Error(w, "时间戳超出允许窗口", http.StatusUnauthorized)
 		return
 	}

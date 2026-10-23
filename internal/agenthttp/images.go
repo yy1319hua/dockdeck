@@ -10,7 +10,7 @@
 //   - pull 的响应不是 ok:true 而是 PullResult：Engine 把拉取结果放在
 //     流里（汇总式），HTTP 200 也可能业务失败，按结果分派状态码。
 
-package main
+package agenthttp
 
 import (
 	"encoding/json"
@@ -27,8 +27,8 @@ type imagesAPI struct {
 	dc *dockercli.Client
 }
 
-// newImagesAPI 构造。socket 为空时用默认 socket 路径。
-func newImagesAPI(socket string) *imagesAPI {
+// NewImagesAPI 构造。socket 为空时用默认 socket 路径。
+func NewImagesAPI(socket string) *imagesAPI {
 	if socket == "" {
 		socket = dockercli.DefaultSocketPath
 	}

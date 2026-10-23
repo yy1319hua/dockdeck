@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
-package main
+package agenthttp
 
 import (
 	"encoding/json"
@@ -42,13 +42,13 @@ func authed(t *testing.T, method, url, target string, body []byte) *http.Request
 // 没有 token 必须启动失败，绝不能退化成无鉴权连接。
 func TestRun_RejectsMissingToken(t *testing.T) {
 	t.Setenv("DD_AGENT_TOKEN", "")
-	if err := run(nil); err == nil {
+	if err := Run(nil); err == nil {
 		t.Fatal("缺少 token 时 run 应返回错误")
 	}
 }
 
 func TestBuildHandler_Unauthenticated(t *testing.T) {
-	srv := httptest.NewServer(buildHandler(smokeToken, smokeCollector(t), nil, newContainersAPI("", "", nil, nil, nil), newImagesAPI(""), newComposeAPI(nil, "", ""), nil, newResourcesAPI("")))
+	srv := httptest.NewServer(BuildHandler(smokeToken, smokeCollector(t), nil, NewContainersAPI("", "", nil, nil, nil), NewImagesAPI(""), NewComposeAPI(nil, "", ""), nil, NewResourcesAPI("")))
 	defer srv.Close()
 	for _, path := range []string{"/api/v1/info", "/api/v1/metrics"} {
 		resp, err := srv.Client().Get(srv.URL + path)
@@ -63,7 +63,7 @@ func TestBuildHandler_Unauthenticated(t *testing.T) {
 }
 
 func TestBuildHandler_InfoAuthenticated(t *testing.T) {
-	srv := httptest.NewServer(buildHandler(smokeToken, smokeCollector(t), nil, newContainersAPI("", "", nil, nil, nil), newImagesAPI(""), newComposeAPI(nil, "", ""), nil, newResourcesAPI("")))
+	srv := httptest.NewServer(BuildHandler(smokeToken, smokeCollector(t), nil, NewContainersAPI("", "", nil, nil, nil), NewImagesAPI(""), NewComposeAPI(nil, "", ""), nil, NewResourcesAPI("")))
 	defer srv.Close()
 
 	resp, err := srv.Client().Do(authed(t, http.MethodGet, srv.URL+"/api/v1/info", "/api/v1/info", nil))
@@ -91,7 +91,7 @@ func TestBuildHandler_InfoAuthenticated(t *testing.T) {
 // TestBuildHandler_MetricsAuthenticated 端到端验证采集链路：
 // 真读 /proc，确认返回的指标结构完整可用。
 func TestBuildHandler_MetricsAuthenticated(t *testing.T) {
-	srv := httptest.NewServer(buildHandler(smokeToken, smokeCollector(t), nil, newContainersAPI("", "", nil, nil, nil), newImagesAPI(""), newComposeAPI(nil, "", ""), nil, newResourcesAPI("")))
+	srv := httptest.NewServer(BuildHandler(smokeToken, smokeCollector(t), nil, NewContainersAPI("", "", nil, nil, nil), NewImagesAPI(""), NewComposeAPI(nil, "", ""), nil, NewResourcesAPI("")))
 	defer srv.Close()
 
 	resp, err := srv.Client().Do(authed(t, http.MethodGet, srv.URL+"/api/v1/metrics", "/api/v1/metrics", nil))
@@ -159,7 +159,7 @@ func TestBuildHandler_ContainersStats(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			srv := httptest.NewServer(buildHandler(smokeToken, smokeCollector(t), tc.src, newContainersAPI("", "", nil, nil, nil), newImagesAPI(""), newComposeAPI(nil, "", ""), nil, newResourcesAPI("")))
+			srv := httptest.NewServer(BuildHandler(smokeToken, smokeCollector(t), tc.src, NewContainersAPI("", "", nil, nil, nil), NewImagesAPI(""), NewComposeAPI(nil, "", ""), nil, NewResourcesAPI("")))
 			defer srv.Close()
 			resp, err := srv.Client().Do(authed(t, http.MethodGet, srv.URL+"/api/v1/containers/stats", "/api/v1/containers/stats", nil))
 			if err != nil {

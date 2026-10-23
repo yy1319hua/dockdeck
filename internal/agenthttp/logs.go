@@ -5,7 +5,7 @@
 // 默认输出合流文本（Demux）；export=1 时原样导出 Engine 字节流（下载用）。
 // 日志是读操作，不做自我保护守卫——看自己的日志天经地义。
 
-package main
+package agenthttp
 
 import (
 	"errors"

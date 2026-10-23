@@ -2,7 +2,7 @@
 
 // 日志端点测试：假 Engine 造复用流/裸流/长连接三种形态。
 
-package main
+package agenthttp
 
 import (
 	"encoding/binary"
@@ -54,7 +54,7 @@ func agentWithLogs(t *testing.T, muxed []byte, follow bool) (*httptest.Server, *
 	t.Helper()
 	f := newFakeDocker(t)
 	f.mu2Set(muxed, follow)
-	srv := httptest.NewServer(buildHandler(smokeToken, smokeCollector(t), nil, newContainersAPI(f.sock, "", nil, nil, nil), newImagesAPI(f.sock), newComposeAPI(nil, "", ""), nil, newResourcesAPI("")))
+	srv := httptest.NewServer(BuildHandler(smokeToken, smokeCollector(t), nil, NewContainersAPI(f.sock, "", nil, nil, nil), NewImagesAPI(f.sock), NewComposeAPI(nil, "", ""), nil, NewResourcesAPI("")))
 	t.Cleanup(srv.Close)
 	return srv, f
 }

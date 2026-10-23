@@ -3,7 +3,7 @@
 // 容器端点测试：假 Engine 架在真 unix socket 上（与 dockercli 测试同一思路），
 // Agent → dockercli → socket → 假 Engine 全链路真跑，只 mock Engine 本身。
 
-package main
+package agenthttp
 
 import (
 	"encoding/json"
@@ -144,7 +144,7 @@ func agentWith(t *testing.T, socket, self string) (*httptest.Server, *fakeDocker
 	if socket == "" {
 		socket = f.sock
 	}
-	srv := httptest.NewServer(buildHandler(smokeToken, smokeCollector(t), nil, newContainersAPI(socket, self, nil, nil, nil), newImagesAPI(socket), newComposeAPI(nil, "", ""), nil, newResourcesAPI("")))
+	srv := httptest.NewServer(BuildHandler(smokeToken, smokeCollector(t), nil, NewContainersAPI(socket, self, nil, nil, nil), NewImagesAPI(socket), NewComposeAPI(nil, "", ""), nil, NewResourcesAPI("")))
 	t.Cleanup(srv.Close)
 	return srv, f
 }

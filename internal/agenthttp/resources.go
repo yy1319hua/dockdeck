@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
-package main
+package agenthttp
 
 import (
 	"net/http"
@@ -26,8 +26,8 @@ type resourcesAPI struct {
 	dc *dockercli.Client
 }
 
-// newResourcesAPI 构造。socket 为空时用默认 socket 路径（与 imagesAPI 同口径）。
-func newResourcesAPI(socket string) *resourcesAPI {
+// NewResourcesAPI 构造。socket 为空时用默认 socket 路径（与 imagesAPI 同口径）。
+func NewResourcesAPI(socket string) *resourcesAPI {
 	if socket == "" {
 		socket = dockercli.DefaultSocketPath
 	}

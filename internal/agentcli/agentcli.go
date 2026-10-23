@@ -279,8 +279,8 @@ func (c *Client) newSignedRequest(ctx context.Context, method, path string, body
 	}
 	req.Header.Set("Authorization", "Bearer "+c.Token)
 	stamp := strconv.FormatInt(c.now().Unix(), 10)
-	req.Header.Set(agenthttp.HeaderTimestamp, stamp)
-	req.Header.Set(agenthttp.HeaderSignature, crypto.SignRequest([]byte(c.Token), stamp, method, agenthttp.CanonicalPath(req), body))
+	req.Header.Set(protocol.HeaderTimestamp, stamp)
+	req.Header.Set(protocol.HeaderSignature, crypto.SignRequest([]byte(c.Token), stamp, method, agenthttp.CanonicalPath(req), body))
 	// 幂等键随行：客户端带给 Hub 的 X-DD-Request-Id 经 ctx 原样转发给 Agent，
 	// Agent 的错误日志带它落行，Hub 审计存同一份值——两端能对上同一次写操作。
 	// 该头不参与 HMAC（签名口径是 timestamp/method/URI/body），它也不是

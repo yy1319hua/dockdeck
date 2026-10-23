@@ -21,17 +21,7 @@ import (
 	"github.com/yy1319hua/dockdeck/internal/protocol"
 )
 
-// Hub→Agent 请求头。
 const (
-	// HeaderTimestamp 是 Unix 秒时间戳，参与签名并用于防重放。
-	HeaderTimestamp = "X-DD-Timestamp"
-	// HeaderSignature 是 HMAC-SHA256 的十六进制小写结果。
-	HeaderSignature = "X-DD-Signature"
-)
-
-const (
-	// MaxClockSkew 是允许的时间戳偏移。超出即判为重放或时钟异常。
-	MaxClockSkew = 120 * time.Second
 	// DefaultMaxBodyBytes 是参与签名的请求体默认上限（1 MiB）。
 	//
 	// 验签需要整个 body 的原始字节，所以这个上限同时就是「单个请求最大内存占用」。
@@ -84,14 +74,14 @@ func AuthN(token string, now func() time.Time, maxBody int64) func(http.Handler)
 				return
 			}
 
-			ts := r.Header.Get(HeaderTimestamp)
+			ts := r.Header.Get(protocol.HeaderTimestamp)
 			sec, err := strconv.ParseInt(ts, 10, 64)
 			if err != nil {
 				// 时间戳缺失会让防重放失效，因此与签名错误同等对待。
 				writeAgentError(w, protocol.CodeAgentSignatureInvalid, "时间戳缺失或非法")
 				return
 			}
-			if skew := now().Sub(time.Unix(sec, 0)); skew > MaxClockSkew || skew < -MaxClockSkew {
+			if skew := now().Sub(time.Unix(sec, 0)); skew > protocol.MaxClockSkew || skew < -protocol.MaxClockSkew {
 				writeAgentError(w, protocol.CodeAgentSignatureInvalid, "时间戳超出允许窗口，请检查时钟同步")
 				return
 			}
@@ -106,7 +96,7 @@ func AuthN(token string, now func() time.Time, maxBody int64) func(http.Handler)
 				return
 			}
 
-			sig := r.Header.Get(HeaderSignature)
+			sig := r.Header.Get(protocol.HeaderSignature)
 			if sig == "" {
 				writeAgentError(w, protocol.CodeAgentSignatureInvalid, "缺少签名头")
 				return

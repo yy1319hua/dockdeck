@@ -28,8 +28,8 @@ func signed(t *testing.T, method, target string, body []byte, ts int64) *http.Re
 	req := httptest.NewRequest(method, target, strings.NewReader(string(body)))
 	req.Header.Set("Authorization", "Bearer "+testToken)
 	stamp := strconv.FormatInt(ts, 10)
-	req.Header.Set(HeaderTimestamp, stamp)
-	req.Header.Set(HeaderSignature,
+	req.Header.Set(protocol.HeaderTimestamp, stamp)
+	req.Header.Set(protocol.HeaderSignature,
 		crypto.SignRequest([]byte(testToken), stamp, method, target, body))
 	return req
 }
@@ -79,8 +79,8 @@ func TestAuth_RejectsWrongToken(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/info", nil)
 	req.Header.Set("Authorization", "Bearer wrong-token")
 	stamp := strconv.FormatInt(fixedNow.Unix(), 10)
-	req.Header.Set(HeaderTimestamp, stamp)
-	req.Header.Set(HeaderSignature,
+	req.Header.Set(protocol.HeaderTimestamp, stamp)
+	req.Header.Set(protocol.HeaderSignature,
 		crypto.SignRequest([]byte(testToken), stamp, http.MethodGet, "/info", nil))
 	w := runAuth(t, req)
 	if w.Code != http.StatusUnauthorized || errCode(t, w) != protocol.CodeUnauthorized {
@@ -90,7 +90,7 @@ func TestAuth_RejectsWrongToken(t *testing.T) {
 
 func TestAuth_RejectsMissingTimestamp(t *testing.T) {
 	req := signed(t, http.MethodGet, "/info", nil, fixedNow.Unix())
-	req.Header.Del(HeaderTimestamp)
+	req.Header.Del(protocol.HeaderTimestamp)
 	w := runAuth(t, req)
 	if w.Code != http.StatusUnauthorized || errCode(t, w) != protocol.CodeAgentSignatureInvalid {
 		t.Errorf("got %d/%s", w.Code, errCode(t, w))
@@ -115,7 +115,7 @@ func TestAuth_RejectsStaleTimestamp(t *testing.T) {
 
 func TestAuth_RejectsMissingSignature(t *testing.T) {
 	req := signed(t, http.MethodGet, "/info", nil, fixedNow.Unix())
-	req.Header.Del(HeaderSignature)
+	req.Header.Del(protocol.HeaderSignature)
 	w := runAuth(t, req)
 	if w.Code != http.StatusUnauthorized || errCode(t, w) != protocol.CodeAgentSignatureInvalid {
 		t.Errorf("got %d/%s", w.Code, errCode(t, w))

@@ -3,7 +3,7 @@
 // 镜像端点测试：假 Engine 架在真 unix socket 上，Agent → dockercli →
 // socket → 假 Engine 全链路真跑，只 mock Engine 本身（与容器测试同一思路）。
 
-package main
+package agenthttp
 
 import (
 	"encoding/json"

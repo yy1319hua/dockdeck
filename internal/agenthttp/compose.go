@@ -9,7 +9,7 @@
 // 一律 404。Agent 持有 ComposeDirs 配置，所以白名单判定发生在 Agent 这一层，
 // 而非 Hub——Hub 只转发项目名，拿不到白名单外的路径去 exec。
 
-package main
+package agenthttp
 
 import (
 	"context"
@@ -26,7 +26,7 @@ type composeAPI struct {
 	op dockercli.ComposeOperator
 }
 
-// newComposeAPI 用配置好的白名单目录装配真实客户端。
+// NewComposeAPI 用配置好的白名单目录装配真实客户端。
 // self 是 Agent 自身容器标识（ID 或名字）：装配后 compose 侧即开启
 // 「不 down/restart 承载自己的 compose 项目」自保护——Agent 停了就没有面板
 // 可以用来救它，故这一层必须自己守住。
@@ -34,7 +34,7 @@ type composeAPI struct {
 // socket 传入时额外接入「label 来源发现」：从宿主容器上的 compose label
 // 反推项目目录，让运维不必手工把每个目录写进白名单。socket 为空则只
 // 保留白名单来源（行为与既有版本一致）。
-func newComposeAPI(dirs []string, self string, socket string) *composeAPI {
+func NewComposeAPI(dirs []string, self string, socket string) *composeAPI {
 	if socket == "" {
 		return &composeAPI{op: dockercli.NewComposeClientWithSelf(dirs, self)}
 	}

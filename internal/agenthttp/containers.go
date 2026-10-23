@@ -10,7 +10,7 @@
 // remove 追加名字确认——Agent 与 Hub 同守一道，直连 Agent 的调用方
 // （排障时）也绕不过确认门。
 
-package main
+package agenthttp
 
 import (
 	"context"
@@ -51,11 +51,11 @@ const (
 	labelComposeWorkDir = "com.docker.compose.project.working_dir"
 )
 
-// newContainersAPI 构造。self 为空时取 hostname（容器内 HOSTNAME 即短 ID，
+// NewContainersAPI 构造。self 为空时取 hostname（容器内 HOSTNAME 即短 ID，
 // Docker 默认行为），拿不到就留空——没有 docker socket 的环境写操作自然全失败。
 // fs/comp/composeDirs 透传自 main：文件管理或 compose 未启用时对应为 nil/空，
 // remove 内部按 nil 安全处理，不要求二者一定存在。
-func newContainersAPI(socket, self string, fs *fsapi.Guard, comp dockercli.ComposeOperator, composeDirs []string) *containersAPI {
+func NewContainersAPI(socket, self string, fs *fsapi.Guard, comp dockercli.ComposeOperator, composeDirs []string) *containersAPI {
 	if socket == "" {
 		socket = dockercli.DefaultSocketPath
 	}

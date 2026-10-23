@@ -4,7 +4,7 @@
 // 验证路由、动作白名单、白名单项目解析(404 拦截穿越)、logs 流，不触碰真实
 // `docker compose`。鉴权与服务器装配复用 containers_test.go 的 hGET/hDo/signFor。
 
-package main
+package agenthttp
 
 import (
 	"context"
@@ -119,7 +119,7 @@ func (f *fakeComposeOp) RestoreBackup(ctx context.Context, file, name string) (s
 
 func agentWithCompose(t *testing.T, op dockercli.ComposeOperator) *httptest.Server {
 	t.Helper()
-	return httptest.NewServer(buildHandler(smokeToken, smokeCollector(t), nil, newContainersAPI("", "", nil, nil, nil), newImagesAPI(""), &composeAPI{op: op}, nil, newResourcesAPI("")))
+	return httptest.NewServer(BuildHandler(smokeToken, smokeCollector(t), nil, NewContainersAPI("", "", nil, nil, nil), NewImagesAPI(""), &composeAPI{op: op}, nil, NewResourcesAPI("")))
 }
 
 func TestComposeAgentList(t *testing.T) {

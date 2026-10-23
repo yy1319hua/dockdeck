@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
-package main
+package agenthttp
 
 import (
 	"testing"
@@ -30,7 +30,7 @@ func mkStats(total, system uint64, online int64, mem, limit uint64) dockercli.St
 // TestEngineStatsSource_TwoBeatCPUPercent 回归 v0.2.2 #13：CPU% 用跨拍差分，
 // 与 docker stats 同口径；首拍 0，次拍 (Δcpu/Δsys)×cpus×100。
 func TestEngineStatsSource_TwoBeatCPUPercent(t *testing.T) {
-	s := newEngineStatsSource("/nonexistent.sock") // 不联网，只测 statFor 数学
+	s := NewEngineStatsSource("/nonexistent.sock") // 不联网，只测 statFor 数学
 	sum := dockercli.ContainerSummary{ID: "abc", Names: []string{"/web"}}
 
 	now := time.Now()
@@ -58,7 +58,7 @@ func TestEngineStatsSource_TwoBeatCPUPercent(t *testing.T) {
 
 // TestEngineStatsSource_CounterRollback 计数回卷（容器重启）不应算出负/爆值。
 func TestEngineStatsSource_CounterRollback(t *testing.T) {
-	s := newEngineStatsSource("/nonexistent.sock")
+	s := NewEngineStatsSource("/nonexistent.sock")
 	sum := dockercli.ContainerSummary{ID: "abc", Names: []string{"/web"}}
 	now := time.Now()
 	next := map[string]cpuSample{}

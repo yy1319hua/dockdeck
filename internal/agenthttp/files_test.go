@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
-package main
+package agenthttp
 
 import (
 	"encoding/json"
@@ -60,7 +60,7 @@ func filesTree(t *testing.T) string {
 // filesServer 起一个与生产同款中间件链的 Agent，只开文件管理。
 func filesServer(t *testing.T, root string, maxFile int64) *httptest.Server {
 	t.Helper()
-	fapi, err := newFilesAPI(config.AgentConfig{
+	fapi, err := NewFilesAPI(config.AgentConfig{
 		FsRoots:      []string{root},
 		FsDeny:       []string{"*.pem", ".env"},
 		FsMaxFile:    maxFile,
@@ -68,10 +68,10 @@ func filesServer(t *testing.T, root string, maxFile int64) *httptest.Server {
 		FsMaxEntries: 50,
 	})
 	if err != nil {
-		t.Fatalf("newFilesAPI: %v", err)
+		t.Fatalf("NewFilesAPI: %v", err)
 	}
-	srv := httptest.NewServer(buildHandler(smokeToken, smokeCollector(t), nil,
-		newContainersAPI("", "", nil, nil, nil), newImagesAPI(""), newComposeAPI(nil, "", ""), fapi, newResourcesAPI("")))
+	srv := httptest.NewServer(BuildHandler(smokeToken, smokeCollector(t), nil,
+		NewContainersAPI("", "", nil, nil, nil), NewImagesAPI(""), NewComposeAPI(nil, "", ""), fapi, NewResourcesAPI("")))
 	t.Cleanup(srv.Close)
 	return srv
 }
@@ -129,15 +129,15 @@ func errCodeOf(t *testing.T, raw []byte) string {
 // 红线第 3 条：未配 --fs-root 时模块不注册任何路由——连 401 都不该有，
 // 因为端点在网络层就不存在。
 func TestFiles_DisabledWithoutRoots(t *testing.T) {
-	fapi, err := newFilesAPI(config.AgentConfig{})
+	fapi, err := NewFilesAPI(config.AgentConfig{})
 	if err != nil {
 		t.Fatalf("未配根目录不该报错：%v", err)
 	}
 	if fapi != nil {
-		t.Fatal("未配根目录时 newFilesAPI 应返回 nil")
+		t.Fatal("未配根目录时 NewFilesAPI 应返回 nil")
 	}
-	srv := httptest.NewServer(buildHandler(smokeToken, smokeCollector(t), nil,
-		newContainersAPI("", "", nil, nil, nil), newImagesAPI(""), newComposeAPI(nil, "", ""), fapi, newResourcesAPI("")))
+	srv := httptest.NewServer(BuildHandler(smokeToken, smokeCollector(t), nil,
+		NewContainersAPI("", "", nil, nil, nil), NewImagesAPI(""), NewComposeAPI(nil, "", ""), fapi, NewResourcesAPI("")))
 	defer srv.Close()
 
 	for _, tc := range []struct{ method, path string }{
@@ -160,7 +160,7 @@ func TestFiles_DisabledWithoutRoots(t *testing.T) {
 
 // 配了根目录却不可用必须让启动失败，不能静默降级成「模块关闭」。
 func TestFiles_BadRootFailsStartup(t *testing.T) {
-	if _, err := newFilesAPI(config.AgentConfig{
+	if _, err := NewFilesAPI(config.AgentConfig{
 		FsRoots: []string{filepath.Join(t.TempDir(), "nope")}, FsMaxFile: 1024, FsMaxDepth: 3, FsMaxEntries: 10,
 	}); err == nil {
 		t.Fatal("根目录不存在时应报错")

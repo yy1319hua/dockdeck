@@ -3,7 +3,7 @@
 // 反向模式（M1）：Agent 主动连 Hub 的 WebSocket，Hub 把原本的 HTTP 请求
 // 封成帧发过来。本地 mux 是唯一入口——帧会被合成为 http.Request 后
 // ServeHTTP 到同一个 handler，因此路由、鉴权、错误映射与 HTTP 模式完全一致。
-package main
+package agenthttp
 
 import (
 	"bytes"
@@ -23,7 +23,6 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/yy1319hua/dockdeck/internal/agenthttp"
 	"github.com/yy1319hua/dockdeck/internal/agentlink"
 	"github.com/yy1319hua/dockdeck/internal/config"
 	"github.com/yy1319hua/dockdeck/internal/crypto"
@@ -86,8 +85,8 @@ func runSession(ctx context.Context, cfg config.AgentConfig, h http.Handler) err
 
 	opts := &websocket.DialOptions{HTTPHeader: http.Header{
 		"Authorization":           {"Bearer " + cfg.Token},
-		agenthttp.HeaderTimestamp: {ts},
-		agenthttp.HeaderSignature: {sig},
+		protocol.HeaderTimestamp: {ts},
+		protocol.HeaderSignature: {sig},
 	}}
 	if cfg.EnrollInsecure {
 		// 与 enroll 保持同一安全口径：Hub 用自签证书时默认跳过校验。

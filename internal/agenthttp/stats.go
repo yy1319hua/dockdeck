@@ -9,7 +9,7 @@
 // 自己缓存上一拍计数（按容器 ID），首拍或计数回卷时返回 0，下一拍起正常。
 // 停止/消失的容器跳过（docker stats 也只报运行中的）；单容器失败不拖垮整拍。
 
-package main
+package agenthttp
 
 import (
 	"context"
@@ -40,9 +40,9 @@ type engineStatsSource struct {
 	prevAt time.Time
 }
 
-// newEngineStatsSource 构造真实现。Engine 不可达时 Collect 侧返回空列表
+// NewEngineStatsSource 构造真实现。Engine 不可达时 Collect 侧返回空列表
 // （containerStatsHandler 的降级语义），构造不需要引擎在线。
-func newEngineStatsSource(socket string) *engineStatsSource {
+func NewEngineStatsSource(socket string) *engineStatsSource {
 	return &engineStatsSource{dc: dockercli.New(socket), prev: map[string]cpuSample{}}
 }
 

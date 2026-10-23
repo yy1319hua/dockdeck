@@ -6,10 +6,10 @@
 // 再前缀 → 黑名单），任何文件系统操作都排在其后。本文件只做三件事：
 // 解析查询参数、调 fsapi、把 fsapi 的哨兵错误映射成状态码。
 //
-// 未配 --fs-root 时 newFilesAPI 返回 nil，main.go 一条路由都不注册——
+// 未配 --fs-root 时 NewFilesAPI 返回 nil，main.go 一条路由都不注册——
 // 模块在网络层就不存在（红线第 3 条「默认关闭」）。
 
-package main
+package agenthttp
 
 import (
 	"errors"
@@ -20,7 +20,6 @@ import (
 	"net/url"
 	"strconv"
 
-	"github.com/yy1319hua/dockdeck/internal/agenthttp"
 	"github.com/yy1319hua/dockdeck/internal/config"
 	"github.com/yy1319hua/dockdeck/internal/fsapi"
 	"github.com/yy1319hua/dockdeck/internal/httpx"
@@ -35,11 +34,11 @@ type filesAPI struct {
 	maxBody int64
 }
 
-// newFilesAPI 构造文件端点。未配根目录时返回 (nil, nil)，调用方据此不注册路由。
+// NewFilesAPI 构造文件端点。未配根目录时返回 (nil, nil)，调用方据此不注册路由。
 //
 // 配了根目录却不可用时**返回错误让启动失败**，而不是静默降级成「模块关闭」：
 // 用户以为文件管理开着、实际是关的，这种误解比启动失败危险得多。
-func newFilesAPI(cfg config.AgentConfig) (*filesAPI, error) {
+func NewFilesAPI(cfg config.AgentConfig) (*filesAPI, error) {
 	if len(cfg.FsRoots) == 0 {
 		log.Printf("agent: 未配置 --fs-root，文件管理模块不注册任何路由")
 		return nil, nil
@@ -49,8 +48,8 @@ func newFilesAPI(cfg config.AgentConfig) (*filesAPI, error) {
 		return nil, err
 	}
 	maxBody := cfg.FsMaxFile
-	if maxBody < agenthttp.DefaultMaxBodyBytes {
-		maxBody = agenthttp.DefaultMaxBodyBytes
+	if maxBody < DefaultMaxBodyBytes {
+		maxBody = DefaultMaxBodyBytes
 	}
 	// 只记数量与上限，不记绝对路径：日志会被采集，宿主机路径属敏感信息。
 	log.Printf("agent: 文件管理已启用（%d 个根白名单，单文件上限 %d 字节，深度上限 %d）",

@@ -48,6 +48,13 @@
             <td class="sv__name">
               <span class="sv__dot" :class="onlineOf(s) ? 'sv__dot--on' : 'sv__dot--off'" />
               {{ s.name }}
+              <span
+                v-if="isLocal(s)"
+                class="badge badge--local"
+                title="Hub 自身所在机器，由进程内 Agent 服务，无需部署也不可删除"
+              >
+                本机
+              </span>
             </td>
             <td class="sv__url" :title="s.baseUrl">{{ s.baseUrl || '—' }}</td>
             <td>{{ s.arch || '—' }}</td>
@@ -59,8 +66,25 @@
             <td class="sv__acts">
               <button type="button" class="link" @click.stop="goDetail(s)">详情</button>
               <button type="button" class="link" @click.stop="askRename(s)">改名</button>
-              <button type="button" class="link" @click.stop="openDeploy(s)">部署</button>
-              <button type="button" class="link link--danger" @click.stop="askDelete(s)">删除</button>
+              <!-- 本机由 Hub 进程内服务：没有可重部署的 Agent，也不该被删掉。 -->
+              <button
+                type="button"
+                class="link"
+                :disabled="isLocal(s)"
+                :title="isLocal(s) ? '本机由 Hub 进程内 Agent 服务，无需部署' : undefined"
+                @click.stop="openDeploy(s)"
+              >
+                部署
+              </button>
+              <button
+                type="button"
+                class="link link--danger"
+                :disabled="isLocal(s)"
+                :title="isLocal(s) ? '本机不可删除' : undefined"
+                @click.stop="askDelete(s)"
+              >
+                删除
+              </button>
             </td>
           </tr>
         </tbody>
@@ -75,6 +99,7 @@
             <span class="scard__name">
               <span class="sv__dot" :class="onlineOf(s) ? 'sv__dot--on' : 'sv__dot--off'" />
               {{ s.name }}
+              <span v-if="isLocal(s)" class="badge badge--local">本机</span>
             </span>
             <span class="badge" :class="statusClass(s)">{{ statusText(s) }}</span>
           </header>
@@ -198,7 +223,15 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { deleteServer, fetchServers, isOnline, renameServer, type Server } from '@/api/servers'
+import {
+  deleteServer,
+  fetchServers,
+  isLocal,
+  isOnline,
+  renameServer,
+  sortServersLocalFirst,
+  type Server,
+} from '@/api/servers'
 import { formatAgo } from '@/utils/format'
 import DeployConfigDialog from '@/components/DeployConfigDialog.vue'
 
@@ -232,7 +265,8 @@ function statusClass(s: Server): string {
 async function load(): Promise<void> {
   loading.value = true
   try {
-    rows.value = await fetchServers()
+    // 本机置顶：它是「这块面板自己」，排最前最容易找到。
+    rows.value = sortServersLocalFirst(await fetchServers())
     error.value = null
     loaded.value = true
   } catch (e) {
@@ -349,12 +383,17 @@ const sheetActions = computed<SheetAction[]>(() => {
     sheetRow.value = null
     fn()
   }
-  return [
-    { label: '详情', run: wrap(() => goDetail(row)) },
-    { label: '部署配置…', run: wrap(() => openDeploy(row)) },
-    { label: '改名…', run: wrap(() => askRename(row)) },
-    { label: '删除…', danger: true, run: wrap(() => askDelete(row)) },
-  ]
+  // 本机没有可重部署的 Agent、也不允许删除，这两项直接不给入口：
+  // 列成禁用项会留下「为什么点不了」的疑问，不如不出现。
+  const actions: SheetAction[] = [{ label: '详情', run: wrap(() => goDetail(row)) }]
+  if (!isLocal(row)) {
+    actions.push({ label: '部署配置…', run: wrap(() => openDeploy(row)) })
+  }
+  actions.push({ label: '改名…', run: wrap(() => askRename(row)) })
+  if (!isLocal(row)) {
+    actions.push({ label: '删除…', danger: true, run: wrap(() => askDelete(row)) })
+  }
+  return actions
 })
 
 // 面板开着时锁 body 滚动（与容器页同口径 #12）。
@@ -546,6 +585,21 @@ onUnmounted(() => {
 .link--danger {
   margin-left: var(--space-2);
   color: var(--danger);
+}
+
+/* 本机徽标：中性色，避免与「在线/离线」状态徽标的语义色打架。 */
+.badge--local {
+  margin-left: var(--space-2);
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border-default);
+  color: var(--fg-muted);
+}
+
+/* 本机禁用的动作：占位保留（列宽稳定），只看得出点不了。 */
+.link:disabled {
+  color: var(--fg-subtle);
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .sv__mask {

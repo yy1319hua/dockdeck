@@ -15,11 +15,23 @@
       <RouterLink class="host__back" to="/">← 总览</RouterLink>
       <div class="host__id">
         <span class="host__dot" :class="h.online ? 'host__dot--on' : 'host__dot--off'" />
-        <h1 class="host__name">{{ h.server?.name ?? `服务器 #${id}` }}</h1>
+        <h1 class="host__name">
+          {{ h.server?.name ?? `服务器 #${id}` }}
+          <span v-if="isLocalServer" class="badge badge--local">本机</span>
+        </h1>
       </div>
       <span class="host__seen">{{ seenText }}</span>
       <span v-if="h.refreshing" class="host__poll">刷新中…</span>
-      <button type="button" class="btn host__deploy" @click="openDeploy">部署配置</button>
+      <!-- 本机由 Hub 进程内 Agent 服务，没有可重部署的 Agent。 -->
+      <button
+        type="button"
+        class="btn host__deploy"
+        :disabled="isLocalServer"
+        :title="isLocalServer ? '本机由 Hub 进程内 Agent 服务，无需部署' : undefined"
+        @click="openDeploy"
+      >
+        部署配置
+      </button>
     </header>
 
     <p v-if="h.error" class="host__err">{{ h.error }}</p>
@@ -126,6 +138,7 @@ import DeployConfigDialog from '@/components/DeployConfigDialog.vue'
 import { useRoute } from 'vue-router'
 import MetricChart from '@/components/MetricChart.vue'
 import { RANGES, type ContainerStatWire } from '@/api/metrics'
+import { isLocal } from '@/api/servers'
 import { useHostStore } from '@/stores/host'
 import { formatAgo, formatBytes, formatCores, formatPercent } from '@/utils/format'
 
@@ -137,6 +150,9 @@ const id = computed(() => {
   const n = typeof raw === 'string' ? Number(raw) : Number(raw?.[0])
   return Number.isFinite(n) ? n : 0
 })
+
+/** 本机（Hub 进程内 Agent）：没有可重部署的 Agent，部署入口禁用。 */
+const isLocalServer = computed(() => (h.server ? isLocal(h.server) : false))
 
 const deployTarget = ref<{ id: number; name: string } | null>(null)
 function openDeploy(): void {
@@ -280,6 +296,14 @@ const procText = computed(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 本机徽标：中性色，避免与在线状态的语义色打架。 */
+.badge--local {
+  margin-left: var(--space-2);
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border-default);
+  color: var(--fg-muted);
 }
 
 .host__seen {

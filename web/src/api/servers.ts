@@ -11,6 +11,8 @@ export interface ServerWire {
   ID: number
   Name: string
   BaseURL: string
+  /** servers.type：local（Hub 本机）/ agent（远端 Agent）。 */
+  Type: string
   Arch: string
   DockVer: string
   Enabled: boolean
@@ -22,6 +24,8 @@ export interface Server {
   id: number
   name: string
   baseUrl: string
+  /** local = Hub 本机（进程内 Agent）；agent = 远端 Agent。 */
+  type: string
   arch: string
   dockVer: string
   enabled: boolean
@@ -34,12 +38,33 @@ export function toServer(w: ServerWire): Server {
     id: w.ID,
     name: w.Name,
     baseUrl: w.BaseURL,
+    // 旧版后端不返回 type：一律按远端处理——宁可少一个徽标，也不把远端误判成本机。
+    type: w.Type ?? 'agent',
     arch: w.Arch,
     dockVer: w.DockVer,
     enabled: w.Enabled,
     lastSeen: w.LastSeen,
     lastError: w.LastError,
   }
+}
+
+/** 是否 Hub 本机。本机由 Hub 进程内服务：不能删除，也不需要再部署 Agent。 */
+export function isLocal(s: Server): boolean {
+  return s.type === 'local'
+}
+
+/**
+ * 本机置顶，其余按 id 升序。
+ *
+ * 本机是「这块面板自己」，永远排在最前面最容易找到；其余沿用后端顺序
+ * （id 即纳管先后），不因排序引入额外认知负担。返回新数组，不改入参。
+ */
+export function sortServersLocalFirst(list: Server[]): Server[] {
+  return [...list].sort((a, b) => {
+    const la = isLocal(a) ? 0 : 1
+    const lb = isLocal(b) ? 0 : 1
+    return la !== lb ? la - lb : a.id - b.id
+  })
 }
 
 export async function fetchServers(): Promise<Server[]> {

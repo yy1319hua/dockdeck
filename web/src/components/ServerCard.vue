@@ -15,6 +15,7 @@
       <span class="host__dot" :class="live.online ? 'host__dot--on' : 'host__dot--off'" />
       <h3 class="host__name" :title="live.server.name">
         <RouterLink :to="`/servers/${live.server.id}`" @click.stop>{{ live.server.name }}</RouterLink>
+        <span v-if="isLocal(live.server)" class="badge badge--local">本机</span>
       </h3>
       <span class="host__seen">{{ seenText }}</span>
     </header>
@@ -52,6 +53,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import MetricChart from '@/components/MetricChart.vue'
 import { fetchOverview, type HostMetricsWire, type HostPointWire } from '@/api/metrics'
+import { isLocal } from '@/api/servers'
 import type { ServerLive } from '@/stores/overview'
 import { formatAgo, formatBytes, formatPercent, formatRate } from '@/utils/format'
 
@@ -234,6 +236,14 @@ const netText = computed(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 本机徽标：中性色，避免与在线状态语义色冲突。 */
+.badge--local {
+  margin-left: var(--space-2);
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border-default);
+  color: var(--fg-muted);
 }
 
 .host__seen {

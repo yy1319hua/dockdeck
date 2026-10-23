@@ -4,6 +4,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -142,6 +143,27 @@ func TestEnsureLocalServer_RebuildsTokenWhenCipherBroken(t *testing.T) {
 	}
 	if conn.Token != newTok {
 		t.Error("库内密文与返回令牌不一致")
+	}
+}
+
+// TestDeleteServer_RejectsLocal 验证库层拦截本机删除：前端已禁用入口，
+// 这里挡住脚本/API 直调——删掉本机只会白丢历史指标（下次启动还会注册回来）。
+func TestDeleteServer_RejectsLocal(t *testing.T) {
+	s := newServerStore(t)
+	ctx := context.Background()
+	localID, _, err := s.EnsureLocalServer(ctx, "http://127.0.0.1:9528")
+	if err != nil {
+		t.Fatalf("EnsureLocalServer: %v", err)
+	}
+	if _, err := s.DeleteServer(ctx, localID); !errors.Is(err, ErrServerLocal) {
+		t.Fatalf("删除本机 err = %v，期望 ErrServerLocal", err)
+	}
+	list, err := s.ListServers(ctx)
+	if err != nil {
+		t.Fatalf("ListServers: %v", err)
+	}
+	if len(list) != 1 || list[0].ID != localID {
+		t.Fatalf("本机应仍在清单里: %+v", list)
 	}
 }
 

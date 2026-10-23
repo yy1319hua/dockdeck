@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -11,6 +12,56 @@ import (
 
 	"github.com/yy1319hua/dockdeck/internal/apitoken"
 )
+
+// TestDeleteLocalServerOverHTTP 验证本机删除被后端拒绝（409）。
+// 前端 P1.6 已禁用入口，这是针对脚本/API 直调的纵深防御。
+func TestDeleteLocalServerOverHTTP(t *testing.T) {
+	h := newHub(t)
+	cookie := h.session(t)
+
+	// 走真实注册链路建立本机（与 Hub 启动时同一条路径）。
+	if _, _, err := h.st.EnsureLocalServer(context.Background(), "http://127.0.0.1:9528"); err != nil {
+		t.Fatalf("EnsureLocalServer: %v", err)
+	}
+	resp, body := h.do(t, http.MethodGet, "/api/v1/servers", "", "", cookie)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("列表应 200，得 %d｜%s", resp.StatusCode, trim(body))
+	}
+	var got struct {
+		Data []struct {
+			ID   int64  `json:"ID"`
+			Type string `json:"Type"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("解析列表: %v", err)
+	}
+	if len(got.Data) != 1 || got.Data[0].Type != "local" {
+		t.Fatalf("应只有一台本机: %+v", got.Data)
+	}
+	path := "/api/v1/servers/" + strconv.FormatInt(got.Data[0].ID, 10)
+
+	// 删除 → 409，且清单里仍有它。
+	resp, body = h.do(t, http.MethodDelete, path, "", "", cookie)
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("删除本机应 409，得 %d｜%s", resp.StatusCode, trim(body))
+	}
+	resp, body = h.do(t, http.MethodGet, "/api/v1/servers", "", "", cookie)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("列表应 200，得 %d", resp.StatusCode)
+	}
+	var after struct {
+		Data []struct {
+			ID int64 `json:"ID"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &after); err != nil {
+		t.Fatalf("解析列表: %v", err)
+	}
+	if len(after.Data) != 1 || after.Data[0].ID != got.Data[0].ID {
+		t.Fatalf("本机应仍在清单里: %+v", after.Data)
+	}
+}
 
 // TestDeleteServerOverHTTP 覆盖删除端点的鉴权口径（仅会话）、级联效果与审计留痕。
 func TestDeleteServerOverHTTP(t *testing.T) {

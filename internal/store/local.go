@@ -12,6 +12,12 @@ import (
 	"github.com/yy1319hua/dockdeck/internal/crypto"
 )
 
+// ErrServerLocal 表示试图删除 Hub 本机（servers.type=local）。
+//
+// 本机由 Hub 进程内 Agent 服务：删掉它下次启动会被重新注册，而级联会先清空
+// 本机全部历史指标——没有收益只有损失，故在库层直接拒绝（handler 映射 409）。
+var ErrServerLocal = errors.New("store: 本机不可删除")
+
 // Hub 本机在服务器列表里的默认显示名；若该名已被远端服务器占用则退回后者。
 const (
 	LocalServerName         = "本机"

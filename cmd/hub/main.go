@@ -1048,10 +1048,12 @@ func (s *server) routes() http.Handler {
 		Method: "DELETE", Path: "/api/v1/servers/{id}", AuthMode: route.AuthSession,
 		Summary: "删除受管服务器", Tags: []string{"Servers"},
 		Desc: "物理删除一台受管服务器：metrics 历史级联清空、审计留存（server_id 置空）；" +
-			"删除后同名可立即重新纳管。仅浏览器会话可调（与纳管邀请同口径：管理操作不开放 API Token）。",
+			"删除后同名可立即重新纳管。仅浏览器会话可调（与纳管邀请同口径：管理操作不开放 API Token）。" +
+			"本机（Hub 自身所在机器）不接受删除——由进程内 Agent 服务，删掉只会白丢历史指标。",
 		Responses: []route.Response{
 			{Status: 401, Desc: "未登录，或携带 API Token"},
 			{Status: 404, Desc: "服务器不存在"},
+			{Status: 409, Desc: "本机不可删除（Hub 自身所在机器）"},
 			{Status: 500, Desc: "删除失败"},
 		},
 		InternalRef: "cmd/hub/servers.go serverDelete",

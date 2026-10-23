@@ -16,6 +16,7 @@ import (
 //
 // 仅浏览器会话可调（AuthSession，与纳管邀请/整库备份同口径：管理操作不开放
 // API Token——Token 面向采集与只读场景，删机器这种不可逆动作必须人盯着）。
+// 本机（type=local）一律 409：前端已禁用入口，这里是纵深防御。
 // 级联语义见 store.DeleteServer 注释；删除后同名可立即重新 enroll。
 func (s *server) serverDelete(w http.ResponseWriter, r *http.Request) {
 	id, err := parseServerID(r)
@@ -27,6 +28,10 @@ func (s *server) serverDelete(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		httpx.WriteError(w, http.StatusNotFound, protocol.CodeNotFound, "服务器不存在")
+		return
+	case errors.Is(err, store.ErrServerLocal):
+		// 本机由 Hub 进程内 Agent 服务，删掉它只会白丢历史指标（下次启动还会注册回来）。
+		httpx.WriteError(w, http.StatusConflict, protocol.CodeConflict, "本机不可删除（Hub 自身所在机器，由进程内 Agent 管理）")
 		return
 	case err != nil:
 		httpx.WriteError(w, http.StatusInternalServerError, protocol.CodeInternal, "删除服务器失败")

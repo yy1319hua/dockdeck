@@ -210,16 +210,26 @@ func (s *Store) ServerConnByToken(ctx context.Context, token string) (*ServerCon
 //
 // 不存在返回 ErrNotFound（handler 映射 404）。先查名再删，两步之间
 // 极小概率的并发删除由 RowsAffected 兜底。
+//
+// 本机（type=local）返回 ErrServerLocal（handler 映射 409）：它由 Hub 进程内
+// Agent 服务，删掉后下次启动会被重新注册，而级联会先清空本机全部历史指标——
+// 没有收益只有损失。前端已禁用入口，这里是纵深防御，拦住脚本/API 直调。
 func (s *Store) DeleteServer(ctx context.Context, id int64) (string, error) {
 	if id <= 0 {
 		return "", ErrNotFound
 	}
-	var name string
-	if err := s.DB.QueryRowContext(ctx, `SELECT name FROM servers WHERE id=?`, id).Scan(&name); err != nil {
+	var (
+		name string
+		typ  ServerType
+	)
+	if err := s.DB.QueryRowContext(ctx, `SELECT name, type FROM servers WHERE id=?`, id).Scan(&name, &typ); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", ErrNotFound
 		}
 		return "", err
+	}
+	if typ == ServerTypeLocal {
+		return "", ErrServerLocal
 	}
 	res, err := s.DB.ExecContext(ctx, `DELETE FROM servers WHERE id=?`, id)
 	if err != nil {

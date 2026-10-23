@@ -108,3 +108,16 @@ export async function renameServer(id: number, name: string): Promise<string> {
   const w = await patchJSON<{ id: number; name: string }>(`/servers/${id}`, { name })
   return w.name
 }
+
+/** 获取某服务器的部署配置（GET /servers/{id}/deploy，仅浏览器会话可调）。
+ *  返回该机原 Agent 长期令牌，用其生成的 compose 重新部署会沿用原身份、不新增服务器。 */
+export interface ServerDeploy {
+  token: string
+  name: string
+  baseUrl: string
+}
+
+export async function fetchServerDeploy(id: number): Promise<ServerDeploy> {
+  return request<ServerDeploy>(`/servers/${id}/deploy`)
+}
+

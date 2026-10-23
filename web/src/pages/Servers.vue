@@ -59,6 +59,7 @@
             <td class="sv__acts">
               <button type="button" class="link" @click.stop="goDetail(s)">详情</button>
               <button type="button" class="link" @click.stop="askRename(s)">改名</button>
+              <button type="button" class="link" @click.stop="openDeploy(s)">部署</button>
               <button type="button" class="link link--danger" @click.stop="askDelete(s)">删除</button>
             </td>
           </tr>
@@ -182,6 +183,15 @@
         <button type="button" class="sheet__act sheet__act--cancel" @click="sheetRow = null">取消</button>
       </div>
     </div>
+
+    <!-- 部署配置（小项3）：复用面板生成的 compose，用原 token 重部署不新增服务器。 -->
+    <DeployConfigDialog
+      v-if="deployTarget"
+      :server-id="deployTarget.id"
+      :server-name="deployTarget.name"
+      :open="true"
+      @close="deployTarget = null"
+    />
   </div>
 </template>
 
@@ -190,6 +200,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { deleteServer, fetchServers, isOnline, renameServer, type Server } from '@/api/servers'
 import { formatAgo } from '@/utils/format'
+import DeployConfigDialog from '@/components/DeployConfigDialog.vue'
 
 /** 与后端采集周期对齐（30s）：在线状态以后端 last_seen 为准，轮询只刷清单。 */
 const REFRESH_MS = 30_000
@@ -311,6 +322,13 @@ async function doDelete(): Promise<void> {
 }
 
 // —— 手机态「···」动作面板：与容器页同构，后续新增动作（如部署配置）在此追加即可。 ——
+// —— 部署配置（小项3）：复用面板 compose 生成逻辑；用原 token 重部署不新增服务器。 ——
+const deployTarget = ref<Server | null>(null)
+
+function openDeploy(s: Server): void {
+  deployTarget.value = s
+}
+
 const sheetRow = ref<Server | null>(null)
 
 function openSheet(s: Server): void {
@@ -333,6 +351,7 @@ const sheetActions = computed<SheetAction[]>(() => {
   }
   return [
     { label: '详情', run: wrap(() => goDetail(row)) },
+    { label: '部署配置…', run: wrap(() => openDeploy(row)) },
     { label: '改名…', run: wrap(() => askRename(row)) },
     { label: '删除…', danger: true, run: wrap(() => askDelete(row)) },
   ]

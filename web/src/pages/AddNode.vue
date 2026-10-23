@@ -168,6 +168,7 @@ import { useRouter } from 'vue-router'
 import { ApiError } from '@/api/errors'
 import { createInvite, type Invite } from '@/api/servers'
 import { useUiStore } from '@/stores/ui'
+import { buildDeployCmd } from '@/lib/deployCmd'
 
 type TabKey = 'docker' | 'compose'
 
@@ -221,24 +222,7 @@ let tick: number | undefined
 /** 页面不硬编码域名：从哪进来就用哪个地址（公网隧道 / 内网 / tailnet 都成立）。 */
 const hubUrl = computed(() => window.location.origin)
 
-const activeDir = computed(() => opt.dir || '/opt/dockdeck')
-const activeFsRoots = computed(() => opt.fsRoots || activeDir.value)
-const activeComposeDirs = computed(() => opt.composeDirs || activeDir.value)
-const activeTag = computed(() => opt.tag || 'latest')
-const activeSelf = computed(() => opt.selfContainer || 'dockdeck-agent')
-/** 镜像加速前缀：去掉首尾空白与末尾斜杠；留空 = 直连 ghcr.io 原址。
- *  选了「自定义…」时取自定义输入框的值。 */
-const activeMirror = computed(() => {
-  const raw = opt.mirror === '__custom__' ? customMirror.value : opt.mirror
-  return raw.trim().replace(/\/+$/, '')
-})
-/** 完整镜像引用：配了加速域名则把 ghcr.io 前缀替换掉，拼成「加速域名/yy1319hua/…:tag」，
- *  否则用 ghcr.io 原址。两种形态（docker run / compose）共用这一个值。 */
-const agentImage = computed(() =>
-  activeMirror.value
-    ? `${activeMirror.value}/yy1319hua/dockdeck-agent:${activeTag.value}`
-    : `ghcr.io/yy1319hua/dockdeck-agent:${activeTag.value}`,
-)
+
 
 const expired = computed(() => invite.value !== null && remaining.value <= 0)
 
@@ -253,83 +237,25 @@ const currentCommand = computed(() => {
   if (!invite.value) {
     return ''
   }
-  const secret = invite.value.joinSecret
-  if (tab.value === 'docker') {
-    const env: string[] = [
-      `-e DD_HUB_URL=${hubUrl.value}`,
-      `-e DD_AGENT_TOKEN=${secret}`,
-      `-e DD_AGENT_FS_ROOTS=${activeFsRoots.value}`,
-      `-e DD_AGENT_COMPOSE_DIRS=${activeComposeDirs.value}`,
-      `-e DD_AGENT_SELF_CONTAINER=${activeSelf.value}`,
-    ]
-    if (opt.diskMounts) {
-      env.push(`-e DD_AGENT_DISK_MOUNTS=${opt.diskMounts}`)
-    }
-    // v0.2.6 起反向是唯一形态：不监听端口，Agent 启动即主动连 Hub，无需开关。
-    const lines = [
-      `docker run -d --name ${activeSelf.value} --restart unless-stopped --network host \\`,
-      '  -v /var/run/docker.sock:/var/run/docker.sock:ro \\',
-      '  --pid host \\',
-      `  -v ${activeDir.value}:${activeDir.value} \\`,
-      ...env.map((x) => `  ${x} \\`),
-    ]
-    // 日志轮转（#87）：两项都填才注入，避免半配产生奇怪行为。
-    if (opt.logSize && opt.logFiles) {
-      lines.push('  --log-driver json-file \\')
-      lines.push(`  --log-opt max-size=${opt.logSize} \\`)
-      lines.push(`  --log-opt max-file=${opt.logFiles} \\`)
-    }
-    lines.push(`  ${agentImage.value}`)
-    return lines.join('\n')
-  }
-  // compose：给可直接合并进现有栈的片段（不包顶层 version，已废弃）。
-  const cmdLines = [
-    '      - --docker-socket',
-    '      - /var/run/docker.sock',
-    '      - --self-container',
-    `      - ${activeSelf.value}`,
-    '      - --compose-dirs',
-    `      - ${activeComposeDirs.value}`,
-    '      - --fs-root',
-    `      - ${activeFsRoots.value}`,
-  ]
-  const envLines = [
-    `      DD_HUB_URL: ${hubUrl.value}`,
-    `      DD_AGENT_TOKEN: ${secret}`,
-    `      DD_AGENT_SELF_CONTAINER: ${activeSelf.value}`,
-    `      DD_AGENT_FS_ROOTS: ${activeFsRoots.value}`,
-    `      DD_AGENT_COMPOSE_DIRS: ${activeComposeDirs.value}`,
-  ]
-  if (opt.diskMounts) {
-    envLines.push(`      DD_AGENT_DISK_MOUNTS: ${opt.diskMounts}`)
-  }
-  // v0.2.6 起反向是唯一形态：不监听端口，Agent 启动即主动连 Hub，无需开关。
-  const lines = [
-    'services:',
-    `  ${activeSelf.value}:`,
-    `    image: ${agentImage.value}`,
-    `    container_name: ${activeSelf.value}`,
-    '    network_mode: host',
-    '    pid: host',
-    '    restart: unless-stopped',
-    '    command:',
-    ...cmdLines,
-    '    volumes:',
-    '      - /var/run/docker.sock:/var/run/docker.sock:ro',
-    `      - ${activeDir.value}:${activeDir.value}`,
-    '    environment:',
-    ...envLines,
-  ]
-  if (opt.logSize && opt.logFiles) {
-    lines.push(
-      '    logging:',
-      '      driver: json-file',
-      '      options:',
-      `        max-size: ${opt.logSize}`,
-      `        max-file: '${opt.logFiles}'`,
-    )
-  }
-  return lines.join('\n')
+  // 委托给面板唯一的部署命令生成器（lib/deployCmd），新增「部署配置」弹窗复用同一份，
+  // 保证「添加节点」与「服务器→部署配置」两处产出的 compose 完全一致。
+  return buildDeployCmd(
+    {
+      dir: opt.dir,
+      tag: opt.tag,
+      mirror: opt.mirror,
+      customMirror: customMirror.value,
+      fsRoots: opt.fsRoots,
+      composeDirs: opt.composeDirs,
+      selfContainer: opt.selfContainer,
+      diskMounts: opt.diskMounts,
+      logSize: opt.logSize,
+      logFiles: opt.logFiles,
+    },
+    invite.value.joinSecret,
+    tab.value,
+    hubUrl.value,
+  )
 })
 
 const currentHint = computed(() => {

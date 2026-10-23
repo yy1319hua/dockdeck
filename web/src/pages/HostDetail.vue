@@ -19,6 +19,7 @@
       </div>
       <span class="host__seen">{{ seenText }}</span>
       <span v-if="h.refreshing" class="host__poll">刷新中…</span>
+      <button type="button" class="btn host__deploy" @click="openDeploy">部署配置</button>
     </header>
 
     <p v-if="h.error" class="host__err">{{ h.error }}</p>
@@ -108,11 +109,20 @@
         仅显示占用最高的 {{ h.containersTop.length }} 个，还有 {{ h.containersHidden }} 个未列出
       </p>
     </section>
+
+    <DeployConfigDialog
+      v-if="deployTarget"
+      :server-id="deployTarget.id"
+      :server-name="deployTarget.name"
+      :open="true"
+      @close="deployTarget = null"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import DeployConfigDialog from '@/components/DeployConfigDialog.vue'
 import { useRoute } from 'vue-router'
 import MetricChart from '@/components/MetricChart.vue'
 import { RANGES, type ContainerStatWire } from '@/api/metrics'
@@ -127,6 +137,11 @@ const id = computed(() => {
   const n = typeof raw === 'string' ? Number(raw) : Number(raw?.[0])
   return Number.isFinite(n) ? n : 0
 })
+
+const deployTarget = ref<{ id: number; name: string } | null>(null)
+function openDeploy(): void {
+  deployTarget.value = { id: id.value, name: h.server?.name ?? `服务器 #${id.value}` }
+}
 
 onMounted(() => {
   if (id.value > 0) {

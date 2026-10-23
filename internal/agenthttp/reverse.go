@@ -84,7 +84,7 @@ func runSession(ctx context.Context, cfg config.AgentConfig, h http.Handler) err
 	sig := crypto.SignRequest([]byte(cfg.Token), ts, http.MethodGet, agentlink.LinkPath, nil)
 
 	opts := &websocket.DialOptions{HTTPHeader: http.Header{
-		"Authorization":           {"Bearer " + cfg.Token},
+		"Authorization":          {"Bearer " + cfg.Token},
 		protocol.HeaderTimestamp: {ts},
 		protocol.HeaderSignature: {sig},
 	}}

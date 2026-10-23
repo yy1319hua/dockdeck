@@ -80,7 +80,6 @@ func (s *server) serverRename(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"id": id, "name": name})
 }
 
-
 // serverDeploy 实现 GET /api/v1/servers/{id}/deploy：返回该服务器原 Agent 令牌
 // 与连接信息，供面板「重新生成部署配置」用。
 //

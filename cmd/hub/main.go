@@ -81,13 +81,14 @@ func run(args []string) error {
 	st := &store.Store{DB: sqlDB, Key: masterKey}
 
 	// 本机服务器：Hub 与 Docker 引擎同机，不再单独部署 Agent——Hub 在同进程起
-	// agent 服务（P1.4），服务器列表里以「本机」出现。注册幂等（type=local，
-	// server_id 固定），令牌稳定复用，留给进程内 agent 与 Hub 调用方共用。
+	// agent 服务（监听回环），服务器列表里以「本机」出现。注册幂等（type=local，
+	// server_id 固定），令牌与远端 Agent 同款、鉴权链路一致。
 	// 失败不阻断启动：远端管理与监控不受影响，只是本机入口缺失。
-	if localID, _, err := st.EnsureLocalServer(context.Background(), "http://"+cfg.LocalAgentAddr); err != nil {
-		log.Printf("hub: ⚠️ 本机服务器注册失败（本机管理暂不可用）：%v", err)
+	la, err := startLocalAgent(context.Background(), st, cfg)
+	if err != nil {
+		log.Printf("hub: ⚠️ 本机 Agent 未启动（本机管理暂不可用）：%v", err)
 	} else {
-		log.Printf("hub: 本机服务器 #%d 已注册（agent 地址 http://%s）", localID, cfg.LocalAgentAddr)
+		log.Printf("hub: 本机服务器 #%d 已就绪（agent 监听 %s）", la.id, la.addr)
 	}
 
 	authOpt := auth.DefaultOptions()
@@ -171,6 +172,10 @@ func run(args []string) error {
 		stopPoll() // 先停采集，避免关闭期间还在写库
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
+		// 先关本机 Agent 监听，再关面板：采集已停，此时不会再有新的本机调用。
+		if la != nil {
+			_ = la.srv.Shutdown(ctx)
+		}
 		_ = httpSrv.Shutdown(ctx)
 		close(stop)
 	}()

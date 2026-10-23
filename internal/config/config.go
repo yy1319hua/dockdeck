@@ -41,6 +41,12 @@ type Config struct {
 	// 本机（Hub 所在机器）不再单独部署 Agent：Hub 在同进程起 agent 服务，
 	// 服务器列表里以「本机」出现。只监听回环，不对局域网暴露。
 	LocalAgentAddr string
+	// LocalDockerSocket 是进程内 Agent 访问 Docker Engine 的 unix socket。
+	// 容器部署时需把宿主机 socket 挂进 Hub 容器（部署规范见 P4.3）。
+	LocalDockerSocket string
+	// LocalComposeDirs 是本机 Compose 项目白名单目录（递归扫描）。
+	// 默认空 = Compose 列表为空；P3 将改为 Agent 独占 stage 卷。
+	LocalComposeDirs []string
 }
 
 // 安全默认值：绑定回环，绝不误绑公网 0.0.0.0。
@@ -57,7 +63,8 @@ func defaults() Config {
 		MetricsIntervalSec:   30,
 		MetricsRetentionDays: 14,
 		// 本机 Agent 固定回环端口：与远端 Agent 的 9527 错开，且只在 Hub 网络命名空间内可达。
-		LocalAgentAddr: "127.0.0.1:9528",
+		LocalAgentAddr:    "127.0.0.1:9528",
+		LocalDockerSocket: "/var/run/docker.sock",
 	}
 }
 
@@ -94,6 +101,12 @@ func Load(args []string) (Config, error) {
 	if v := os.Getenv("DD_LOCAL_AGENT_ADDR"); v != "" {
 		c.LocalAgentAddr = v
 	}
+	if v := os.Getenv("DD_LOCAL_DOCKER_SOCKET"); v != "" {
+		c.LocalDockerSocket = v
+	}
+	if v := os.Getenv("DD_LOCAL_COMPOSE_DIRS"); v != "" {
+		c.LocalComposeDirs = splitList(v)
+	}
 
 	fs := flag.NewFlagSet("hub", flag.ContinueOnError)
 	fs.StringVar(&c.ListenAddr, "listen", c.ListenAddr, "监听地址 host:port，必须为 tailnet / 内网 / 回环的具体 IP（禁止 0.0.0.0）")
@@ -108,6 +121,8 @@ func Load(args []string) (Config, error) {
 	fs.IntVar(&c.AuditRetentionDays, "audit-retention-days", c.AuditRetentionDays, "审计日志保留天数（0 = 永久保留）")
 	fs.StringVar(&c.DumpOpenAPI, "dump-openapi", c.DumpOpenAPI, "生成 OpenAPI 文档（openapi.json / openapi.yaml）到指定目录后退出，不启动服务")
 	fs.StringVar(&c.LocalAgentAddr, "local-agent-addr", c.LocalAgentAddr, "Hub 进程内本机 Agent 监听地址（必须回环，默认 127.0.0.1:9528）")
+	fs.StringVar(&c.LocalDockerSocket, "local-docker-socket", c.LocalDockerSocket, "本机 Agent 使用的 Docker Engine socket 路径")
+	localComposeDirs := fs.String("local-compose-dirs", strings.Join(c.LocalComposeDirs, ","), "本机 Compose 白名单目录，逗号分隔（留空 = 不列举）")
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
 	}
@@ -117,6 +132,9 @@ func Load(args []string) (Config, error) {
 			return Config{}, fmt.Errorf("-tls 取值非法: %q（需 self|none）", tlsMode)
 		}
 		c.TLSMode = m
+	}
+	if *localComposeDirs != "" {
+		c.LocalComposeDirs = splitList(*localComposeDirs)
 	}
 
 	c.DBPath = filepath.Join(c.DataDir, "dockdeck.db")

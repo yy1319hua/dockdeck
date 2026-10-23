@@ -126,6 +126,22 @@ func agentDefaults() AgentConfig {
 	}
 }
 
+// LocalAgentConfig 构造 Hub 进程内 Agent 的配置：复用 Agent 的默认值
+// （磁盘挂载、文件上限、敏感文件黑名单等），只覆盖本机相关字段。
+//
+// 不做 Validate：本机 Agent 不反向连接 Hub，不需要 HubURL/JoinSecret；
+// 它的令牌由 Hub 启动时幂等注册生成，Agent 与调用方同进程持有。
+// FsRoots 故意留空：零挂载方案下文件访问走 docker cp（P2），
+// 不依赖宿主机目录白名单，因此这里不会打开文件管理路由。
+func LocalAgentConfig(token, dockerSocket string, composeDirs []string) AgentConfig {
+	c := agentDefaults()
+	c.Token = token
+	c.DockerSocket = strings.TrimSpace(dockerSocket)
+	c.ComposeDirs = append([]string(nil), composeDirs...)
+	c.normalizeComposeDirs()
+	return c
+}
+
 // LoadAgent 解析 Agent 配置：环境变量兜底，命令行 flag 覆盖。
 //
 // token 不接受明文命令行参数——那会出现在 ps 输出里，

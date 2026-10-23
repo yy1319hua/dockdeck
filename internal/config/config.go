@@ -37,6 +37,10 @@ type Config struct {
 	AuditRetentionDays int
 	// DumpOpenAPI 非空时，Hub 只把 OpenAPI 文档生成到该目录后退出，不启动服务。
 	DumpOpenAPI string
+	// LocalAgentAddr 是 Hub 进程内本机 Agent 的监听地址，必须是回环。
+	// 本机（Hub 所在机器）不再单独部署 Agent：Hub 在同进程起 agent 服务，
+	// 服务器列表里以「本机」出现。只监听回环，不对局域网暴露。
+	LocalAgentAddr string
 }
 
 // 安全默认值：绑定回环，绝不误绑公网 0.0.0.0。
@@ -52,6 +56,8 @@ func defaults() Config {
 		MasterKeyPath:        filepath.Join(filepath.Dir(dataDir), "secrets", "master.key"),
 		MetricsIntervalSec:   30,
 		MetricsRetentionDays: 14,
+		// 本机 Agent 固定回环端口：与远端 Agent 的 9527 错开，且只在 Hub 网络命名空间内可达。
+		LocalAgentAddr: "127.0.0.1:9528",
 	}
 }
 
@@ -85,6 +91,9 @@ func Load(args []string) (Config, error) {
 		}
 		c.MetricsRetentionDays = n
 	}
+	if v := os.Getenv("DD_LOCAL_AGENT_ADDR"); v != "" {
+		c.LocalAgentAddr = v
+	}
 
 	fs := flag.NewFlagSet("hub", flag.ContinueOnError)
 	fs.StringVar(&c.ListenAddr, "listen", c.ListenAddr, "监听地址 host:port，必须为 tailnet / 内网 / 回环的具体 IP（禁止 0.0.0.0）")
@@ -98,6 +107,7 @@ func Load(args []string) (Config, error) {
 	fs.IntVar(&c.MetricsRetentionDays, "metrics-retention-days", c.MetricsRetentionDays, "指标历史保留天数")
 	fs.IntVar(&c.AuditRetentionDays, "audit-retention-days", c.AuditRetentionDays, "审计日志保留天数（0 = 永久保留）")
 	fs.StringVar(&c.DumpOpenAPI, "dump-openapi", c.DumpOpenAPI, "生成 OpenAPI 文档（openapi.json / openapi.yaml）到指定目录后退出，不启动服务")
+	fs.StringVar(&c.LocalAgentAddr, "local-agent-addr", c.LocalAgentAddr, "Hub 进程内本机 Agent 监听地址（必须回环，默认 127.0.0.1:9528）")
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
 	}
@@ -137,6 +147,18 @@ func (c Config) Validate() error {
 	}
 	if c.TLSMode == TLSModeNone && !ip.IsLoopback() {
 		return fmt.Errorf("TLS_MODE=none 仅允许回环监听，当前为 %q；对外请用 self", host)
+	}
+	// 本机 Agent 只服务 Hub 自身：强制回环。它信任 Hub 的共享令牌，
+	// 误配成 0.0.0.0 等于把容器/文件操作 API 暴露到局域网。
+	lhost, lport, err := net.SplitHostPort(c.LocalAgentAddr)
+	if err != nil {
+		return fmt.Errorf("本机 Agent 地址格式应为 host:port，得到 %q: %w", c.LocalAgentAddr, err)
+	}
+	if lport == "" {
+		return fmt.Errorf("本机 Agent 地址缺少端口: %q", c.LocalAgentAddr)
+	}
+	if lip := net.ParseIP(lhost); lip == nil || !lip.IsLoopback() {
+		return fmt.Errorf("本机 Agent 只允许监听回环地址（127.0.0.1 或 ::1），得到 %q", c.LocalAgentAddr)
 	}
 	// 采集周期与保留期都必须是正数：0 会让 ticker 直接 panic，
 	// 负保留期会把所有历史一次性清空。

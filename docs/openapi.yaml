@@ -2321,6 +2321,60 @@ paths:
           cookieAuth: []
         -
           bearerAuth: []
+  "/api/v1/servers/{id}/deploy":
+    get:
+      operationId: "getApiV1ServersIdDeploy"
+      summary: "获取服务器部署配置"
+      description: "返回该服务器的原 Agent 令牌与连接信息，供面板「重新生成部署配置」。用返回 token 生成的 compose / docker run 重新部署后，Agent 启动 enroll 会命中既有 claimed_at + server_id 幂等分支——仍是同一台服务器，不会新增。仅浏览器会话可调（与纳管邀请/删除/改名同口径：管理操作不开放 API Token）。返回的 token 是长期共享令牌，等同该机控制权，请妥善保管、勿外泄。"
+      tags:
+        - "Servers"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Envelope"
+        "400":
+          description: "请求体或参数不合法"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "401":
+          description: "未登录，或携带 API Token"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "403":
+          description: "服务器已禁用"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "404":
+          description: "服务器不存在"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+        "500":
+          description: "读取服务器连接信息失败"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ErrorBody"
+      security:
+        -
+          cookieAuth: []
   "/api/v1/servers/{id}/files":
     get:
       operationId: "getApiV1ServersIdFiles"
@@ -4041,6 +4095,12 @@ components:
           description: "RFC3339；从未心跳时为空串"
         Name:
           type: "string"
+        Type:
+          type: "string"
+          description: "服务器来源：local 为 Hub 本机（进程内 agent），agent 为远端 Agent"
+          enum:
+            - "local"
+            - "agent"
 tags:
   -
     name: "Audit"

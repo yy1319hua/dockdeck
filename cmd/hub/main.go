@@ -1058,6 +1058,24 @@ func (s *server) routes() http.Handler {
 		InternalRef: "cmd/hub/servers.go serverRename",
 	}, middleware.Audit(s.st, "server.rename", s.serverRename))
 
+	// ---- 获取服务器部署配置（仅会话；返回原 token，重部署不新增服务器）----
+	tbl.Add(route.Entry{
+		Method: "GET", Path: "/api/v1/servers/{id}/deploy", AuthMode: route.AuthSession,
+		Summary: "获取服务器部署配置", Tags: []string{"Servers"},
+		Desc: "返回该服务器的原 Agent 令牌与连接信息，供面板「重新生成部署配置」。" +
+			"用返回 token 生成的 compose / docker run 重新部署后，Agent 启动 enroll 会命中既有 " +
+			"claimed_at + server_id 幂等分支——仍是同一台服务器，不会新增。" +
+			"仅浏览器会话可调（与纳管邀请/删除/改名同口径：管理操作不开放 API Token）。" +
+			"返回的 token 是长期共享令牌，等同该机控制权，请妥善保管、勿外泄。",
+		Responses: []route.Response{
+			{Status: 401, Desc: "未登录，或携带 API Token"},
+			{Status: 403, Desc: "服务器已禁用"},
+			{Status: 404, Desc: "服务器不存在"},
+			{Status: 500, Desc: "读取服务器连接信息失败"},
+		},
+		InternalRef: "cmd/hub/servers.go serverDeploy",
+	}, middleware.Audit(s.st, "server.deploy_view", s.serverDeploy))
+
 	// ---- 构建元数据：设置页「版本信息」分区消费（仅会话；不写审计，理由见 handler）----
 	tbl.Add(route.Entry{
 		Method: "GET", Path: "/api/v1/system/version", AuthMode: route.AuthSession,

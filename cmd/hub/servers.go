@@ -79,3 +79,39 @@ func (s *server) serverRename(w http.ResponseWriter, r *http.Request) {
 	log.Printf("hub: 服务器 #%d 改名为 %q", id, name)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"id": id, "name": name})
 }
+
+
+// serverDeploy 实现 GET /api/v1/servers/{id}/deploy：返回该服务器原 Agent 令牌
+// 与连接信息，供面板「重新生成部署配置」用。
+//
+// 仅浏览器会话可调（AuthSession，与纳管邀请/删除/改名同口径：管理操作不开放 API Token）。
+// 返回的 token 是 Agent 的长期共享令牌（认领邀请后写入 servers.token_cipher 的明文），
+// 用它生成的 compose / docker run 重新部署后，Agent 启动时 enroll 会命中既有
+// claimed_at + server_id 幂等分支——仍是同一台服务器，不会新增。
+//
+// 安全：等同于把该机控制权交到浏览器。故加审计 server.deploy_view 追溯谁何时查看；
+// token 不进 ServerSummary 列表、也不进其它只读接口。
+func (s *server) serverDeploy(w http.ResponseWriter, r *http.Request) {
+	id, err := parseServerID(r)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, protocol.CodeBadRequest, "非法服务器 ID")
+		return
+	}
+	conn, err := s.st.ServerConn(r.Context(), id)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		httpx.WriteError(w, http.StatusNotFound, protocol.CodeNotFound, "服务器不存在")
+		return
+	case errors.Is(err, store.ErrServerDisabled):
+		httpx.WriteError(w, http.StatusForbidden, protocol.CodeForbidden, "服务器已禁用")
+		return
+	case err != nil:
+		httpx.WriteError(w, http.StatusInternalServerError, protocol.CodeInternal, "读取服务器连接信息失败")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"token":    conn.Token,
+		"name":     conn.Name,
+		"base_url": conn.BaseURL,
+	})
+}

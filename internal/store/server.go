@@ -25,7 +25,10 @@ type ServerConn struct {
 	ID      int64
 	Name    string
 	BaseURL string
-	Token   string
+	// Type 区分本机（local）与远端 Agent（agent）：本机由 Hub 进程内服务，
+	// 固定走 loopback HTTP，不参与反向长连接寻址。
+	Type  ServerType
+	Token string
 }
 
 // ServerConn 按 id 读取连接信息并解密 Agent 令牌。
@@ -47,8 +50,8 @@ func (s *Store) ServerConn(ctx context.Context, id int64) (*ServerConn, error) {
 		on     int
 	)
 	err := s.DB.QueryRowContext(ctx,
-		`SELECT id, name, base_url, token_cipher, enabled FROM servers WHERE id=?`, id,
-	).Scan(&c.ID, &c.Name, &c.BaseURL, &cipher, &on)
+		`SELECT id, name, base_url, type, token_cipher, enabled FROM servers WHERE id=?`, id,
+	).Scan(&c.ID, &c.Name, &c.BaseURL, &c.Type, &cipher, &on)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

@@ -57,6 +57,34 @@ func seedServer(t *testing.T, s *Store, name, token string, enabled bool) int64 
 	return id
 }
 
+// TestServerConn_IncludesType 验证连接信息带出类型：
+// agentFor 靠它把本机从反向连接寻址里摘出去。
+func TestServerConn_IncludesType(t *testing.T) {
+	s := newServerStore(t)
+	ctx := context.Background()
+
+	remoteID := seedServer(t, s, "remote", "remote-tok", true)
+	conn, err := s.ServerConn(ctx, remoteID)
+	if err != nil {
+		t.Fatalf("ServerConn(remote): %v", err)
+	}
+	if conn.Type != ServerTypeAgent {
+		t.Errorf("远端 type = %q，期望 %q", conn.Type, ServerTypeAgent)
+	}
+
+	localID, _, err := s.EnsureLocalServer(ctx, "http://127.0.0.1:9528")
+	if err != nil {
+		t.Fatalf("EnsureLocalServer: %v", err)
+	}
+	conn, err = s.ServerConn(ctx, localID)
+	if err != nil {
+		t.Fatalf("ServerConn(local): %v", err)
+	}
+	if conn.Type != ServerTypeLocal {
+		t.Errorf("本机 type = %q，期望 %q", conn.Type, ServerTypeLocal)
+	}
+}
+
 func TestServerConn_RoundTrip(t *testing.T) {
 	s := newServerStore(t)
 	id := seedServer(t, s, "srv-a", "agent-token-xyz", true)

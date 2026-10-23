@@ -60,7 +60,13 @@ func (s *server) agentFor(w http.ResponseWriter, r *http.Request) (*agentcli.Cli
 		return nil, false
 	}
 	cli := agentcli.New(conn.BaseURL, conn.Token, nil)
-	// 有活跃反向连接就优先走长连接；没有则保持 nil，全部请求回落 HTTP。
+	// 本机（type=local）固定走 loopback HTTP：它由 Hub 进程内起（P1.4），
+	// 不存在反向长连接。显式短路既避免陈旧/误配的注册表条目把本机请求带到
+	// 一条不存在的连接上，也让「本机」与远端 Agent 的调用路径在这一处可区分。
+	if conn.Type == store.ServerTypeLocal {
+		return cli, true
+	}
+	// 远端 Agent：有活跃反向连接就优先走长连接；没有则保持 nil，全部请求回落 HTTP。
 	if s.links != nil {
 		if lc := s.links.Conn(id); lc != nil {
 			cli.Link = lc

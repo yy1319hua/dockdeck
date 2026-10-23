@@ -421,6 +421,7 @@ func schemas() map[string]*Schema {
 				"ID":        {Type: "integer", Format: "int64"},
 				"Name":      {Type: "string"},
 				"BaseURL":   {Type: "string", Description: "HTTP 模式为 Agent 根地址；反向模式为 reverse://<host>"},
+				"Type":      {Type: "string", Enum: []string{"local", "agent"}, Description: "服务器来源：local 为 Hub 本机（进程内 agent），agent 为远端 Agent"},
 				"Arch":      {Type: "string"},
 				"DockVer":   {Type: "string"},
 				"Enabled":   {Type: "boolean"},

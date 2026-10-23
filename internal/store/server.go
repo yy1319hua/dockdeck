@@ -66,12 +66,26 @@ func (s *Store) ServerConn(ctx context.Context, id int64) (*ServerConn, error) {
 	return &c, nil
 }
 
+// ServerType 是受管服务器的来源类型。
+//
+//   - ServerTypeAgent：远端 Agent（自注册/enroll，默认）
+//   - ServerTypeLocal：Hub 本机（Hub 启动时自动注册，进程内 agent 服务）
+//
+// 类型只由 Hub 代码写入，不接受外部输入；前端据此渲染「本机」徽标并禁用删除。
+type ServerType string
+
+const (
+	ServerTypeAgent ServerType = "agent"
+	ServerTypeLocal ServerType = "local"
+)
+
 // ServerSummary 是受管服务器在列表接口的公开投影：只含管理所需字段，
 // 绝不携带 Agent 令牌（token_cipher / 解密后的 Token 一律不入此结构）。
 type ServerSummary struct {
 	ID        int64
 	Name      string
 	BaseURL   string
+	Type      ServerType
 	Arch      string
 	DockVer   string
 	Enabled   bool
@@ -83,7 +97,7 @@ type ServerSummary struct {
 // 与 ServerConn 不同，这里不解密 Agent 令牌、也不触达任何秘密字段。
 func (s *Store) ListServers(ctx context.Context) ([]ServerSummary, error) {
 	rows, err := s.DB.QueryContext(ctx,
-		`SELECT id, name, base_url, arch, docker_ver, enabled, last_seen, last_error FROM servers ORDER BY id`)
+		`SELECT id, name, base_url, type, arch, docker_ver, enabled, last_seen, last_error FROM servers ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +112,7 @@ func (s *Store) ListServers(ctx context.Context) ([]ServerSummary, error) {
 			seen sql.NullString
 			errs sql.NullString
 		)
-		if err := rows.Scan(&ss.ID, &ss.Name, &ss.BaseURL, &arch, &dv, &on, &seen, &errs); err != nil {
+		if err := rows.Scan(&ss.ID, &ss.Name, &ss.BaseURL, &ss.Type, &arch, &dv, &on, &seen, &errs); err != nil {
 			return nil, err
 		}
 		ss.Arch = arch.String

@@ -146,6 +146,11 @@ func TestListServers_ReturnsAllIncludingDisabled(t *testing.T) {
 	if byID[b].Enabled {
 		t.Errorf("srv-b 应为禁用")
 	}
+	// 存量行（seedServer 未写 type）必须落在默认值 agent 上，
+	// 否则迁移会把历史远端 Agent 误标成本机。
+	if byID[a].Type != ServerTypeAgent {
+		t.Errorf("srv-a 类型 = %q，期望默认 %q", byID[a].Type, ServerTypeAgent)
+	}
 	// 列表不得携带秘密：ServerSummary 类型本身不含 Token，
 	// 这里额外断言序列化结果不含明文 Agent 令牌。
 	buf := new(bytes.Buffer)
@@ -154,6 +159,27 @@ func TestListServers_ReturnsAllIncludingDisabled(t *testing.T) {
 	}
 	if strings.Contains(buf.String(), "agent-tok-a") || strings.Contains(buf.String(), "agent-tok-b") {
 		t.Errorf("列表泄露了 Agent 令牌：%s", buf.String())
+	}
+}
+
+// TestListServers_TypeLocal 验证 type 列可写入并读出 local：
+// Hub 本机由启动时幂等注册（固定 server_id），列表必须能把它与远端 Agent
+// 区分开，前端据此渲染「本机」徽标并禁止删除。
+func TestListServers_TypeLocal(t *testing.T) {
+	s := newServerStore(t)
+	id := seedServer(t, s, "hub-local", "local-tok", true)
+	if _, err := s.DB.Exec(`UPDATE servers SET type=? WHERE id=?`, ServerTypeLocal, id); err != nil {
+		t.Fatalf("update type: %v", err)
+	}
+	list, err := s.ListServers(context.Background())
+	if err != nil {
+		t.Fatalf("ListServers: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("len = %d，期望 1", len(list))
+	}
+	if list[0].Type != ServerTypeLocal {
+		t.Errorf("类型 = %q，期望 %q", list[0].Type, ServerTypeLocal)
 	}
 }
 

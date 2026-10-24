@@ -80,6 +80,10 @@ type Guard struct {
 	maxFile    int64
 	maxDepth   int
 	maxEntries int
+
+	// be 是 IO 后端（P2.2a）：所有越过校验层的读写删移都经它。
+	// NewGuard 默认 osBackend；P2.2c/d 的 docker 后端经 setter 注入。
+	be Backend
 }
 
 // NewGuard 构造 Guard：根目录必须存在、是目录、且能被 realpath 解析。
@@ -138,6 +142,7 @@ func NewGuard(roots, deny []string, maxFile int64, maxDepth, maxEntries int) (*G
 		maxFile:    maxFile,
 		maxDepth:   maxDepth,
 		maxEntries: maxEntries,
+		be:         osBackend{},
 	}, nil
 }
 

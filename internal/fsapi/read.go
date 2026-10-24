@@ -43,7 +43,7 @@ func (g *Guard) List(rootIndex int, rel string, depth int) ([]protocol.FileEntry
 	if err != nil {
 		return nil, false, err
 	}
-	st, err := os.Stat(res.Abs)
+	st, err := g.be.Stat(res.Abs)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, false, fmt.Errorf("%w: %s", ErrNotFound, rel)
@@ -72,7 +72,7 @@ func (g *Guard) List(rootIndex int, rel string, depth int) ([]protocol.FileEntry
 		if err != nil {
 			return nil
 		}
-		items, err := os.ReadDir(dir.Abs)
+		items, err := g.be.ReadDir(dir.Abs)
 		if err != nil {
 			// 子目录不可读：跳过，不中断整次列举。
 			return nil
@@ -86,7 +86,7 @@ func (g *Guard) List(rootIndex int, rel string, depth int) ([]protocol.FileEntry
 			if err != nil {
 				continue
 			}
-			cst, err := os.Stat(cr.Abs)
+			cst, err := g.be.Stat(cr.Abs)
 			if err != nil {
 				continue
 			}
@@ -128,7 +128,7 @@ func (g *Guard) Stat(rootIndex int, rel string) (protocol.FileMeta, error) {
 	if err != nil {
 		return protocol.FileMeta{}, err
 	}
-	f, err := os.Open(res.Abs)
+	f, err := g.be.Open(res.Abs)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return protocol.FileMeta{}, fmt.Errorf("%w: %s", ErrNotFound, rel)
@@ -179,7 +179,7 @@ func (g *Guard) Open(rootIndex int, rel string) (*Reader, error) {
 	if err != nil {
 		return nil, err
 	}
-	f, err := os.Open(res.Abs)
+	f, err := g.be.Open(res.Abs)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, fmt.Errorf("%w: %s", ErrNotFound, rel)

@@ -63,7 +63,7 @@ func (g *Guard) Write(rootIndex int, rel string, content io.Reader) (protocol.Fi
 	}
 
 	exists := false
-	switch st, err := os.Stat(res.Abs); {
+	switch st, err := g.be.Stat(res.Abs); {
 	case err == nil:
 		if st.IsDir() {
 			return protocol.FileWritten{}, fmt.Errorf("%w: %s", ErrIsDir, res.Rel)
@@ -74,13 +74,13 @@ func (g *Guard) Write(rootIndex int, rel string, content io.Reader) (protocol.Fi
 		return protocol.FileWritten{}, err
 	}
 
-	tmp, err := os.CreateTemp(filepath.Dir(res.Abs), uploadTempPattern)
+	tmp, err := g.be.CreateTemp(filepath.Dir(res.Abs), uploadTempPattern)
 	if err != nil {
 		return protocol.FileWritten{}, err
 	}
 	tmpName := tmp.Name()
 	// rename 成功后 tmpName 已不存在，这里的 Remove 只会拿到 ENOENT，忽略即可。
-	defer func() { _ = os.Remove(tmpName) }()
+	defer func() { _ = g.be.Remove(tmpName) }()
 
 	n, err := io.Copy(tmp, io.LimitReader(content, g.maxFile+1))
 	if err != nil {
@@ -107,7 +107,7 @@ func (g *Guard) Write(rootIndex int, rel string, content io.Reader) (protocol.Fi
 		}
 		backupRel = relOf(g.roots[res.RootIndex], backupAbs)
 	}
-	if err := os.Rename(tmpName, res.Abs); err != nil {
+	if err := g.be.Rename(tmpName, res.Abs); err != nil {
 		return protocol.FileWritten{}, err
 	}
 
@@ -129,7 +129,7 @@ func (g *Guard) Write(rootIndex int, rel string, content io.Reader) (protocol.Fi
 //     整次 Write 报错，而不是换名重来）；
 //  2. 写成功后轮转：只保留最近 maxFileBackups 份，更旧的自动删。
 func (g *Guard) backup(abs string) (string, error) {
-	src, err := os.Open(abs)
+	src, err := g.be.Open(abs)
 	if err != nil {
 		return "", err
 	}
@@ -138,18 +138,18 @@ func (g *Guard) backup(abs string) (string, error) {
 	base := abs + ".bak." + time.Now().Format(backupTimeLayout)
 	name := base
 	for n := 1; n <= 1000; n++ {
-		dst, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, fileMode)
+		dst, err := g.be.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, fileMode)
 		if err == nil {
 			if _, cerr := io.Copy(dst, src); cerr != nil {
 				dst.Close()
-				_ = os.Remove(name)
+				_ = g.be.Remove(name)
 				return "", cerr
 			}
 			if cerr := dst.Close(); cerr != nil {
-				_ = os.Remove(name)
+				_ = g.be.Remove(name)
 				return "", cerr
 			}
-			rotateFileBackups(abs)
+			rotateFileBackups(g.be, abs)
 			return name, nil
 		}
 		if !errors.Is(err, os.ErrExist) {
@@ -166,9 +166,9 @@ func (g *Guard) backup(abs string) (string, error) {
 // 只删普通文件：撞进 <base>.bak. 前缀的目录/软链形态项跳过不删，
 // 但名额照占——等价于「regular 备份最终保留 maxFileBackups 份」。
 // 删错了没有后悔药，宁肯跳过。
-func rotateFileBackups(abs string) {
+func rotateFileBackups(be Backend, abs string) {
 	dir := filepath.Dir(abs)
-	items, err := os.ReadDir(dir)
+	items, err := be.ReadDir(dir)
 	if err != nil {
 		return
 	}
@@ -186,11 +186,11 @@ func rotateFileBackups(abs string) {
 	sort.Sort(sort.Reverse(sort.StringSlice(names)))
 	for _, name := range names[maxFileBackups:] {
 		p := filepath.Join(dir, name)
-		info, err := os.Lstat(p)
+		info, err := be.Lstat(p)
 		if err != nil || !info.Mode().IsRegular() {
 			continue
 		}
-		_ = os.Remove(p)
+		_ = be.Remove(p)
 	}
 }
 
@@ -209,13 +209,13 @@ func (g *Guard) Mkdir(rootIndex int, rel string) (protocol.FileActionDone, error
 	if err := g.ensureNotSymlink(res); err != nil {
 		return protocol.FileActionDone{}, err
 	}
-	switch _, err := os.Lstat(res.Abs); {
+	switch _, err := g.be.Lstat(res.Abs); {
 	case err == nil:
 		return protocol.FileActionDone{}, fmt.Errorf("%w: %s", ErrExists, res.Rel)
 	case !errors.Is(err, fs.ErrNotExist):
 		return protocol.FileActionDone{}, err
 	}
-	if err := os.Mkdir(res.Abs, dirMode); err != nil {
+	if err := g.be.Mkdir(res.Abs, dirMode); err != nil {
 		return protocol.FileActionDone{}, err
 	}
 	return protocol.FileActionDone{Action: protocol.ActionMkdir, Path: res.Rel}, nil
@@ -236,7 +236,7 @@ func (g *Guard) Delete(rootIndex int, rel string) (protocol.FileActionDone, erro
 	if err := g.ensureNotSymlink(res); err != nil {
 		return protocol.FileActionDone{}, err
 	}
-	st, err := os.Stat(res.Abs)
+	st, err := g.be.Stat(res.Abs)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return protocol.FileActionDone{}, fmt.Errorf("%w: %s", ErrNotFound, rel)
@@ -244,7 +244,7 @@ func (g *Guard) Delete(rootIndex int, rel string) (protocol.FileActionDone, erro
 		return protocol.FileActionDone{}, err
 	}
 	if st.IsDir() {
-		items, err := os.ReadDir(res.Abs)
+		items, err := g.be.ReadDir(res.Abs)
 		if err != nil {
 			return protocol.FileActionDone{}, err
 		}
@@ -252,7 +252,7 @@ func (g *Guard) Delete(rootIndex int, rel string) (protocol.FileActionDone, erro
 			return protocol.FileActionDone{}, fmt.Errorf("%w: %s", ErrNotEmpty, res.Rel)
 		}
 	}
-	if err := os.Remove(res.Abs); err != nil {
+	if err := g.be.Remove(res.Abs); err != nil {
 		return protocol.FileActionDone{}, err
 	}
 	return protocol.FileActionDone{Action: protocol.ActionDelete, Path: res.Rel}, nil
@@ -280,7 +280,7 @@ func (g *Guard) DeleteRecursive(rootIndex int, rel string) (protocol.FileActionD
 	if err := g.ensureNotSymlink(res); err != nil {
 		return protocol.FileActionDone{}, err
 	}
-	st, err := os.Stat(res.Abs)
+	st, err := g.be.Stat(res.Abs)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return protocol.FileActionDone{}, fmt.Errorf("%w: %s", ErrNotFound, rel)
@@ -290,7 +290,7 @@ func (g *Guard) DeleteRecursive(rootIndex int, rel string) (protocol.FileActionD
 	if !st.IsDir() {
 		return protocol.FileActionDone{}, fmt.Errorf("%w: %s", ErrNotDir, res.Rel)
 	}
-	if err := os.RemoveAll(res.Abs); err != nil {
+	if err := g.be.RemoveAll(res.Abs); err != nil {
 		return protocol.FileActionDone{}, err
 	}
 	return protocol.FileActionDone{Action: protocol.ActionDelete, Path: res.Rel}, nil
@@ -325,13 +325,13 @@ func (g *Guard) Rename(rootIndex int, rel, dest string) (protocol.FileActionDone
 	if src.Abs == dst.Abs {
 		return protocol.FileActionDone{}, fmt.Errorf("%w: 目标与源相同: %s", ErrExists, src.Rel)
 	}
-	switch _, err := os.Lstat(dst.Abs); {
+	switch _, err := g.be.Lstat(dst.Abs); {
 	case err == nil:
 		return protocol.FileActionDone{}, fmt.Errorf("%w: %s", ErrExists, dst.Rel)
 	case !errors.Is(err, fs.ErrNotExist):
 		return protocol.FileActionDone{}, err
 	}
-	if err := os.Rename(src.Abs, dst.Abs); err != nil {
+	if err := g.be.Rename(src.Abs, dst.Abs); err != nil {
 		return protocol.FileActionDone{}, err
 	}
 	return protocol.FileActionDone{Action: protocol.ActionRename, Path: src.Rel, Dest: dst.Rel}, nil

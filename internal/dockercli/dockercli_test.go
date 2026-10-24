@@ -48,6 +48,9 @@ type fakeEngine struct {
 	// 只在这里给（Engine 29：/volumes 与 /volumes/{id} 的 UsageData 都是
 	// null），没有它就测不出「引用数取不到」这个真实故障。
 	systemDf []byte
+	// containersJSON 是 GET /containers/json 的响应体（含 Mounts），
+	// 供借道选取器（P2.2b）测解析；nil 返回 []。
+	containersJSON []byte
 }
 
 func newFakeEngine(t *testing.T, apiVersion string) (*fakeEngine, string) {
@@ -80,6 +83,16 @@ func newFakeEngine(t *testing.T, apiVersion string) (*fakeEngine, string) {
 		})
 	})
 	mux.HandleFunc("/containers/", func(w http.ResponseWriter, r *http.Request) {
+		// 借道选取器（P2.2b）：列表端点带 Mounts，nil 时回 Engine 的空形态。
+		if r.Method == http.MethodGet && r.URL.Path == "/containers/json" {
+			w.Header().Set("Content-Type", "application/json")
+			if f.containersJSON == nil {
+				_, _ = w.Write([]byte("[]"))
+				return
+			}
+			_, _ = w.Write(f.containersJSON)
+			return
+		}
 		if !strings.HasSuffix(r.URL.Path, "/logs") {
 			w.WriteHeader(http.StatusNotFound)
 			return
